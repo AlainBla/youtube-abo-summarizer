@@ -1,2 +1,7 @@
 client_secrets.json
 token.pickle
+.env
+last_run.json
+summary_*.html
+__pycache__/
+*.pyc
