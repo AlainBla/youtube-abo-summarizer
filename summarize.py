@@ -3,11 +3,11 @@
 
 Usage:
   # Pull from OAuth subscriptions
-  python summarize.py --auth [--days 7] [--output summary.html]
+  python summarize.py --auth [--hours 24] [--output summary.html]
 
   # Explicit channels (IDs, handles, or URLs)
-  python summarize.py UC123abc UC456def [--days 7] [--output summary.html]
-  python summarize.py --file channels.txt [--days 7] [--output summary.html]
+  python summarize.py UC123abc UC456def [--hours 24] [--output summary.html]
+  python summarize.py --file channels.txt [--hours 24] [--output summary.html]
 """
 
 import argparse
@@ -16,6 +16,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
+from googleapiclient.errors import HttpError
 
 import state
 import transcripts as tr
@@ -48,11 +49,11 @@ def parse_args():
         help="Channel IDs, handles, or URLs (positional, used when not using --auth or --file).",
     )
     parser.add_argument(
-        "--days",
+        "--hours",
         type=int,
         default=None,
         metavar="N",
-        help="Look back N days. Overrides the persisted last-run timestamp.",
+        help="Look back N hours. Overrides the persisted last-run timestamp.",
     )
     parser.add_argument(
         "--output",
@@ -63,14 +64,14 @@ def parse_args():
     return parser.parse_args()
 
 
-def resolve_since(channel_id: str, days: int | None) -> datetime:
-    if days is not None:
-        return datetime.now(tz=timezone.utc) - timedelta(days=days)
+def resolve_since(channel_id: str, hours: int | None) -> datetime:
+    if hours is not None:
+        return datetime.now(tz=timezone.utc) - timedelta(hours=hours)
     last = state.get_last_run(channel_id)
     if last:
         return last
-    # Default: 7 days back on first run
-    return datetime.now(tz=timezone.utc) - timedelta(days=7)
+    # Default: 24 hours back on first run
+    return datetime.now(tz=timezone.utc) - timedelta(hours=24)
 
 
 def load_channel_identifiers_from_file(path: str) -> list[str]:
@@ -128,10 +129,17 @@ def main():
     for ch in channels:
         channel_id = ch["channel_id"]
         title = ch["title"]
-        since = resolve_since(channel_id, args.days)
+        since = resolve_since(channel_id, args.hours)
 
-        print(f"\n[{title}] Fetching videos since {since.strftime('%Y-%m-%d')}...")
-        videos = get_new_videos(service, channel_id, since)
+        print(f"\n[{title}] Fetching videos since {since.strftime('%Y-%m-%d %H:%M')} UTC...")
+        try:
+            videos = get_new_videos(service, channel_id, since)
+        except HttpError as e:
+            if e.status_code == 403 and "quotaExceeded" in str(e):
+                print("  YouTube API quota exceeded — stopping early.", file=sys.stderr)
+                break
+            print(f"  API error: {e}", file=sys.stderr)
+            continue
         print(f"  {len(videos)} new video(s).")
 
         processed_videos = []
@@ -166,8 +174,8 @@ def main():
             }
         )
 
-        # Update state only when not using --days (so last-run advances)
-        if args.days is None:
+        # Update state only when not using --hours (so last-run advances)
+        if args.hours is None:
             state.set_last_run(channel_id, now)
 
     # --- Render HTML ---
