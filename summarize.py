@@ -13,6 +13,7 @@ Usage:
 import argparse
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -149,6 +150,7 @@ def main():
             print(f"  → {vid_title}")
 
             transcript = tr.get_transcript(vid_id)
+            time.sleep(2)
             if transcript:
                 print(f"    Summarizing via {model}...")
                 summary = openrouter.summarize_video(vid_title, transcript, model)
