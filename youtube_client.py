@@ -79,33 +79,77 @@ def resolve_channel_id(service, identifier: str) -> dict | None:
     return {"channel_id": items[0]["id"], "title": snippet["title"]}
 
 
+def _get_uploads_playlist_id(service, channel_id: str) -> str | None:
+    """Return the uploads playlist ID for a channel (costs 1 quota unit)."""
+    resp = service.channels().list(
+        part="contentDetails",
+        id=channel_id,
+    ).execute()
+    items = resp.get("items", [])
+    if not items:
+        return None
+    return items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+
+
 def get_new_videos(service, channel_id: str, since: datetime) -> list[dict]:
-    """Return videos published after `since` for a channel as [{video_id, title, published_at, thumbnail_url}]."""
-    published_after = since.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """Return videos published after `since` for a channel.
+
+    Uses playlistItems.list (1 quota unit/page) instead of search.list
+    (100 quota units/page) to stay within the daily 10,000-unit quota.
+    """
+    uploads_playlist_id = _get_uploads_playlist_id(service, channel_id)
+    if not uploads_playlist_id:
+        return []
+
+    since_utc = since.astimezone(timezone.utc)
     videos = []
-    request = service.search().list(
+
+    request = service.playlistItems().list(
         part="snippet",
-        channelId=channel_id,
-        type="video",
-        order="date",
-        publishedAfter=published_after,
+        playlistId=uploads_playlist_id,
         maxResults=50,
     )
     while request:
         response = request.execute()
+        stop_early = False
         for item in response.get("items", []):
             snippet = item["snippet"]
+            published_str = snippet.get("publishedAt", "")
+            try:
+                published_dt = datetime.fromisoformat(
+                    published_str.replace("Z", "+00:00")
+                )
+            except ValueError:
+                continue
+
+            # Playlist items are newest-first; stop once we go past `since`
+            if published_dt <= since_utc:
+                stop_early = True
+                break
+
+            # Skip private/deleted videos (resourceId may lack videoId)
+            resource = snippet.get("resourceId", {})
+            if resource.get("kind") != "youtube#video":
+                continue
+            video_id = resource.get("videoId")
+            if not video_id:
+                continue
+
             thumbnails = snippet.get("thumbnails", {})
             thumbnail_url = (
                 thumbnails.get("medium", thumbnails.get("default", {})).get("url", "")
             )
             videos.append(
                 {
-                    "video_id": item["id"]["videoId"],
+                    "video_id": video_id,
                     "title": snippet["title"],
-                    "published_at": snippet["publishedAt"],
+                    "published_at": published_str,
                     "thumbnail_url": thumbnail_url,
                 }
             )
-        request = service.search().list_next(request, response)
+
+        if stop_early:
+            break
+        request = service.playlistItems().list_next(request, response)
+
     return videos

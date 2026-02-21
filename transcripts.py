@@ -1,14 +1,16 @@
 """Fetch and clean YouTube video transcripts."""
 
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled, IpBlocked, RequestBlocked
 
 PREFERRED_LANGS = ["de", "en"]
+
+_api = YouTubeTranscriptApi()
 
 
 def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) -> str | None:
     """Return the transcript as plain text, or None if unavailable."""
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript_list = _api.list(video_id)
 
         # Try preferred languages first (manual, then generated)
         for lang in preferred_langs:
@@ -26,9 +28,9 @@ def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) 
         t = next(iter(transcript_list))
         return _to_text(t.fetch())
 
-    except (NoTranscriptFound, TranscriptsDisabled):
+    except (NoTranscriptFound, TranscriptsDisabled, IpBlocked, RequestBlocked):
         return None
 
 
 def _to_text(entries) -> str:
-    return " ".join(entry["text"] for entry in entries)
+    return " ".join(entry.text for entry in entries)
