@@ -43,4 +43,24 @@ def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) 
 
 
 def _to_text(entries) -> str:
-    return " ".join(entry.text for entry in entries)
+    """Format transcript with one [MM:SS] timestamp marker every ~30 seconds."""
+    INTERVAL = 30
+    result = []
+    current_start = None
+    current_texts = []
+
+    for entry in entries:
+        if current_start is None or entry.start >= current_start + INTERVAL:
+            if current_texts:
+                s = int(current_start)
+                result.append(f"[{s // 60}:{s % 60:02d}] {' '.join(current_texts)}")
+            current_start = entry.start
+            current_texts = [entry.text]
+        else:
+            current_texts.append(entry.text)
+
+    if current_texts and current_start is not None:
+        s = int(current_start)
+        result.append(f"[{s // 60}:{s % 60:02d}] {' '.join(current_texts)}")
+
+    return "\n".join(result)

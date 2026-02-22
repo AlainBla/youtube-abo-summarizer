@@ -11,7 +11,14 @@ Structure your response in clean HTML using these elements only (no full documen
 - <h3> for section headings
 - <p> for paragraphs
 - <ul>/<li> for bullet points
-Keep it concise: a short overview paragraph, key points as bullets, and a one-sentence takeaway."""
+Keep it concise: a short overview paragraph, key points as bullets, and a one-sentence takeaway.
+
+The transcript contains timestamp markers in [MM:SS] format at the start of each segment.
+For each section heading and each bullet point, include a timestamp link to the corresponding
+position in the video using this exact HTML format:
+  <a href="https://www.youtube.com/watch?v=VIDEO_ID&t=SECONDS" class="ts-link">MM:SS</a>
+Replace VIDEO_ID with the video ID from the user message and SECONDS with the integer number of
+seconds (e.g. [1:23] → t=83). Place the link at the start of the relevant heading or list item."""
 
 
 def build_client() -> OpenAI:
@@ -21,10 +28,10 @@ def build_client() -> OpenAI:
     return OpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key)
 
 
-def summarize_video(title: str, transcript: str, model: str) -> str:
+def summarize_video(video_id: str, title: str, transcript: str, model: str) -> str:
     """Return an HTML-fragment summary of the video."""
     client = build_client()
-    user_message = f"Video title: {title}\n\nTranscript:\n{transcript}"
+    user_message = f"Video ID: {video_id}\nVideo title: {title}\n\nTranscript (with timestamps):\n{transcript}"
     response = client.chat.completions.create(
         model=model,
         messages=[
