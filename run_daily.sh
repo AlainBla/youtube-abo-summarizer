@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 OUTPUT="$REPO/summary_$(date +%Y-%m-%d).html"
-TO="you@example.com"
+TO="alain@parkautomat.net"
 
 cd "$REPO"
 
