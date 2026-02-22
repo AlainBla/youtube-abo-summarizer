@@ -4,14 +4,15 @@ import os
 
 from dotenv import load_dotenv
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled, IpBlocked, RequestBlocked
+from youtube_transcript_api.proxies import GenericProxyConfig
 
 load_dotenv()
 
 PREFERRED_LANGS = ["de", "en"]
 
 _proxy_url = os.getenv("WEBSHARE_PROXY_URL")
-_proxies = {"http": _proxy_url, "https": _proxy_url} if _proxy_url else None
-_api = YouTubeTranscriptApi(proxies=_proxies)
+_proxy_config = GenericProxyConfig(http_url=_proxy_url, https_url=_proxy_url) if _proxy_url else None
+_api = YouTubeTranscriptApi(proxy_config=_proxy_config)
 
 
 def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) -> tuple[str | None, str | None]:
