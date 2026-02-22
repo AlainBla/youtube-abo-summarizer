@@ -158,6 +158,11 @@
       background: #181508;
       border-color: #6a5f10;
     }
+    .no-transcript.country-blocked {
+      color: #7a9fc0;
+      background: #080e18;
+      border-color: #1a3a5a;
+    }
 
     .no-videos {
       color: #555;
@@ -216,6 +221,8 @@
             <p class="no-transcript ip-blocked">&#x26A0; Kein Transkript &mdash; YouTube blockiert Transkript-Anfragen von dieser IP-Adresse (Rechenzentrum erkannt).</p>
           {% elif video.transcript_error == "rate_limited" %}
             <p class="no-transcript rate-limited">&#x26A0; Kein Transkript &mdash; YouTube hat die Anfrage abgelehnt (zu viele Anfragen in kurzer Zeit).</p>
+          {% elif video.transcript_error == "country_blocked" %}
+            <p class="no-transcript country-blocked">&#x1F310; Kein Transkript &mdash; Video ist nur in bestimmten Regionen verfügbar (Geoblocking).</p>
           {% else %}
             <p class="no-transcript unavailable">Kein Transkript für dieses Video verfügbar.</p>
           {% endif %}

@@ -3,7 +3,10 @@
 import os
 
 from dotenv import load_dotenv
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled, IpBlocked, RequestBlocked
+from youtube_transcript_api import (
+    YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled,
+    IpBlocked, RequestBlocked, VideoUnplayable, CouldNotRetrieveTranscript,
+)
 from youtube_transcript_api.proxies import GenericProxyConfig
 
 load_dotenv()
@@ -47,6 +50,12 @@ def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) 
         print(f"    [BLOCKED] Anfrage von YouTube abgelehnt (Rate Limit?) für video_id={video_id}.")
         return None, "rate_limited"
     except (NoTranscriptFound, TranscriptsDisabled):
+        return None, "unavailable"
+    except VideoUnplayable as e:
+        print(f"    [BLOCKED] Video in dieser Region gesperrt (country_blocked) für video_id={video_id}: {e}")
+        return None, "country_blocked"
+    except CouldNotRetrieveTranscript as e:
+        print(f"    [ERROR] {type(e).__name__} für video_id={video_id}: {e}")
         return None, "unavailable"
 
 

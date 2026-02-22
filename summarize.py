@@ -150,13 +150,15 @@ def main():
             print(f"  → {vid_title}")
 
             transcript, transcript_error = tr.get_transcript(vid_id)
-            time.sleep(2)
+            time.sleep(5)
             if transcript:
                 print(f"    Summarizing via {model}...")
                 summary = openrouter.summarize_video(vid_id, vid_title, transcript, model)
             else:
                 if not transcript_error or transcript_error == "unavailable":
                     print("    No transcript available.")
+                elif transcript_error == "country_blocked":
+                    print("    Video in dieser Region gesperrt — kein Transkript.")
                 summary = None
 
             processed_videos.append(
