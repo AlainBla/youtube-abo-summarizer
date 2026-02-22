@@ -149,13 +149,14 @@ def main():
             vid_title = video["title"]
             print(f"  → {vid_title}")
 
-            transcript = tr.get_transcript(vid_id)
+            transcript, transcript_error = tr.get_transcript(vid_id)
             time.sleep(2)
             if transcript:
                 print(f"    Summarizing via {model}...")
                 summary = openrouter.summarize_video(vid_title, transcript, model)
             else:
-                print("    No transcript available.")
+                if not transcript_error or transcript_error == "unavailable":
+                    print("    No transcript available.")
                 summary = None
 
             processed_videos.append(
@@ -165,6 +166,7 @@ def main():
                     "published_at": _fmt_date(video["published_at"]),
                     "thumbnail_url": video["thumbnail_url"],
                     "summary": summary,
+                    "transcript_error": transcript_error,
                 }
             )
 
