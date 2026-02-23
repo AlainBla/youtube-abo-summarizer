@@ -4,52 +4,110 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Purpose
 
-Fetch new videos from YouTube channels (via OAuth subscriptions or an explicit list), pull their transcripts, summarize them with an LLM via OpenRouter, and render a single HTML report per run. Planned future feature: send the report via `mutt`.
+Fetch new videos from YouTube channels (via OAuth subscriptions or an explicit list), pull their transcripts, summarize them with an LLM via OpenRouter, and render a single HTML report per run. Reports can optionally be sent via SMTP using `send_mail.py`.
 
 ## Setup
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env   # then fill in OPENROUTER_API_KEY
+cp .env.example .env   # then fill in OPENROUTER_API_KEY and any optional settings
 ```
 
-## Running
+## Two-phase pipeline (recommended)
+
+The pipeline is split into a **collect** phase and a **report** phase so that transcript fetching and LLM summarization only happen when new videos are found, not every time a digest is sent.
+
+### Collect phase — run frequently (e.g. every hour)
 
 ```bash
-# Mode A — use YouTube OAuth subscriptions
-python summarize.py --auth [--days 7] [--output summary.html]
+# Pull from OAuth subscriptions
+python collect.py --auth [--hours N]
 
-# Mode B — explicit channels (IDs, handles, or URLs)
-python summarize.py UC123abc UC456def [--days 7]
-python summarize.py --file channels.txt [--days 7]
+# Explicit channels (IDs, handles, or URLs)
+python collect.py UC123abc UC456def [--hours N]
+python collect.py --file channels.txt [--hours N]
 ```
 
-- Without `--days`, each channel's last-run timestamp is read from `last_run.json`; on first run it defaults to 7 days back.
-- `--days N` overrides last-run state and does **not** update it.
-- Default output filename: `summary_YYYY-MM-DD.html`.
+- Fetches new videos, transcripts, and summaries; persists results to `data/`.
+- Without `--hours`, uses each channel's last-run timestamp from `last_run.json`; defaults to 24 h on first run.
+- `--hours N` overrides last-run state and does **not** update it.
+- `--prune-days N` removes store entries older than N days (default: 7).
+
+### Report phase — run on digest schedule (e.g. every 6 h or daily)
+
+```bash
+python report.py [--hours 24] [--output summary.html] [--skip-empty] [--send-to EMAIL]
+```
+
+- Reads `data/videos.db`, includes videos published within the last `--hours` hours.
+- `--skip-empty` omits channels with no videos in the window.
+- `--send-to EMAIL` sends the rendered HTML via SMTP after writing the file.
+- No YouTube API calls, no LLM calls.
+
+### Cron scripts
+
+| Script | Purpose |
+|---|---|
+| `collect.sh` | Runs `collect.py --auth`; schedule frequently (e.g. `*/30 * * * *`) |
+| `run_6hours.sh` | Renders and mails a 6-hour digest |
+| `run_12hours.sh` | Renders and mails a 12-hour digest |
+| `run_daily.sh` | Renders and mails a 24-hour digest |
+
+## All-in-one mode (legacy)
+
+`summarize.py` still works as before — it fetches, summarizes, and renders in a single pass without touching `data/`. Useful for one-off runs or testing.
+
+```bash
+python summarize.py --auth [--hours 24] [--output summary.html] [--skip-empty]
+python summarize.py UC123abc UC456def [--hours 24]
+python summarize.py --file channels.txt [--hours 24]
+```
+
+## Send mail standalone
+
+```bash
+python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
+```
 
 ## Architecture
 
 | File | Role |
 |---|---|
-| `summarize.py` | CLI entry point; orchestrates the full pipeline |
-| `youtube_client.py` | YouTube Data API v3 wrapper (auth, subscriptions, video search) |
-| `transcripts.py` | `youtube-transcript-api` wrapper; prefers DE then EN |
-| `openrouter.py` | OpenRouter client (OpenAI-compatible); returns HTML-fragment summaries |
+| `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
+| `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
+| `store.py` | SQLite + file store: `data/videos.db` (metadata), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
+| `summarize.py` | Legacy all-in-one CLI (fetch + render in one pass, no store involvement) |
+| `youtube_client.py` | YouTube Data API v3 wrapper (auth, subscriptions, video search, channel resolution) |
+| `transcripts.py` | `youtube-transcript-api` wrapper; prefers DE then EN; handles ip_blocked / rate_limited / country_blocked errors |
+| `openrouter.py` | OpenRouter client (OpenAI-compatible); returns HTML-fragment summaries with timestamp links |
 | `renderer.py` | Jinja2 renderer; writes the final HTML file |
 | `template.html.j2` | Self-contained HTML template with embedded dark-theme CSS |
 | `state.py` | Reads/writes `last_run.json` (channel_id → last checked ISO timestamp) |
+| `send_mail.py` | Standalone script; sends an HTML file as an email via SMTP_SSL |
 
 ## Credentials and Sensitive Files
 
 - `client_secrets.json` — Google OAuth credentials (never commit)
 - `token.pickle` — cached OAuth token (never commit)
-- `.env` — `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` (never commit)
+- `.env` — API keys and SMTP credentials (never commit)
 - `last_run.json` — auto-generated state file (gitignored)
+- `data/` — auto-generated store directory (gitignored): `videos.db`, `transcripts/`, `summaries/`
 
 ## Configuration (`.env`)
 
 ```
+# Required
 OPENROUTER_API_KEY=...
 OPENROUTER_MODEL=gpt-oss-20b   # any OpenRouter model ID
+
+# Optional: residential proxy for transcript fetching (Webshare or generic)
+# Format: http://USERNAME:PASSWORD@host:port
+WEBSHARE_PROXY_URL=
+
+# Required only for send_mail.py / report.py --send-to
+SMTP_HOST=mail.example.com
+SMTP_PORT=587                  # defaults to 587
+SMTP_USER=user@example.com
+SMTP_PASS=your_smtp_password
+SMTP_FROM=user@example.com     # optional, defaults to SMTP_USER
 ```

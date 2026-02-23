@@ -4,13 +4,15 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 
 ## Features
 
+- **Two-phase pipeline**: Separate collection (fetch + summarize) from reporting (render + send), so transcripts and LLM calls only happen when new videos arrive — not on every digest
 - **Two source modes**: OAuth-based subscription list or explicit channel IDs/handles
 - **Incremental runs**: Tracks the last-checked timestamp per channel in `last_run.json`; only fetches videos published since the last run
 - **Transcript fetching**: Prefers German, falls back to English, then any available language
 - **AI summarization**: Generates structured HTML summaries (overview, key points, takeaway) with clickable timestamp links into the video
+- **Transcript and summary storage**: Transcripts and summaries are cached to `data/` so they can be re-rendered or re-used without hitting YouTube or the LLM again
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
 - **Email delivery**: Sends the report via SMTP
-- **Cron-ready**: Includes shell scripts for daily, 6-hour, and 12-hour scheduled runs
+- **Cron-ready**: Includes shell scripts for frequent collection and daily/6-hour/12-hour digest delivery
 
 ## Requirements
 
@@ -48,28 +50,55 @@ Place your Google OAuth credentials in `client_secrets.json` (downloaded from th
 | `SMTP_FROM` | No | Sender address (defaults to `SMTP_USER`) |
 | `WEBSHARE_PROXY_URL` | No | Residential proxy URL for transcript fetching |
 
-## Usage
+## Usage — two-phase pipeline (recommended)
+
+The pipeline is split into a **collect** phase and a **report** phase. Run collection frequently so new videos are picked up quickly; run report on whatever digest schedule you want. Transcript fetching and LLM summarization only happen during collection.
+
+### 1. Collect — fetch new videos, transcripts, and summaries
 
 ```bash
 # Use your YouTube OAuth subscriptions
-python summarize.py --auth
+python collect.py --auth
 
 # Look back N hours instead of using persisted state
-python summarize.py --auth --hours 12
+python collect.py --auth --hours 2
 
 # Explicit channels (IDs, handles, or URLs)
-python summarize.py UC123abc @SomeHandle https://youtube.com/c/SomeChannel
+python collect.py UC123abc @SomeHandle
 
 # Read channels from a file (one per line)
-python summarize.py --file channels.txt
-
-# Custom output file; omit channels with no new videos
-python summarize.py --auth --output report.html --skip-empty
+python collect.py --file channels.txt
 ```
 
-**State tracking**: Without `--hours`, each channel's last-run timestamp is read from `last_run.json` and updated after the run. `--hours N` overrides this and does **not** update the state, so it is safe for ad-hoc or re-processing runs.
+Results are written to `data/` (SQLite metadata + individual transcript and summary files). Duplicate videos are skipped automatically. Old entries are pruned after 7 days by default (`--prune-days N` to change).
 
-## Email delivery
+### 2. Report — render and optionally send a digest
+
+```bash
+# Render a 24-hour digest (default)
+python report.py --output summary.html
+
+# Custom time window
+python report.py --hours 6 --output summary_6h.html
+
+# Skip channels with no new videos and send via email
+python report.py --hours 24 --skip-empty --send-to you@example.com
+```
+
+No YouTube API calls or LLM calls happen here — it reads only from `data/`.
+
+## Usage — all-in-one mode (for ad-hoc runs)
+
+`summarize.py` fetches, summarizes, and renders in a single pass without using the store. Useful for one-off runs or testing.
+
+```bash
+python summarize.py --auth
+python summarize.py --auth --hours 12
+python summarize.py UC123abc @SomeHandle
+python summarize.py --file channels.txt --output report.html --skip-empty
+```
+
+## Email delivery (standalone)
 
 ```bash
 python3 send_mail.py "YouTube Summary 2026-02-23" recipient@example.com summary_2026-02-23.html
@@ -77,28 +106,38 @@ python3 send_mail.py "YouTube Summary 2026-02-23" recipient@example.com summary_
 
 ## Scheduled runs (cron)
 
-The included shell scripts activate the virtual environment, run the summarizer, send the email, and clean up reports older than 7 days:
-
-| Script | Lookback | State updated |
-|---|---|---|
-| `run_daily.sh` | Since last run | Yes |
-| `run_12hours.sh` | 12 hours | No |
-| `run_6hours.sh` | 6 hours | No |
-
-Example crontab entries:
+Recommended crontab setup:
 
 ```
-0  7 * * *    /path/to/run_daily.sh   >> /path/to/cron.log 2>&1
-0  */6 * * *  /path/to/run_6hours.sh  >> /path/to/cron.log 2>&1
+# Collect every 30 minutes
+*/30 * * * *  /path/to/collect.sh >> /path/to/cron.log 2>&1
+
+# Send a 6-hour digest
+0 */6 * * *   /path/to/run_6hours.sh >> /path/to/cron.log 2>&1
+
+# Send a daily digest at 07:00
+0 7   * * *   /path/to/run_daily.sh  >> /path/to/cron.log 2>&1
 ```
+
+| Script | Purpose |
+|---|---|
+| `collect.sh` | Runs `collect.py --auth`; schedule this frequently |
+| `run_6hours.sh` | Renders and emails a 6-hour digest via `report.py` |
+| `run_12hours.sh` | Renders and emails a 12-hour digest via `report.py` |
+| `run_daily.sh` | Renders and emails a 24-hour digest via `report.py` |
+
+Each report script activates the virtual environment, renders the HTML, sends the email, and cleans up HTML files older than 7 days.
 
 ## Architecture
 
 | File | Role |
 |---|---|
-| `summarize.py` | CLI entry point; orchestrates the full pipeline |
-| `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search) |
-| `transcripts.py` | `youtube-transcript-api` wrapper; language selection and timestamp insertion |
+| `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
+| `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
+| `store.py` | SQLite + file store: `data/videos.db` (metadata), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
+| `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
+| `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
+| `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling |
 | `openrouter.py` | OpenRouter client; returns HTML-fragment summaries with timestamp links |
 | `renderer.py` | Jinja2 renderer; writes the final HTML report |
 | `template.html.j2` | Self-contained dark-theme HTML template |
@@ -120,23 +159,18 @@ YouTube actively blocks transcript requests from **datacenter IP addresses**. If
 
 **Mitigation**: Set `WEBSHARE_PROXY_URL` in `.env` to route transcript requests through a residential proxy. The tool includes full support for [Webshare](https://webshare.io) proxies via `youtube-transcript-api`'s `GenericProxyConfig`.
 
-### No deduplication
-If the same video appears in multiple channels (e.g., a collab), it will be summarized once per channel it appears in.
-
-### No transcript caching
-Transcripts are fetched fresh on every run. Re-running the tool for the same time window (e.g., with `--hours`) will re-fetch and re-summarize all videos.
-
 ### OpenRouter cost and availability
 Summarization costs money per token. There is no local fallback if the OpenRouter API is unavailable or the key is exhausted.
 
 ## Sensitive files (never commit)
 
-| File | Contents |
+| File/Dir | Contents |
 |---|---|
 | `client_secrets.json` | Google OAuth app credentials |
 | `token.pickle` | Cached OAuth token |
 | `.env` | API keys and SMTP credentials |
 | `last_run.json` | Per-channel run state |
+| `data/` | SQLite database, transcripts, and summaries |
 
 All of the above are listed in `.gitignore`.
 
