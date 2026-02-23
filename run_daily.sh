@@ -7,11 +7,11 @@ TO="alain@parkautomat.net"
 
 cd "$REPO"
 
+source .venv/bin/activate
+
 python3 summarize.py --auth --output "$OUTPUT"
 
-mutt -s "YouTube Summary $(date +%Y-%m-%d)" \
-     -e "set content_type=text/html" \
-     -- "$TO" < "$OUTPUT"
+python3 "$REPO/send_mail.py" "YouTube Summary $(date '+%Y-%m-%d %H:%M')" "$TO" "$OUTPUT"
 
 # Keep only the last 7 daily files
 find "$REPO" -maxdepth 1 -name "summary_*.html" -mtime +7 -delete

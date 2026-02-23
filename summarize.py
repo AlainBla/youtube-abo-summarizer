@@ -62,6 +62,11 @@ def parse_args():
         default=None,
         help="Output HTML file path (default: summary_YYYY-MM-DD.html).",
     )
+    parser.add_argument(
+        "--skip-empty",
+        action="store_true",
+        help="Exclude channels with no videos from the output.",
+    )
     return parser.parse_args()
 
 
@@ -185,6 +190,9 @@ def main():
             state.set_last_run(channel_id, now)
 
     # --- Render HTML ---
+    if args.skip_empty:
+        channels_data = [ch for ch in channels_data if ch["videos"]]
+
     print(f"\nRendering HTML → {output_path}")
     renderer.render_html(channels_data, output_path)
     print("Done.")
