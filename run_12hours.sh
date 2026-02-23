@@ -7,7 +7,7 @@ TO="alain@parkautomat.net"
 
 cd "$REPO"
 
-python3 summarize.py --auth --hours 12 --output "$OUTPUT"
+python3 summarize.py --auth --hours 12 --output "$OUTPUT" --skip-empty
 
 python3 "$REPO/send_mail.py" "YouTube Summary $(date '+%Y-%m-%d %H:%M')" "$TO" "$OUTPUT"
 

@@ -9,7 +9,7 @@ cd "$REPO"
 
 source .venv/bin/activate
 
-python3 summarize.py --auth --output "$OUTPUT"
+python3 summarize.py --auth --output "$OUTPUT" --skip-empty
 
 python3 "$REPO/send_mail.py" "YouTube Summary $(date '+%Y-%m-%d %H:%M')" "$TO" "$OUTPUT"
 
