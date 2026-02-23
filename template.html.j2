@@ -213,7 +213,7 @@
       </div>
       <div class="video-body">
         <a class="video-title" href="https://www.youtube.com/watch?v={{ video.video_id }}" target="_blank">{{ video.title }}</a>
-        <div class="video-meta">{{ video.published_at }}</div>
+        <div class="video-meta">{{ video.published_at }}{% if video.duration %} &middot; {{ video.duration }}{% endif %}</div>
         <div class="video-summary">
           {% if video.summary %}
             {{ video.summary }}

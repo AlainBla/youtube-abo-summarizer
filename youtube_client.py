@@ -79,6 +79,24 @@ def resolve_channel_id(service, identifier: str) -> dict | None:
     return {"channel_id": items[0]["id"], "title": snippet["title"]}
 
 
+def get_video_durations(service, video_ids: list[str]) -> dict[str, str]:
+    """Return {video_id: duration} for the given IDs.
+
+    Duration is an ISO 8601 string like "PT1H2M3S". Videos not found are omitted.
+    Batches requests at 50 IDs per call to stay within the API limit.
+    """
+    result = {}
+    for i in range(0, len(video_ids), 50):
+        batch = video_ids[i : i + 50]
+        resp = service.videos().list(
+            part="contentDetails",
+            id=",".join(batch),
+        ).execute()
+        for item in resp.get("items", []):
+            result[item["id"]] = item["contentDetails"]["duration"]
+    return result
+
+
 def _get_uploads_playlist_id(service, channel_id: str) -> str | None:
     """Return the uploads playlist ID for a channel (costs 1 quota unit)."""
     resp = service.channels().list(

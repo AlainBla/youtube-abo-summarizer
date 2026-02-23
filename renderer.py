@@ -21,6 +21,7 @@ def render_html(channels_data: list[dict], output_path: str) -> None:
                     "video_id": str,
                     "title": str,
                     "published_at": str,
+                    "duration": str,       # formatted e.g. "12:34" or "1:02:03", may be ""
                     "thumbnail_url": str,
                     "summary": str | None,
                 }

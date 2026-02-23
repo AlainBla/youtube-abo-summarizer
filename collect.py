@@ -32,7 +32,7 @@ import state
 import store
 import transcripts as tr
 import openrouter
-from youtube_client import build_service, get_subscribed_channels, get_new_videos, resolve_channel_id
+from youtube_client import build_service, get_subscribed_channels, get_new_videos, get_video_durations, resolve_channel_id
 
 load_dotenv()
 
@@ -148,6 +148,11 @@ def main():
             continue
         print(f"  {len(videos)} new video(s).")
 
+        if videos:
+            durations = get_video_durations(service, [v["video_id"] for v in videos])
+            for v in videos:
+                v["duration"] = durations.get(v["video_id"])
+
         for video in videos:
             vid_id = video["video_id"]
             vid_title = video["title"]
@@ -173,6 +178,7 @@ def main():
                 "title": vid_title,
                 "published_at": video["published_at"],
                 "thumbnail_url": video["thumbnail_url"],
+                "duration": video.get("duration"),
                 "transcript": transcript,
                 "summary": summary,
                 "transcript_error": transcript_error,
