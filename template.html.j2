@@ -17,7 +17,7 @@
 
     .page-header {
       max-width: 900px;
-      margin: 0 auto 2.5rem;
+      margin: 0 auto 2rem;
       border-bottom: 2px solid #ff0000;
       padding-bottom: 1rem;
     }
@@ -32,6 +32,47 @@
       margin-top: 0.25rem;
     }
 
+    /* ── Table of contents ── */
+    .toc {
+      max-width: 900px;
+      margin: 0 auto 2.5rem;
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+    }
+    .toc-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.75rem;
+    }
+    .toc-channel {
+      margin-bottom: 0.55rem;
+    }
+    .toc-channel-link {
+      font-size: 0.87rem;
+      font-weight: 600;
+      color: #999;
+      text-decoration: none;
+    }
+    .toc-channel-link:hover { color: #fff; }
+    .toc-videos {
+      list-style: none;
+      padding-left: 1rem;
+      margin-top: 0.15rem;
+    }
+    .toc-videos li { padding: 0.05rem 0; }
+    .toc-videos a {
+      font-size: 0.82rem;
+      color: #555;
+      text-decoration: none;
+    }
+    .toc-videos a:hover { color: #bbb; }
+
+    /* ── Channel sections ── */
     .channel-section {
       max-width: 900px;
       margin: 0 auto 3rem;
@@ -58,6 +99,7 @@
       letter-spacing: 0.05em;
     }
 
+    /* ── Video cards ── */
     .video-card {
       background: #1a1a1a;
       border: 1px solid #2a2a2a;
@@ -106,8 +148,33 @@
     .video-meta {
       font-size: 0.8rem;
       color: #777;
-      margin-bottom: 0.9rem;
+      margin-bottom: 0.5rem;
     }
+
+    .model-badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-family: monospace;
+      color: #6a9fb5;
+      background: #0d1f2d;
+      border: 1px solid #1a3a52;
+      border-radius: 3px;
+      padding: 0.05rem 0.4rem;
+      margin-left: 0.4rem;
+      vertical-align: middle;
+    }
+
+    .skip-link {
+      display: inline-block;
+      font-size: 0.75rem;
+      color: #444;
+      text-decoration: none;
+      border: 1px solid #2a2a2a;
+      border-radius: 3px;
+      padding: 0.1rem 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .skip-link:hover { color: #999; border-color: #555; }
 
     .video-summary a.ts-link {
       color: #ff6b6b;
@@ -194,8 +261,27 @@
   <p class="meta">Generated {{ generated_date }} &mdash; {{ total_videos }} video{{ 's' if total_videos != 1 else '' }} across {{ channels|length }} channel{{ 's' if channels|length != 1 else '' }}</p>
 </header>
 
+{% if channels %}
+<nav class="toc">
+  <p class="toc-title">Contents</p>
+  {% for channel in channels %}
+  <div class="toc-channel">
+    <a class="toc-channel-link" href="#channel-{{ channel.channel_id }}">{{ channel.title }}</a>
+    {% if channel.videos %}
+    <ul class="toc-videos">
+      {% for video in channel.videos %}
+      <li><a href="#video-{{ video.video_id }}">{{ video.title }}</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% endfor %}
+</nav>
+{% endif %}
+
 {% for channel in channels %}
-<section class="channel-section">
+{% set channel_loop = loop %}
+<section class="channel-section" id="channel-{{ channel.channel_id }}">
   <div class="channel-header">
     <h2>{{ channel.title }}</h2>
     <span class="channel-badge">{{ channel.videos|length }} new</span>
@@ -203,7 +289,14 @@
 
   {% if channel.videos %}
     {% for video in channel.videos %}
-    <article class="video-card">
+    {% if not loop.last %}
+      {% set next_anchor = "#video-" ~ channel.videos[loop.index0 + 1].video_id %}
+    {% elif not channel_loop.last %}
+      {% set next_anchor = "#channel-" ~ channels[channel_loop.index0 + 1].channel_id %}
+    {% else %}
+      {% set next_anchor = "" %}
+    {% endif %}
+    <article class="video-card" id="video-{{ video.video_id }}">
       <div class="video-thumb">
         {% if video.thumbnail_url %}
           <img src="{{ video.thumbnail_url }}" alt="{{ video.title }}">
@@ -213,7 +306,8 @@
       </div>
       <div class="video-body">
         <a class="video-title" href="https://www.youtube.com/watch?v={{ video.video_id }}" target="_blank">{{ video.title }}</a>
-        <div class="video-meta">{{ video.published_at }}{% if video.duration %} &middot; {{ video.duration }}{% endif %}</div>
+        <div class="video-meta">{{ video.published_at }}{% if video.duration %} &middot; {{ video.duration }}{% endif %}{% if video.summary_model %}<span class="model-badge">{{ video.summary_model }}</span>{% endif %}</div>
+        {% if next_anchor %}<a class="skip-link" href="{{ next_anchor }}">skip ↓</a>{% endif %}
         <div class="video-summary">
           {% if video.summary %}
             {{ video.summary }}

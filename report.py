@@ -105,11 +105,13 @@ def _retry_missing_transcripts(entries: list[dict], model: str) -> None:
             print(f"    Transcript found — summarizing via {model}...")
             summary = openrouter.summarize_video(vid_id, vid_title, transcript, model)
 
-        store.update_video_with_summary(vid_id, transcript, summary, transcript_error)
+        store.update_video_with_summary(vid_id, transcript, summary, transcript_error,
+                                        summary_model=model if summary else None)
 
         # Update the in-memory entry so the renderer sees the fresh data
         entry["summary"] = summary
         entry["transcript_error"] = transcript_error
+        entry["summary_model"] = model if summary else None
 
 
 def main():
@@ -149,6 +151,7 @@ def main():
             "duration": _fmt_duration(e.get("duration")),
             "thumbnail_url": e["thumbnail_url"],
             "summary": e["summary"],
+            "summary_model": e.get("summary_model"),
             "transcript_error": e.get("transcript_error"),
         })
 
