@@ -8,4 +8,4 @@ REPO="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO"
 source .venv/bin/activate
 
-python3 collect.py --auth --hours 2 >> "$REPO/cron.log" 2>&1
+python3 collect.py --auth --hours 4 >> "$REPO/cron.log" 2>&1
