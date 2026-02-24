@@ -179,6 +179,7 @@ def main():
                 "published_at": video["published_at"],
                 "thumbnail_url": video["thumbnail_url"],
                 "duration": video.get("duration"),
+                "summary_model": model if summary else None,
                 "transcript": transcript,
                 "summary": summary,
                 "transcript_error": transcript_error,

@@ -25,10 +25,16 @@ CREATE TABLE IF NOT EXISTS videos (
     published_at    TEXT NOT NULL,
     thumbnail_url   TEXT NOT NULL,
     duration        TEXT,
+    summary_model   TEXT,
     transcript_error TEXT,
     collected_at    TEXT NOT NULL
 );
 """
+
+_MIGRATIONS = [
+    ("duration",      "ALTER TABLE videos ADD COLUMN duration TEXT"),
+    ("summary_model", "ALTER TABLE videos ADD COLUMN summary_model TEXT"),
+]
 
 
 def _conn() -> sqlite3.Connection:
@@ -38,10 +44,10 @@ def _conn() -> sqlite3.Connection:
     c = sqlite3.connect(DB_PATH)
     c.row_factory = sqlite3.Row
     c.execute(_SCHEMA)
-    # Migration: add duration column to existing databases
     cols = {row[1] for row in c.execute("PRAGMA table_info(videos)")}
-    if "duration" not in cols:
-        c.execute("ALTER TABLE videos ADD COLUMN duration TEXT")
+    for col, stmt in _MIGRATIONS:
+        if col not in cols:
+            c.execute(stmt)
     c.commit()
     return c
 
@@ -51,20 +57,22 @@ def add_video(entry: dict) -> bool:
 
     entry keys:
         video_id, channel_id, channel_title, title, published_at (ISO str),
-        thumbnail_url, duration (ISO 8601 str|None), transcript (str|None),
-        summary (str|None), transcript_error (str|None), collected_at (ISO str).
+        thumbnail_url, duration (ISO 8601 str|None), summary_model (str|None),
+        transcript (str|None), summary (str|None), transcript_error (str|None),
+        collected_at (ISO str).
     """
     with _conn() as c:
         try:
             c.execute(
                 """INSERT INTO videos
                    (video_id, channel_id, channel_title, title, published_at,
-                    thumbnail_url, duration, transcript_error, collected_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    thumbnail_url, duration, summary_model, transcript_error, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry["video_id"], entry["channel_id"], entry["channel_title"],
                     entry["title"], entry["published_at"], entry["thumbnail_url"],
-                    entry.get("duration"), entry.get("transcript_error"), entry["collected_at"],
+                    entry.get("duration"), entry.get("summary_model"),
+                    entry.get("transcript_error"), entry["collected_at"],
                 ),
             )
         except sqlite3.IntegrityError:
@@ -86,12 +94,13 @@ def update_video_with_summary(
     transcript: str | None,
     summary: str | None,
     transcript_error: str | None,
+    summary_model: str | None = None,
 ) -> None:
-    """Update transcript_error in DB and write transcript/summary files if provided."""
+    """Update transcript_error and summary_model in DB; write transcript/summary files if provided."""
     with _conn() as c:
         c.execute(
-            "UPDATE videos SET transcript_error = ? WHERE video_id = ?",
-            (transcript_error, video_id),
+            "UPDATE videos SET transcript_error = ?, summary_model = ? WHERE video_id = ?",
+            (transcript_error, summary_model, video_id),
         )
     if transcript is not None:
         (TRANSCRIPTS_DIR / f"{video_id}.txt").write_text(transcript, encoding="utf-8")

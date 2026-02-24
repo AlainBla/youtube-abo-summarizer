@@ -6,7 +6,7 @@ from openai import OpenAI
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 SYSTEM_PROMPT = """You are an assistant that summarizes YouTube videos based on their transcripts.
-Write the summary in the same language as the transcript.
+Always write the summary in German, regardless of the transcript language.
 Structure your response in clean HTML using these elements only (no full document tags):
 - <h3> for section headings
 - <p> for paragraphs
