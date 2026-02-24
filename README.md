@@ -87,6 +87,26 @@ python report.py --hours 24 --skip-empty --send-to you@example.com
 
 No YouTube API calls or LLM calls happen here — it reads only from `data/`.
 
+## Usage — export archive
+
+`export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, sorting by date/channel/title, and pagination (20 items per page). No server required.
+
+```bash
+# Last 7 days (default)
+python export.py
+
+# All videos in the store
+python export.py --all
+
+# Custom time window
+python export.py --hours 48
+
+# Custom output filename
+python export.py --all --output full_archive.html
+```
+
+`--hours` and `--all` are mutually exclusive. The default output filename is `export_YYYY-MM-DD_HH-MM.html`.
+
 ## Usage — all-in-one mode (for ad-hoc runs)
 
 `summarize.py` fetches, summarizes, and renders in a single pass without using the store. Useful for one-off runs or testing.
@@ -134,6 +154,7 @@ Each report script activates the virtual environment, renders the HTML, sends th
 |---|---|
 | `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
+| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, sort, and pagination |
 | `store.py` | SQLite + file store: `data/videos.db` (metadata), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
