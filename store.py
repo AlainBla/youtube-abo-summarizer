@@ -52,6 +52,19 @@ def _conn() -> sqlite3.Connection:
     return c
 
 
+def get_video(video_id: str) -> dict | None:
+    """Return stored video metadata with has_transcript and has_summary flags, or None if not found."""
+    row = _conn().execute(
+        "SELECT * FROM videos WHERE video_id = ?", (video_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["has_transcript"] = (TRANSCRIPTS_DIR / f"{video_id}.txt").exists()
+    d["has_summary"] = (SUMMARIES_DIR / f"{video_id}.html").exists()
+    return d
+
+
 def add_video(entry: dict) -> bool:
     """Insert one video entry. Returns True if inserted, False if already present.
 

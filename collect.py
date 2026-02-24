@@ -158,37 +158,57 @@ def main():
             vid_title = video["title"]
             print(f"  → {vid_title}")
 
-            transcript, transcript_error = tr.get_transcript(vid_id)
-            time.sleep(5)
+            existing = store.get_video(vid_id)
 
-            if transcript:
+            if existing and existing["has_transcript"] and existing["has_summary"]:
+                print(f"    Already in store with transcript and summary, skipping.")
+                continue
+
+            # Fetch transcript only if not already stored
+            if existing and existing["has_transcript"]:
+                transcript = (store.TRANSCRIPTS_DIR / f"{vid_id}.txt").read_text(encoding="utf-8")
+                transcript_error = existing.get("transcript_error")
+            else:
+                transcript, transcript_error = tr.get_transcript(vid_id)
+                time.sleep(5)
+                if not transcript:
+                    if not transcript_error or transcript_error == "unavailable":
+                        print("    No transcript available.")
+                    elif transcript_error == "country_blocked":
+                        print("    Video in dieser Region gesperrt — kein Transkript.")
+
+            # Summarize only if we have a transcript and no summary yet
+            if transcript and (not existing or not existing["has_summary"]):
                 print(f"    Summarizing via {model}...")
                 summary = openrouter.summarize_video(vid_id, vid_title, transcript, model)
             else:
-                if not transcript_error or transcript_error == "unavailable":
-                    print("    No transcript available.")
-                elif transcript_error == "country_blocked":
-                    print("    Video in dieser Region gesperrt — kein Transkript.")
                 summary = None
 
-            added = store.add_video({
-                "channel_id": channel_id,
-                "channel_title": channel_title,
-                "video_id": vid_id,
-                "title": vid_title,
-                "published_at": video["published_at"],
-                "thumbnail_url": video["thumbnail_url"],
-                "duration": video.get("duration"),
-                "summary_model": model if summary else None,
-                "transcript": transcript,
-                "summary": summary,
-                "transcript_error": transcript_error,
-                "collected_at": now.isoformat(),
-            })
-            if added:
-                total_added += 1
+            if existing:
+                store.update_video_with_summary(
+                    vid_id,
+                    transcript if not existing["has_transcript"] else None,
+                    summary,
+                    transcript_error,
+                    model if summary else existing.get("summary_model"),
+                )
             else:
-                print(f"    Already in store, skipping.")
+                added = store.add_video({
+                    "channel_id": channel_id,
+                    "channel_title": channel_title,
+                    "video_id": vid_id,
+                    "title": vid_title,
+                    "published_at": video["published_at"],
+                    "thumbnail_url": video["thumbnail_url"],
+                    "duration": video.get("duration"),
+                    "summary_model": model if summary else None,
+                    "transcript": transcript,
+                    "summary": summary,
+                    "transcript_error": transcript_error,
+                    "collected_at": now.isoformat(),
+                })
+                if added:
+                    total_added += 1
 
         if args.hours is None:
             state.set_last_run(channel_id, now)
