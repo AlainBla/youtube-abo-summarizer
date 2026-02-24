@@ -29,6 +29,7 @@ python collect.py --file channels.txt [--hours N]
 ```
 
 - Fetches new videos, transcripts, and summaries; persists results to `data/`.
+- Videos already in the store are handled incrementally: skipped entirely if both transcript and summary exist; otherwise only the missing piece is fetched or generated.
 - Without `--hours`, uses each channel's last-run timestamp from `last_run.json`; defaults to 24 h on first run.
 - `--hours N` overrides last-run state and does **not** update it.
 - `--prune-days N` removes store entries older than N days (default: 7).
@@ -52,6 +53,19 @@ python report.py [--hours 24] [--output summary.html] [--skip-empty] [--send-to 
 | `run_6hours.sh` | Renders and mails a 6-hour digest |
 | `run_12hours.sh` | Renders and mails a 12-hour digest |
 | `run_daily.sh` | Renders and mails a 24-hour digest |
+
+## Export archive
+
+`export.py` renders stored videos into a self-contained HTML file for offline browsing (client-side search, sort, pagination).
+
+```bash
+python export.py                        # last 7 days (default)
+python export.py --all                  # all videos in store
+python export.py --hours 48             # custom time window
+python export.py --all --output full_archive.html
+```
+
+`--hours` and `--all` are mutually exclusive. Default output filename: `export_YYYY-MM-DD_HH-MM.html`.
 
 ## All-in-one mode (legacy)
 
