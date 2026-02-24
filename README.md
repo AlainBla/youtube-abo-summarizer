@@ -9,7 +9,7 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 - **Incremental runs**: Tracks the last-checked timestamp per channel in `last_run.json`; only fetches videos published since the last run
 - **Transcript fetching**: Prefers German, falls back to English, then any available language
 - **AI summarization**: Generates structured HTML summaries (overview, key points, takeaway) with clickable timestamp links into the video
-- **Transcript and summary storage**: Transcripts and summaries are cached to `data/` so they can be re-rendered or re-used without hitting YouTube or the LLM again
+- **Transcript and summary storage**: Transcripts and summaries are cached to `data/`. On subsequent runs, videos that already have both a transcript and a summary are skipped entirely — no redundant YouTube or LLM calls. If only the transcript is missing it is fetched; if only the summary is missing the stored transcript is re-used and only the LLM call is made
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
 - **Email delivery**: Sends the report via SMTP
 - **Cron-ready**: Includes shell scripts for frequent collection and daily/6-hour/12-hour digest delivery
@@ -70,7 +70,7 @@ python collect.py UC123abc @SomeHandle
 python collect.py --file channels.txt
 ```
 
-Results are written to `data/` (SQLite metadata + individual transcript and summary files). Duplicate videos are skipped automatically. Old entries are pruned after 7 days by default (`--prune-days N` to change).
+Results are written to `data/` (SQLite metadata + individual transcript and summary files). Videos already in the store are handled incrementally: if both transcript and summary exist they are skipped entirely; if only one is missing, only the missing piece is fetched or generated. Old entries are pruned after 7 days by default (`--prune-days N` to change).
 
 ### 2. Report — render and optionally send a digest
 
