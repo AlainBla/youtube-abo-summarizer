@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Export — {{ generated_date }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      line-height: 1.6;
+      padding: 2rem 1rem;
+    }
+
+    .page-header {
+      max-width: 900px;
+      margin: 0 auto 1.5rem;
+      border-bottom: 2px solid #ff0000;
+      padding-bottom: 1rem;
+    }
+    .page-header h1 { font-size: 1.8rem; font-weight: 700; color: #fff; }
+    .page-header .meta { color: #888; font-size: 0.9rem; margin-top: 0.25rem; }
+
+    /* ── Controls bar ── */
+    .controls-bar {
+      max-width: 900px;
+      margin: 0 auto 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .controls-bar input[type="search"] {
+      flex: 1;
+      min-width: 200px;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-size: 0.95rem;
+      padding: 0.45rem 0.75rem;
+      outline: none;
+    }
+    .controls-bar input[type="search"]:focus { border-color: #555; }
+    .controls-bar input[type="search"]::placeholder { color: #555; }
+    .controls-bar select {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-size: 0.9rem;
+      padding: 0.45rem 0.75rem;
+      outline: none;
+      cursor: pointer;
+    }
+    .controls-bar select:focus { border-color: #555; }
+    .results-count { color: #666; font-size: 0.85rem; white-space: nowrap; }
+
+    /* ── Video cards ── */
+    .video-card {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      display: flex;
+      gap: 1.25rem;
+      padding: 1.1rem;
+      margin-bottom: 1rem;
+      transition: border-color 0.15s;
+    }
+    .video-card:hover { border-color: #444; }
+
+    .video-thumb { flex-shrink: 0; width: 200px; }
+    .video-thumb img { width: 100%; border-radius: 5px; display: block; }
+    .video-thumb .no-thumb {
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: #2a2a2a;
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #555;
+      font-size: 0.75rem;
+    }
+
+    .video-body { flex: 1; min-width: 0; }
+
+    .video-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+      text-decoration: none;
+      display: block;
+      margin-bottom: 0.25rem;
+    }
+    .video-title:hover { color: #ff4444; }
+
+    .video-meta { font-size: 0.8rem; color: #777; margin-bottom: 0.5rem; }
+
+    .model-badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-family: monospace;
+      color: #6a9fb5;
+      background: #0d1f2d;
+      border: 1px solid #1a3a52;
+      border-radius: 3px;
+      padding: 0.05rem 0.4rem;
+      margin-left: 0.4rem;
+      vertical-align: middle;
+    }
+
+    .video-summary a.ts-link {
+      color: #ff6b6b;
+      font-size: 0.78rem;
+      font-family: monospace;
+      background: #2a1515;
+      padding: 0.1rem 0.35rem;
+      border-radius: 3px;
+      text-decoration: none;
+      margin-right: 0.35rem;
+    }
+    .video-summary a.ts-link:hover { background: #3d1e1e; color: #ff9999; }
+
+    .video-summary h3 {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #aaa;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 0.75rem 0 0.3rem;
+    }
+    .video-summary h3:first-child { margin-top: 0; }
+    .video-summary p { font-size: 0.92rem; color: #ccc; margin-bottom: 0.5rem; }
+    .video-summary ul { padding-left: 1.2rem; margin-bottom: 0.5rem; }
+    .video-summary li { font-size: 0.92rem; color: #ccc; margin-bottom: 0.2rem; }
+
+    .no-transcript {
+      font-size: 0.88rem;
+      font-style: italic;
+      padding: 0.4rem 0.7rem;
+      border-radius: 4px;
+      border-left: 3px solid;
+    }
+    .no-transcript.unavailable { color: #666; border-color: #333; }
+    .no-transcript.ip-blocked { color: #c0824a; background: #1f1508; border-color: #7a4a1a; }
+    .no-transcript.rate-limited { color: #b0a040; background: #181508; border-color: #6a5f10; }
+    .no-transcript.country-blocked { color: #7a9fc0; background: #080e18; border-color: #1a3a5a; }
+
+    .no-videos { color: #555; font-style: italic; font-size: 0.9rem; padding: 1rem 0; }
+
+    /* ── Pagination ── */
+    .pagination {
+      max-width: 900px;
+      margin: 1.5rem auto 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+    }
+    .pagination button {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      color: #ccc;
+      font-size: 0.9rem;
+      padding: 0.4rem 1rem;
+      cursor: pointer;
+    }
+    .pagination button:hover:not(:disabled) { border-color: #555; color: #fff; }
+    .pagination button:disabled { color: #444; cursor: default; }
+    .pagination .page-info { color: #777; font-size: 0.9rem; }
+
+    .page-footer {
+      max-width: 900px;
+      margin: 2rem auto 0;
+      border-top: 1px solid #2a2a2a;
+      padding-top: 1rem;
+      color: #555;
+      font-size: 0.8rem;
+      text-align: center;
+    }
+
+    @media (max-width: 600px) {
+      .video-card { flex-direction: column; }
+      .video-thumb { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="page-header">
+  <h1>YouTube Export</h1>
+  <p class="meta">Generiert {{ generated_date }} &mdash; {{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}</p>
+</header>
+
+<div class="controls-bar">
+  <input type="search" id="search" placeholder="Titel oder Zusammenfassung durchsuchen&hellip;" autocomplete="off">
+  <select id="sort">
+    <option value="date-desc">Neueste zuerst</option>
+    <option value="date-asc">Älteste zuerst</option>
+    <option value="channel">Kanal A–Z</option>
+    <option value="title">Titel A–Z</option>
+  </select>
+  <span class="results-count" id="results-count"></span>
+</div>
+
+<div id="grid"></div>
+
+<div class="pagination" id="pagination"></div>
+
+<footer class="page-footer">
+  youtube-abo-summarizer
+</footer>
+
+<script>
+const VIDEOS = {{ videos_json }};
+const PAGE_SIZE = 20;
+
+let filtered = [];
+let currentPage = 1;
+let debounceTimer = null;
+
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function stripHtml(html) {
+  return html ? html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ') : '';
+}
+
+function buildCard(v) {
+  const thumb = v.thumbnail_url
+    ? '<img src="' + escHtml(v.thumbnail_url) + '" alt="' + escHtml(v.title) + '">'
+    : '<div class="no-thumb">No thumbnail</div>';
+
+  let metaExtras = '';
+  if (v.duration) metaExtras += ' &middot; ' + escHtml(v.duration);
+  if (v.summary_model) metaExtras += '<span class="model-badge">' + escHtml(v.summary_model) + '</span>';
+
+  let summaryHtml;
+  if (v.summary) {
+    summaryHtml = v.summary;
+  } else if (v.transcript_error === 'ip_blocked') {
+    summaryHtml = '<p class="no-transcript ip-blocked">&#x26A0; Kein Transkript &mdash; YouTube blockiert Transkript-Anfragen von dieser IP-Adresse (Rechenzentrum erkannt).</p>';
+  } else if (v.transcript_error === 'rate_limited') {
+    summaryHtml = '<p class="no-transcript rate-limited">&#x26A0; Kein Transkript &mdash; YouTube hat die Anfrage abgelehnt (zu viele Anfragen in kurzer Zeit).</p>';
+  } else if (v.transcript_error === 'country_blocked') {
+    summaryHtml = '<p class="no-transcript country-blocked">&#x1F310; Kein Transkript &mdash; Video ist nur in bestimmten Regionen verf\u00fcgbar (Geoblocking).</p>';
+  } else {
+    summaryHtml = '<p class="no-transcript unavailable">Kein Transkript f\u00fcr dieses Video verf\u00fcgbar.</p>';
+  }
+
+  return '<article class="video-card">'
+    + '<div class="video-thumb">' + thumb + '</div>'
+    + '<div class="video-body">'
+    + '<a class="video-title" href="https://www.youtube.com/watch?v=' + escHtml(v.video_id) + '" target="_blank" rel="noopener">' + escHtml(v.title) + '</a>'
+    + '<div class="video-meta">' + escHtml(v.channel_title) + ' &middot; ' + escHtml(v.published_at_display) + metaExtras + '</div>'
+    + '<div class="video-summary">' + summaryHtml + '</div>'
+    + '</div>'
+    + '</article>';
+}
+
+function applyFiltersAndSort() {
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  const sort = document.getElementById('sort').value;
+
+  filtered = q
+    ? VIDEOS.filter(function(v) {
+        var text = v.title.toLowerCase() + ' ' + stripHtml(v.summary || '').toLowerCase();
+        return text.indexOf(q) !== -1;
+      })
+    : VIDEOS.slice();
+
+  filtered.sort(function(a, b) {
+    switch (sort) {
+      case 'date-asc':
+        return a.published_at.localeCompare(b.published_at);
+      case 'channel': {
+        var c = a.channel_title.localeCompare(b.channel_title, undefined, {sensitivity: 'base'});
+        return c !== 0 ? c : b.published_at.localeCompare(a.published_at);
+      }
+      case 'title':
+        return a.title.localeCompare(b.title, undefined, {sensitivity: 'base'});
+      default: // date-desc
+        return b.published_at.localeCompare(a.published_at);
+    }
+  });
+
+  renderPage(1);
+}
+
+function renderPage(page) {
+  var total = filtered.length;
+  var pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  currentPage = Math.min(Math.max(1, page), pages);
+
+  var start = (currentPage - 1) * PAGE_SIZE;
+  var slice = filtered.slice(start, start + PAGE_SIZE);
+
+  document.getElementById('grid').innerHTML = slice.length
+    ? slice.map(buildCard).join('')
+    : '<p class="no-videos">Keine Videos gefunden.</p>';
+
+  document.getElementById('results-count').textContent =
+    total + ' Video' + (total !== 1 ? 's' : '');
+
+  var pag = document.getElementById('pagination');
+  if (pages <= 1) { pag.innerHTML = ''; return; }
+
+  var prevDisabled = currentPage <= 1 ? ' disabled' : '';
+  var nextDisabled = currentPage >= pages ? ' disabled' : '';
+  pag.innerHTML =
+    '<button onclick="renderPage(' + (currentPage - 1) + ')"' + prevDisabled + '>&#8592; Zur\u00fcck</button>'
+    + '<span class="page-info">Seite ' + currentPage + ' von ' + pages + '</span>'
+    + '<button onclick="renderPage(' + (currentPage + 1) + ')"' + nextDisabled + '>Weiter &#8594;</button>';
+}
+
+document.getElementById('search').addEventListener('input', function() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(applyFiltersAndSort, 200);
+});
+
+document.getElementById('sort').addEventListener('change', applyFiltersAndSort);
+
+applyFiltersAndSort();
+</script>
+
+</body>
+</html>

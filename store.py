@@ -129,6 +129,26 @@ def get_videos_since(since: datetime) -> list[dict]:
     return result
 
 
+def get_all_videos() -> list[dict]:
+    """Return all stored videos, newest first.
+
+    Loads transcript and summary from their files; both may be None.
+    """
+    rows = _conn().execute(
+        "SELECT * FROM videos ORDER BY published_at DESC"
+    ).fetchall()
+
+    result = []
+    for row in rows:
+        d = dict(row)
+        t_path = TRANSCRIPTS_DIR / f"{d['video_id']}.txt"
+        s_path = SUMMARIES_DIR / f"{d['video_id']}.html"
+        d["transcript"] = t_path.read_text(encoding="utf-8") if t_path.exists() else None
+        d["summary"] = s_path.read_text(encoding="utf-8") if s_path.exists() else None
+        result.append(d)
+    return result
+
+
 def prune_older_than(days: int = 7) -> int:
     """Delete entries and their files older than `days` days by published_at.
 
