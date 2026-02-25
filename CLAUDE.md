@@ -90,6 +90,7 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
 | `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, sort, and pagination |
+| `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries |
 | `store.py` | SQLite + file store: `data/videos.db` (metadata), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
 | `summarize.py` | Legacy all-in-one CLI (fetch + render in one pass, no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (auth, subscriptions, video search, channel resolution) |
