@@ -2,11 +2,13 @@
 
 import os
 import pickle
+import time
 from datetime import datetime, timezone
 
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
 CLIENT_SECRETS = os.path.join(os.path.dirname(__file__), "client_secrets.json")
@@ -88,12 +90,20 @@ def get_video_durations(service, video_ids: list[str]) -> dict[str, str]:
     result = {}
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i : i + 50]
-        resp = service.videos().list(
-            part="contentDetails",
-            id=",".join(batch),
-        ).execute()
-        for item in resp.get("items", []):
-            result[item["id"]] = item["contentDetails"]["duration"]
+        for attempt in range(3):
+            try:
+                resp = service.videos().list(
+                    part="contentDetails",
+                    id=",".join(batch),
+                ).execute()
+                for item in resp.get("items", []):
+                    result[item["id"]] = item["contentDetails"]["duration"]
+                break
+            except HttpError as e:
+                if e.resp.status >= 500 and attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
     return result
 
 
