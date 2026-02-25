@@ -58,6 +58,7 @@ Place your Google OAuth credentials in `client_secrets.json` (downloaded from th
 | `SUMMARY_LANG` | No | Language for LLM-generated summaries (default: `German`); any name the model understands, e.g. `English` |
 | `TRANSCRIPT_LANGS` | No | Comma-separated transcript language priority list (default: `de,en`); falls back to any available language |
 | `WEBSHARE_PROXY_URL` | No | Residential proxy URL for transcript fetching |
+| `PROXY_FALLBACK_COUNTRY` | No | Country code used for the geo-block retry (default: `DE`); appended to the Webshare username, e.g. `US`, `GB` |
 
 ## Usage — two-phase pipeline (recommended)
 
@@ -209,12 +210,12 @@ The YouTube Data API has a daily quota of **10,000 units**. Fetching videos from
 ### Transcript availability
 - Transcript languages are requested in the order defined by `TRANSCRIPT_LANGS` (default: `de,en`). Videos without a matching transcript fall back to any available language; if no transcript exists at all a "no transcript" notice is shown.
 - **Live streams**, **Shorts**, and some copyright-claimed videos may have no transcript.
-- **Region-locked videos** are detected via `VideoUnplayable` and skipped gracefully. Only videos whose unplayable reason explicitly mentions "country" or "region" are marked `country_blocked` (permanent skip); other causes — including future live events that have not yet aired — are marked `unavailable` and retried on the next run.
+- **Region-locked videos** are detected via `VideoUnplayable`. Only videos whose unplayable reason explicitly mentions "country" or "region" are treated as geo-blocked. When `WEBSHARE_PROXY_URL` is set, the tool automatically retries such videos once using a country-pinned proxy (default: `DE`, configurable via `PROXY_FALLBACK_COUNTRY`). The video is only marked `country_blocked` (permanent skip) if the retry also fails; other `VideoUnplayable` causes — including future live events — are marked `unavailable` and retried on the next run.
 
 ### IP blocking
 YouTube actively blocks transcript requests from **datacenter IP addresses**. If the tool runs on a server or VPS, most transcript fetches will be blocked. Symptoms: the HTML report shows "IP blocked" notices for the majority of videos.
 
-**Mitigation**: Set `WEBSHARE_PROXY_URL` in `.env` to route transcript requests through a residential proxy. The tool includes full support for [Webshare](https://webshare.io) proxies via `youtube-transcript-api`'s `GenericProxyConfig`.
+**Mitigation**: Set `WEBSHARE_PROXY_URL` in `.env` to route transcript requests through a residential proxy. The tool includes full support for [Webshare](https://webshare.io) proxies via `youtube-transcript-api`'s `GenericProxyConfig`. Geo-blocked videos are automatically retried via a country-pinned Webshare proxy (see `PROXY_FALLBACK_COUNTRY` above).
 
 ### LLM cost and availability
 When using OpenRouter, summarization costs money per token and depends on API availability. As an alternative, point the tool at a local [Ollama](https://ollama.com) instance (free, offline) by setting `LLM_BASE_URL=http://localhost:11434/v1` and `LLM_MODEL=<model>` in `.env`.
