@@ -1,6 +1,7 @@
 """OpenRouter API client for video summarization."""
 
 import os
+import re
 from openai import OpenAI
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -39,4 +40,7 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> s
             {"role": "user", "content": user_message},
         ],
     )
-    return response.choices[0].message.content.strip()
+    content = response.choices[0].message.content.strip()
+    # Some models (e.g. Gemma3) wrap the HTML in a markdown code fence; strip it.
+    content = re.sub(r"^```[a-zA-Z]*\s*\n?(.*?)\n?```$", r"\1", content, flags=re.DOTALL).strip()
+    return content
