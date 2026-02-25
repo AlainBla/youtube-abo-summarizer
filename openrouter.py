@@ -21,7 +21,14 @@ Structure your response in clean HTML using these elements only (no full documen
 - <h3> for section headings
 - <p> for paragraphs
 - <ul>/<li> for bullet points
-Keep it concise: a short overview paragraph, key points as bullets, and a one-sentence takeaway.
+
+Summary structure:
+1. A short introductory <p> (2–3 sentences) stating the topic and main thesis.
+2. One <h3> section per major topic, strictly in chronological order. Cover the full runtime of
+   the video — do not skip large portions. Scale the number of sections to video length:
+   short videos (<15 min): 2–3 sections; medium (15–45 min): 4–6 sections; long (>45 min): 6–10 sections.
+   Each section gets 2–5 <li> bullet points summarising the key arguments or facts.
+3. A concluding <h3> with a short <p> (2–3 sentences) summarising the overall message.
 
 The transcript contains timestamp markers in [MM:SS] format at the start of each segment.
 For each section heading and each bullet point, include a timestamp link to the corresponding
@@ -52,6 +59,7 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> s
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
         ],
+        max_tokens=4096,
     )
     content = response.choices[0].message.content.strip()
     # Some models (e.g. Gemma3) wrap the HTML in a markdown code fence; strip it.

@@ -53,8 +53,15 @@ def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) 
     except (NoTranscriptFound, TranscriptsDisabled):
         return None, "unavailable"
     except VideoUnplayable as e:
-        print(f"    [BLOCKED] Video in dieser Region gesperrt (country_blocked) für video_id={video_id}: {e}")
-        return None, "country_blocked"
+        reason_lower = (e.reason or "").lower()
+        if any(kw in reason_lower for kw in ("country", "region")):
+            print(f"    [BLOCKED] Video in dieser Region gesperrt (country_blocked) für video_id={video_id}: {e}")
+            return None, "country_blocked"
+        else:
+            # VideoUnplayable also fires for future live events (LIVE_STREAM_OFFLINE) and
+            # other non-geographic restrictions — don't treat these as permanent.
+            print(f"    [INFO] Video nicht abspielbar für video_id={video_id}: {e}")
+            return None, "unavailable"
     except CouldNotRetrieveTranscript as e:
         print(f"    [ERROR] {type(e).__name__} für video_id={video_id}: {e}")
         return None, "unavailable"

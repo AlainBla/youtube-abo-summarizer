@@ -8,7 +8,7 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 - **Two source modes**: OAuth-based subscription list or explicit channel IDs/handles
 - **Incremental runs**: Tracks the last-checked timestamp per channel in `last_run.json`; only fetches videos published since the last run
 - **Transcript fetching**: Configurable language priority (`TRANSCRIPT_LANGS`, default: `de,en`); falls back to any available language
-- **AI summarization**: Generates structured HTML summaries (overview, key points, takeaway) with clickable timestamp links; output language configurable via `SUMMARY_LANG` (default: German)
+- **AI summarization**: Generates structured HTML summaries with clickable timestamp links; sections are in chronological order and scaled to video length (2–3 sections for short videos, up to 6–10 for long ones); output language configurable via `SUMMARY_LANG` (default: German)
 - **Transcript and summary storage**: Transcripts and summaries are cached to `data/`. On subsequent runs, videos that already have both a transcript and a summary are skipped entirely — no redundant YouTube or LLM calls. If only the transcript is missing it is fetched; if only the summary is missing the stored transcript is re-used and only the LLM call is made
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
 - **Browsable archive export**: Single portable HTML file with client-side search, channel filter, sort, and pagination — works fully offline
@@ -195,7 +195,7 @@ Each report script activates the virtual environment, renders the HTML, sends th
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling |
-| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns HTML-fragment summaries with timestamp links |
+| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns HTML-fragment summaries with chronological sections, proportional depth, and timestamp links |
 | `renderer.py` | Jinja2 renderer; writes the final HTML report |
 | `template.html.j2` | Self-contained dark-theme HTML template |
 | `state.py` | Reads/writes `last_run.json` (per-channel ISO timestamps) |
@@ -209,7 +209,7 @@ The YouTube Data API has a daily quota of **10,000 units**. Fetching videos from
 ### Transcript availability
 - Transcript languages are requested in the order defined by `TRANSCRIPT_LANGS` (default: `de,en`). Videos without a matching transcript fall back to any available language; if no transcript exists at all a "no transcript" notice is shown.
 - **Live streams**, **Shorts**, and some copyright-claimed videos may have no transcript.
-- **Region-locked videos** (VideoUnplayable) are detected and skipped gracefully.
+- **Region-locked videos** are detected via `VideoUnplayable` and skipped gracefully. Only videos whose unplayable reason explicitly mentions "country" or "region" are marked `country_blocked` (permanent skip); other causes — including future live events that have not yet aired — are marked `unavailable` and retried on the next run.
 
 ### IP blocking
 YouTube actively blocks transcript requests from **datacenter IP addresses**. If the tool runs on a server or VPS, most transcript fetches will be blocked. Symptoms: the HTML report shows "IP blocked" notices for the majority of videos.
