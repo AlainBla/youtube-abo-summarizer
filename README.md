@@ -1,6 +1,6 @@
 # youtube-abo-summarizer
 
-Fetches new videos from your YouTube subscriptions (or an explicit channel list), retrieves their transcripts, summarizes them with an LLM via [OpenRouter](https://openrouter.ai), and renders a self-contained HTML report — optionally delivered by email.
+Fetches new videos from your YouTube subscriptions (or an explicit channel list), retrieves their transcripts, summarizes them with an LLM, and renders a self-contained HTML report — optionally delivered by email. Supports [OpenRouter](https://openrouter.ai) (default) and local [Ollama](https://ollama.com) instances (or any OpenAI-compatible endpoint).
 
 ## Features
 
@@ -18,7 +18,7 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 
 - Python 3.8+
 - A [Google Cloud project](https://console.cloud.google.com/) with the YouTube Data API v3 enabled and OAuth 2.0 credentials
-- An [OpenRouter](https://openrouter.ai) API key
+- An LLM backend: [OpenRouter](https://openrouter.ai) API key (default) **or** a local [Ollama](https://ollama.com) instance
 - An SMTP server for email delivery (optional)
 
 ## Setup
@@ -39,10 +39,15 @@ Place your Google OAuth credentials in `client_secrets.json` (downloaded from th
 
 ### `.env` variables
 
+**LLM backend** — `LLM_*` variables take precedence over `OPENROUTER_*` when both are set.
+
 | Variable | Required | Description |
 |---|---|---|
-| `OPENROUTER_API_KEY` | Yes | Your OpenRouter API key |
-| `OPENROUTER_MODEL` | No | Model ID (default: `gpt-oss-20b`) |
+| `OPENROUTER_API_KEY` | OpenRouter only | Your OpenRouter API key |
+| `OPENROUTER_MODEL` | No | Model ID for OpenRouter (default: `gpt-oss-20b`) |
+| `LLM_BASE_URL` | Ollama / custom | API base URL, e.g. `http://localhost:11434/v1` |
+| `LLM_MODEL` | No | Overrides `OPENROUTER_MODEL` when set |
+| `LLM_API_KEY` | No | Overrides `OPENROUTER_API_KEY` when set; omit for Ollama |
 | `SMTP_HOST` | For email | SMTP server hostname |
 | `SMTP_PORT` | For email | `465` (SSL) or `587` (STARTTLS) |
 | `SMTP_USER` | For email | SMTP username |
@@ -159,7 +164,7 @@ Each report script activates the virtual environment, renders the HTML, sends th
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling |
-| `openrouter.py` | OpenRouter client; returns HTML-fragment summaries with timestamp links |
+| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns HTML-fragment summaries with timestamp links |
 | `renderer.py` | Jinja2 renderer; writes the final HTML report |
 | `template.html.j2` | Self-contained dark-theme HTML template |
 | `state.py` | Reads/writes `last_run.json` (per-channel ISO timestamps) |
@@ -180,8 +185,8 @@ YouTube actively blocks transcript requests from **datacenter IP addresses**. If
 
 **Mitigation**: Set `WEBSHARE_PROXY_URL` in `.env` to route transcript requests through a residential proxy. The tool includes full support for [Webshare](https://webshare.io) proxies via `youtube-transcript-api`'s `GenericProxyConfig`.
 
-### OpenRouter cost and availability
-Summarization costs money per token. There is no local fallback if the OpenRouter API is unavailable or the key is exhausted.
+### LLM cost and availability
+When using OpenRouter, summarization costs money per token and depends on API availability. As an alternative, point the tool at a local [Ollama](https://ollama.com) instance (free, offline) by setting `LLM_BASE_URL=http://localhost:11434/v1` and `LLM_MODEL=<model>` in `.env`.
 
 ## Sensitive files (never commit)
 
