@@ -37,9 +37,11 @@ Include timestamp links to the relevant positions in the video using this exact 
 Replace VIDEO_ID with the video ID from the user message and SECONDS with the integer number of
 seconds (e.g. [1:23] → t=83).
 - For <h3> headings: place the timestamp link at the start of the heading.
-- For <p> paragraphs and <li> items: place timestamp link(s) inline at the END of the
-  relevant sentence, not at the beginning. For longer paragraphs, distribute 3–4 timestamps
-  across the paragraph — one after each sentence that corresponds to a new segment."""
+- For <p> paragraphs and <li> items: place each timestamp link directly after the sentence
+  it belongs to — not at the end of the paragraph. Each sentence that covers a new transcript
+  segment gets its own timestamp immediately following the full stop. For longer paragraphs,
+  this means 3–4 timestamps are distributed across the paragraph at the sentence level, not
+  grouped at the end."""
 
 
 def build_client() -> OpenAI:
