@@ -94,7 +94,7 @@ def _load_identifiers_from_file(path: str) -> list[str]:
 
 def main():
     args = parse_args()
-    model = os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
+    model = os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
 
     # --- Resolve channel list ---
     if args.auth:

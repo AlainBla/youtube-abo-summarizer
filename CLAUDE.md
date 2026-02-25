@@ -112,15 +112,21 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 ## Configuration (`.env`)
 
 ```
-# Required
+# ── OpenRouter (default) ──────────────────────────────────────────────────────
 OPENROUTER_API_KEY=...
-OPENROUTER_MODEL=gpt-oss-20b   # any OpenRouter model ID
+OPENROUTER_MODEL=openai/gpt-oss-120b   # any OpenRouter model ID
 
-# Optional: residential proxy for transcript fetching (Webshare or generic)
+# ── Local Ollama (alternative) ────────────────────────────────────────────────
+# LLM_BASE_URL and LLM_MODEL take precedence over OPENROUTER_* when set.
+# LLM_API_KEY is optional; Ollama needs no key (a dummy is used automatically).
+# LLM_BASE_URL=http://localhost:11434/v1
+# LLM_MODEL=gemma3:27b
+
+# ── Optional: residential proxy for transcript fetching ───────────────────────
 # Format: http://USERNAME:PASSWORD@host:port
 WEBSHARE_PROXY_URL=
 
-# Required only for send_mail.py / report.py --send-to
+# ── Required only for send_mail.py / report.py --send-to ──────────────────────
 SMTP_HOST=mail.example.com
 SMTP_PORT=587                  # defaults to 587
 SMTP_USER=user@example.com

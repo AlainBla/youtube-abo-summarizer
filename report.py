@@ -116,7 +116,7 @@ def _retry_missing_transcripts(entries: list[dict], model: str) -> None:
 
 def main():
     args = parse_args()
-    model = os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
+    model = os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
     since = datetime.now(tz=timezone.utc) - timedelta(hours=args.hours)
     output_path = args.output or f"summary_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.html"
 

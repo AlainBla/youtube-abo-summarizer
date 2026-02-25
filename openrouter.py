@@ -6,6 +6,10 @@ from openai import OpenAI
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
+# Override either variable to point at a different OpenAI-compatible backend.
+# LLM_BASE_URL — e.g. http://localhost:11434/v1 for a local Ollama instance.
+# LLM_API_KEY  — omit (or leave empty) for backends that need no key.
+
 SYSTEM_PROMPT = """You are an assistant that summarizes YouTube videos based on their transcripts.
 Always write the summary in German, regardless of the transcript language.
 Structure your response in clean HTML using these elements only (no full document tags):
@@ -23,10 +27,14 @@ seconds (e.g. [1:23] → t=83). Place the link at the start of the relevant head
 
 
 def build_client() -> OpenAI:
-    api_key = os.environ.get("OPENROUTER_API_KEY")
+    base_url = os.environ.get("LLM_BASE_URL") or OPENROUTER_BASE_URL
+    api_key = os.environ.get("LLM_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
-        raise ValueError("OPENROUTER_API_KEY is not set in the environment.")
-    return OpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key)
+        if base_url == OPENROUTER_BASE_URL:
+            raise ValueError("OPENROUTER_API_KEY (or LLM_API_KEY) is not set in the environment.")
+        # Local backends (e.g. Ollama) don't require a real key
+        api_key = "ollama"
+    return OpenAI(base_url=base_url, api_key=api_key)
 
 
 def summarize_video(video_id: str, title: str, transcript: str, model: str) -> str:
