@@ -55,6 +55,7 @@ Place your Google OAuth credentials in `client_secrets.json` (downloaded from th
 | `SMTP_USER` | For email | SMTP username |
 | `SMTP_PASS` | For email | SMTP password |
 | `SMTP_FROM` | No | Sender address (defaults to `SMTP_USER`) |
+| `SUMMARY_LANG` | No | Language for LLM-generated summaries (default: `German`); any name the model understands, e.g. `English` |
 | `TRANSCRIPT_LANGS` | No | Comma-separated transcript language priority list (default: `de,en`); falls back to any available language |
 | `WEBSHARE_PROXY_URL` | No | Residential proxy URL for transcript fetching |
 

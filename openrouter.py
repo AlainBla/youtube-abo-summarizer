@@ -3,6 +3,9 @@
 import os
 import re
 from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -10,8 +13,10 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # LLM_BASE_URL — e.g. http://localhost:11434/v1 for a local Ollama instance.
 # LLM_API_KEY  — omit (or leave empty) for backends that need no key.
 
-SYSTEM_PROMPT = """You are an assistant that summarizes YouTube videos based on their transcripts.
-Always write the summary in German, regardless of the transcript language.
+_summary_lang = os.environ.get("SUMMARY_LANG", "German")
+
+SYSTEM_PROMPT = f"""You are an assistant that summarizes YouTube videos based on their transcripts.
+Always write the summary in {_summary_lang}, regardless of the transcript language.
 Structure your response in clean HTML using these elements only (no full document tags):
 - <h3> for section headings
 - <p> for paragraphs

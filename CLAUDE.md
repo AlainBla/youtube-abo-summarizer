@@ -163,6 +163,10 @@ OPENROUTER_MODEL=openai/gpt-oss-120b   # any OpenRouter model ID
 # LLM_BASE_URL=http://localhost:11434/v1
 # LLM_MODEL=gemma3:27b
 
+# ── Optional: summary output language ────────────────────────────────────────
+# Any natural language name the model understands (default: German).
+# SUMMARY_LANG=German
+
 # ── Optional: transcript language preference ──────────────────────────────────
 # Comma-separated BCP-47 language codes in priority order (default: de,en).
 # Falls back to any available language if none match.
