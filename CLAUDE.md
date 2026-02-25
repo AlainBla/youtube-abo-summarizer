@@ -111,13 +111,30 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 
 ## Configuration (`.env`)
 
+### LLM backend
+
+Two sets of variables control which LLM is used. `LLM_*` takes precedence over
+`OPENROUTER_*` when both are set.
+
+| Variable | Precedence | Default | Notes |
+|---|---|---|---|
+| `LLM_MODEL` | 1st | — | Overrides `OPENROUTER_MODEL` |
+| `OPENROUTER_MODEL` | 2nd | `gpt-oss-20b` | Used when `LLM_MODEL` is unset |
+| `LLM_BASE_URL` | 1st | — | Overrides the hardcoded OpenRouter URL |
+| `LLM_API_KEY` | 1st | — | Overrides `OPENROUTER_API_KEY` |
+| `OPENROUTER_API_KEY` | 2nd | — | Required when using OpenRouter |
+
+For local Ollama set `LLM_BASE_URL` + `LLM_MODEL`; no API key is needed (a
+dummy is supplied automatically). For OpenRouter set `OPENROUTER_API_KEY` +
+`OPENROUTER_MODEL` and leave the `LLM_*` vars unset.
+
 ```
 # ── OpenRouter (default) ──────────────────────────────────────────────────────
 OPENROUTER_API_KEY=...
 OPENROUTER_MODEL=openai/gpt-oss-120b   # any OpenRouter model ID
 
 # ── Local Ollama (alternative) ────────────────────────────────────────────────
-# LLM_BASE_URL and LLM_MODEL take precedence over OPENROUTER_* when set.
+# LLM_* variables take precedence over OPENROUTER_* when both are set.
 # LLM_API_KEY is optional; Ollama needs no key (a dummy is used automatically).
 # LLM_BASE_URL=http://localhost:11434/v1
 # LLM_MODEL=gemma3:27b
