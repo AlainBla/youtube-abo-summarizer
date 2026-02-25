@@ -11,7 +11,7 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 - **AI summarization**: Generates structured HTML summaries (overview, key points, takeaway) with clickable timestamp links into the video
 - **Transcript and summary storage**: Transcripts and summaries are cached to `data/`. On subsequent runs, videos that already have both a transcript and a summary are skipped entirely — no redundant YouTube or LLM calls. If only the transcript is missing it is fetched; if only the summary is missing the stored transcript is re-used and only the LLM call is made
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
-- **Browsable archive export**: Single portable HTML file with client-side search, sort, and pagination — works fully offline
+- **Browsable archive export**: Single portable HTML file with client-side search, channel filter, sort, and pagination — works fully offline
 - **Repair tool**: Re-fetches missing transcripts and re-summarizes missing or broken summaries; supports targeting specific videos
 - **Email delivery**: Sends the report via SMTP
 - **Cron-ready**: Includes shell scripts for frequent collection and daily/6-hour/12-hour digest delivery
@@ -96,7 +96,7 @@ No YouTube API calls or LLM calls happen here — it reads only from `data/`.
 
 ## Usage — export archive
 
-`export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, sorting by date/channel/title, and pagination (20 items per page). No server required.
+`export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, a channel filter dropdown, sorting by date/channel/title, and pagination (20 items per page). No server required.
 
 ```bash
 # Last 7 days (default)

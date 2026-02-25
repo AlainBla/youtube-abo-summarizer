@@ -199,6 +199,9 @@
 
 <div class="controls-bar">
   <input type="search" id="search" placeholder="Titel oder Zusammenfassung durchsuchen&hellip;" autocomplete="off">
+  <select id="channel-filter">
+    <option value="">Alle Kanäle</option>
+  </select>
   <select id="sort">
     <option value="date-desc">Neueste zuerst</option>
     <option value="date-asc">Älteste zuerst</option>
@@ -223,6 +226,28 @@ const PAGE_SIZE = 20;
 let filtered = [];
 let currentPage = 1;
 let debounceTimer = null;
+
+// Populate channel filter dropdown
+(function() {
+  var seen = {};
+  var channels = [];
+  VIDEOS.forEach(function(v) {
+    if (!seen[v.channel_id]) {
+      seen[v.channel_id] = true;
+      channels.push({id: v.channel_id, title: v.channel_title});
+    }
+  });
+  channels.sort(function(a, b) {
+    return a.title.localeCompare(b.title, undefined, {sensitivity: 'base'});
+  });
+  var sel = document.getElementById('channel-filter');
+  channels.forEach(function(c) {
+    var opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.title;
+    sel.appendChild(opt);
+  });
+})();
 
 function escHtml(s) {
   return String(s == null ? '' : s)
@@ -271,13 +296,16 @@ function buildCard(v) {
 function applyFiltersAndSort() {
   const q = document.getElementById('search').value.trim().toLowerCase();
   const sort = document.getElementById('sort').value;
+  const channelId = document.getElementById('channel-filter').value;
 
-  filtered = q
-    ? VIDEOS.filter(function(v) {
-        var text = v.title.toLowerCase() + ' ' + stripHtml(v.summary || '').toLowerCase();
-        return text.indexOf(q) !== -1;
-      })
-    : VIDEOS.slice();
+  filtered = VIDEOS.filter(function(v) {
+    if (channelId && v.channel_id !== channelId) return false;
+    if (q) {
+      var text = v.title.toLowerCase() + ' ' + stripHtml(v.summary || '').toLowerCase();
+      if (text.indexOf(q) === -1) return false;
+    }
+    return true;
+  });
 
   filtered.sort(function(a, b) {
     switch (sort) {
@@ -328,6 +356,7 @@ document.getElementById('search').addEventListener('input', function() {
   debounceTimer = setTimeout(applyFiltersAndSort, 200);
 });
 
+document.getElementById('channel-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('sort').addEventListener('change', applyFiltersAndSort);
 
 applyFiltersAndSort();

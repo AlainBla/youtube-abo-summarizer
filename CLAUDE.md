@@ -121,7 +121,7 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); strips markdown fences from responses |
 | `renderer.py` | Jinja2 renderer; writes the final HTML file |
 | `template.html.j2` | Self-contained HTML template with embedded dark-theme CSS |
-| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/sort/pagination |
+| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/channel-filter/sort/pagination |
 | `state.py` | Reads/writes `last_run.json` (channel_id → last checked ISO timestamp) |
 | `send_mail.py` | Standalone script; sends an HTML file as an email via SMTP_SSL |
 
