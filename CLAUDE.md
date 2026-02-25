@@ -118,7 +118,7 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `summarize.py` | Legacy all-in-one CLI (fetch + render in one pass, no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (auth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language priority via `TRANSCRIPT_LANGS` (default: de,en); handles ip_blocked / rate_limited / country_blocked errors; `VideoUnplayable` is only classified as `country_blocked` when the reason mentions "country"/"region" — on `country_blocked`, retries once with a country-pinned Webshare proxy (`PROXY_FALLBACK_COUNTRY`, default: DE) if `WEBSHARE_PROXY_URL` is set; other `VideoUnplayable` causes fall to `unavailable` (retryable) |
-| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); summary language via `SUMMARY_LANG`; structured prompt enforces chronological sections scaled to video length; strips markdown fences from responses |
+| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); summary language via `SUMMARY_LANG`; structured prompt enforces chronological sections scaled to video length, written as flowing prose (`<p>`) with bullets only for genuine enumerations, timestamp links placed inline after each relevant sentence; strips markdown fences from responses |
 | `renderer.py` | Jinja2 renderer; writes the final HTML file |
 | `template.html.j2` | Self-contained HTML template with embedded dark-theme CSS |
 | `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/channel-filter/sort/pagination |

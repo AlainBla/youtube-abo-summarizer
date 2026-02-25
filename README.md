@@ -8,7 +8,7 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 - **Two source modes**: OAuth-based subscription list or explicit channel IDs/handles
 - **Incremental runs**: Tracks the last-checked timestamp per channel in `last_run.json`; only fetches videos published since the last run
 - **Transcript fetching**: Configurable language priority (`TRANSCRIPT_LANGS`, default: `de,en`); falls back to any available language
-- **AI summarization**: Generates structured HTML summaries with clickable timestamp links; sections are in chronological order and scaled to video length (2–3 sections for short videos, up to 6–10 for long ones); output language configurable via `SUMMARY_LANG` (default: German)
+- **AI summarization**: Generates structured HTML summaries written as flowing prose (bullet points only for genuine enumerations); sections are in chronological order and scaled to video length (2–3 sections for short videos, up to 6–10 for long ones); each section contains clickable timestamp links placed inline after the relevant sentence; output language configurable via `SUMMARY_LANG` (default: German)
 - **Transcript and summary storage**: Transcripts and summaries are cached to `data/`. On subsequent runs, videos that already have both a transcript and a summary are skipped entirely — no redundant YouTube or LLM calls. If only the transcript is missing it is fetched; if only the summary is missing the stored transcript is re-used and only the LLM call is made
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
 - **Browsable archive export**: Single portable HTML file with client-side search, channel filter, sort, and pagination — works fully offline
