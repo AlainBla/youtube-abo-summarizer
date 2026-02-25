@@ -1,6 +1,7 @@
 """Fetch and clean YouTube video transcripts."""
 
 import os
+from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
 from youtube_transcript_api import (
@@ -14,21 +15,34 @@ load_dotenv()
 _langs_env = os.getenv("TRANSCRIPT_LANGS", "de,en")
 PREFERRED_LANGS = [l.strip() for l in _langs_env.split(",") if l.strip()]
 
-_proxy_url = os.getenv("WEBSHARE_PROXY_URL")
-_proxy_config = GenericProxyConfig(http_url=_proxy_url, https_url=_proxy_url) if _proxy_url else None
-_api = YouTubeTranscriptApi(proxy_config=_proxy_config)
+
+def _make_api(proxy_url: str | None) -> YouTubeTranscriptApi:
+    cfg = GenericProxyConfig(http_url=proxy_url, https_url=proxy_url) if proxy_url else None
+    return YouTubeTranscriptApi(proxy_config=cfg)
 
 
-def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) -> tuple[str | None, str | None]:
-    """Return (transcript_text, error_reason).
-
-    error_reason is None on success, otherwise one of:
-      "ip_blocked", "rate_limited", "unavailable"
-    """
+def _de_proxy_url(proxy_url: str) -> str | None:
+    """Derive a Germany-pinned Webshare proxy URL by appending -DE to the username."""
     try:
-        transcript_list = _api.list(video_id)
+        p = urlparse(proxy_url)
+        if not p.username or "-DE" in p.username.upper():
+            return None
+        netloc = f"{p.username}-DE:{p.password}@{p.hostname}:{p.port}"
+        return urlunparse(p._replace(netloc=netloc))
+    except Exception:
+        return None
 
-        # Try preferred languages first (manual, then generated)
+
+_proxy_url = os.getenv("WEBSHARE_PROXY_URL")
+_api = _make_api(_proxy_url)
+_de_api = _make_api(_de_proxy_url(_proxy_url)) if _proxy_url else None
+
+
+def _fetch(api: YouTubeTranscriptApi, video_id: str, preferred_langs: list[str]) -> tuple[str | None, str | None]:
+    """Single attempt to fetch a transcript using the given API instance."""
+    try:
+        transcript_list = api.list(video_id)
+
         for lang in preferred_langs:
             for generated in (False, True):
                 try:
@@ -40,7 +54,6 @@ def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) 
                 except NoTranscriptFound:
                     continue
 
-        # Fall back to whatever is available
         t = next(iter(transcript_list))
         return _to_text(t.fetch()), None
 
@@ -55,16 +68,31 @@ def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) 
     except VideoUnplayable as e:
         reason_lower = (e.reason or "").lower()
         if any(kw in reason_lower for kw in ("country", "region")):
-            print(f"    [BLOCKED] Video in dieser Region gesperrt (country_blocked) für video_id={video_id}: {e}")
             return None, "country_blocked"
-        else:
-            # VideoUnplayable also fires for future live events (LIVE_STREAM_OFFLINE) and
-            # other non-geographic restrictions — don't treat these as permanent.
-            print(f"    [INFO] Video nicht abspielbar für video_id={video_id}: {e}")
-            return None, "unavailable"
+        print(f"    [INFO] Video nicht abspielbar für video_id={video_id}: {e}")
+        return None, "unavailable"
     except CouldNotRetrieveTranscript as e:
         print(f"    [ERROR] {type(e).__name__} für video_id={video_id}: {e}")
         return None, "unavailable"
+
+
+def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) -> tuple[str | None, str | None]:
+    """Return (transcript_text, error_reason).
+
+    error_reason is None on success, otherwise one of:
+      "ip_blocked", "rate_limited", "unavailable", "country_blocked"
+
+    On country_blocked: retries once with a Germany-pinned Webshare proxy if available.
+    """
+    text, reason = _fetch(_api, video_id, preferred_langs)
+    if reason == "country_blocked":
+        if _de_api is not None:
+            print(f"    [RETRY] Video geo-gesperrt, versuche DE-Proxy für video_id={video_id}.")
+            text, reason = _fetch(_de_api, video_id, preferred_langs)
+            if reason != "country_blocked":
+                return text, reason
+        print(f"    [BLOCKED] Video in dieser Region gesperrt (country_blocked) für video_id={video_id}.")
+    return text, reason
 
 
 def _to_text(entries) -> str:
