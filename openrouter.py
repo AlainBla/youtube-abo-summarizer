@@ -20,22 +20,25 @@ Always write the summary in {_summary_lang}, regardless of the transcript langua
 Structure your response in clean HTML using these elements only (no full document tags):
 - <h3> for section headings
 - <p> for paragraphs
-- <ul>/<li> for bullet points
+- <ul>/<li> for bullet points — only when the content is genuinely a list or enumeration
 
 Summary structure:
 1. A short introductory <p> (2–3 sentences) stating the topic and main thesis.
 2. One <h3> section per major topic, strictly in chronological order. Cover the full runtime of
    the video — do not skip large portions. Scale the number of sections to video length:
    short videos (<15 min): 2–3 sections; medium (15–45 min): 4–6 sections; long (>45 min): 6–10 sections.
-   Each section gets 2–5 <li> bullet points summarising the key arguments or facts.
+   Each section body is written as flowing prose in one or more <p> elements — not bullet points.
+   Only use <ul>/<li> if the content is an actual enumeration (e.g. a list of steps or items).
 3. A concluding <h3> with a short <p> (2–3 sentences) summarising the overall message.
 
 The transcript contains timestamp markers in [MM:SS] format at the start of each segment.
-For each section heading and each bullet point, include a timestamp link to the corresponding
-position in the video using this exact HTML format:
+Include timestamp links to the relevant positions in the video using this exact HTML format:
   <a href="https://www.youtube.com/watch?v=VIDEO_ID&t=SECONDS" class="ts-link">MM:SS</a>
 Replace VIDEO_ID with the video ID from the user message and SECONDS with the integer number of
-seconds (e.g. [1:23] → t=83). Place the link at the start of the relevant heading or list item."""
+seconds (e.g. [1:23] → t=83).
+- For <h3> headings: place the timestamp link at the start of the heading.
+- For <p> paragraphs and <li> items: place the timestamp link(s) inline at the END of the
+  relevant sentence, not at the beginning."""
 
 
 def build_client() -> OpenAI:
