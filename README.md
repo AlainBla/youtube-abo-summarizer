@@ -11,6 +11,8 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 - **AI summarization**: Generates structured HTML summaries (overview, key points, takeaway) with clickable timestamp links into the video
 - **Transcript and summary storage**: Transcripts and summaries are cached to `data/`. On subsequent runs, videos that already have both a transcript and a summary are skipped entirely — no redundant YouTube or LLM calls. If only the transcript is missing it is fetched; if only the summary is missing the stored transcript is re-used and only the LLM call is made
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
+- **Browsable archive export**: Single portable HTML file with client-side search, sort, and pagination — works fully offline
+- **Repair tool**: Re-fetches missing transcripts and re-summarizes missing or broken summaries; supports targeting specific videos
 - **Email delivery**: Sends the report via SMTP
 - **Cron-ready**: Includes shell scripts for frequent collection and daily/6-hour/12-hour digest delivery
 
@@ -112,6 +114,32 @@ python export.py --all --output full_archive.html
 
 `--hours` and `--all` are mutually exclusive. The default output filename is `export_YYYY-MM-DD_HH-MM.html`.
 
+## Usage — repair
+
+`repair.py` scans the store and fixes missing or broken transcripts and summaries. The most common use case is re-summarizing specific videos after finding bad model output.
+
+```bash
+# Re-summarize two specific videos
+python repair.py --force-summarize --video abc123xyz def456uvw
+
+# Preview what would be repaired without making any changes
+python repair.py --dry-run
+
+# Repair all missing transcripts and summaries
+python repair.py
+
+# Re-summarize everything (e.g. after switching to a better model)
+python repair.py --force-summarize
+```
+
+| Flag | Description |
+|---|---|
+| `--video ID [ID ...]` | Restrict to specific video IDs |
+| `--force-summarize` | Re-summarize even if a summary already exists |
+| `--dry-run` | Print what would be done without writing anything |
+
+`country_blocked` videos are never re-fetched (permanent restriction).
+
 ## Usage — all-in-one mode (for ad-hoc runs)
 
 `summarize.py` fetches, summarizes, and renders in a single pass without using the store. Useful for one-off runs or testing.
@@ -160,6 +188,7 @@ Each report script activates the virtual environment, renders the HTML, sends th
 | `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
 | `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, sort, and pagination |
+| `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries |
 | `store.py` | SQLite + file store: `data/videos.db` (metadata), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |

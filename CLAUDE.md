@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Purpose
 
-Fetch new videos from YouTube channels (via OAuth subscriptions or an explicit list), pull their transcripts, summarize them with an LLM via OpenRouter, and render a single HTML report per run. Reports can optionally be sent via SMTP using `send_mail.py`.
+Fetch new videos from YouTube channels (via OAuth subscriptions or an explicit list), pull their transcripts, summarize them with an LLM (OpenRouter by default, or a local Ollama instance), and render a single HTML report per run. Reports can optionally be sent via SMTP using `send_mail.py`.
 
 ## Setup
 
@@ -54,6 +54,29 @@ python report.py [--hours 24] [--output summary.html] [--skip-empty] [--send-to 
 | `run_12hours.sh` | Renders and mails a 12-hour digest |
 | `run_daily.sh` | Renders and mails a 24-hour digest |
 
+## Repair
+
+`repair.py` scans all store entries and fixes gaps — missing transcript or summary files — and can force re-summarization of specific videos (e.g. after a model produced bad output).
+
+```bash
+# Re-summarize two specific videos (most common use case)
+python repair.py --force-summarize --video VIDEO_ID_1 VIDEO_ID_2
+
+# Preview what would be repaired without making changes
+python repair.py --dry-run
+
+# Repair all missing transcripts and summaries across the whole store
+python repair.py
+
+# Re-summarize everything (e.g. after switching models)
+python repair.py --force-summarize
+```
+
+- Missing transcripts are re-fetched (skips `country_blocked` videos permanently).
+- `--force-summarize` re-runs the LLM even if a summary already exists.
+- `--video ID [ID ...]` restricts all operations to the specified video IDs.
+- `--dry-run` prints what would be done without writing anything.
+
 ## Export archive
 
 `export.py` renders stored videos into a self-contained HTML file for offline browsing (client-side search, sort, pagination).
@@ -95,7 +118,7 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `summarize.py` | Legacy all-in-one CLI (fetch + render in one pass, no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (auth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; prefers DE then EN; handles ip_blocked / rate_limited / country_blocked errors |
-| `openrouter.py` | OpenRouter client (OpenAI-compatible); returns HTML-fragment summaries with timestamp links |
+| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); strips markdown fences from responses |
 | `renderer.py` | Jinja2 renderer; writes the final HTML file |
 | `template.html.j2` | Self-contained HTML template with embedded dark-theme CSS |
 | `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/sort/pagination |
