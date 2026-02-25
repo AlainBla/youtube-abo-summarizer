@@ -11,7 +11,8 @@ from youtube_transcript_api.proxies import GenericProxyConfig
 
 load_dotenv()
 
-PREFERRED_LANGS = ["de", "en"]
+_langs_env = os.getenv("TRANSCRIPT_LANGS", "de,en")
+PREFERRED_LANGS = [l.strip() for l in _langs_env.split(",") if l.strip()]
 
 _proxy_url = os.getenv("WEBSHARE_PROXY_URL")
 _proxy_config = GenericProxyConfig(http_url=_proxy_url, https_url=_proxy_url) if _proxy_url else None

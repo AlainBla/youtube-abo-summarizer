@@ -163,6 +163,11 @@ OPENROUTER_MODEL=openai/gpt-oss-120b   # any OpenRouter model ID
 # LLM_BASE_URL=http://localhost:11434/v1
 # LLM_MODEL=gemma3:27b
 
+# ── Optional: transcript language preference ──────────────────────────────────
+# Comma-separated BCP-47 language codes in priority order (default: de,en).
+# Falls back to any available language if none match.
+# TRANSCRIPT_LANGS=de,en
+
 # ── Optional: residential proxy for transcript fetching ───────────────────────
 # Format: http://USERNAME:PASSWORD@host:port
 WEBSHARE_PROXY_URL=
