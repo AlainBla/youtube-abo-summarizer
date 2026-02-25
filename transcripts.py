@@ -21,13 +21,16 @@ def _make_api(proxy_url: str | None) -> YouTubeTranscriptApi:
     return YouTubeTranscriptApi(proxy_config=cfg)
 
 
-def _de_proxy_url(proxy_url: str) -> str | None:
-    """Derive a Germany-pinned Webshare proxy URL by appending -DE to the username."""
+_FALLBACK_COUNTRY = os.getenv("PROXY_FALLBACK_COUNTRY", "DE").upper()
+
+
+def _country_proxy_url(proxy_url: str, country: str) -> str | None:
+    """Derive a country-pinned Webshare proxy URL by appending -COUNTRY to the username."""
     try:
         p = urlparse(proxy_url)
-        if not p.username or "-DE" in p.username.upper():
+        if not p.username or f"-{country}" in p.username.upper():
             return None
-        netloc = f"{p.username}-DE:{p.password}@{p.hostname}:{p.port}"
+        netloc = f"{p.username}-{country}:{p.password}@{p.hostname}:{p.port}"
         return urlunparse(p._replace(netloc=netloc))
     except Exception:
         return None
@@ -35,7 +38,7 @@ def _de_proxy_url(proxy_url: str) -> str | None:
 
 _proxy_url = os.getenv("WEBSHARE_PROXY_URL")
 _api = _make_api(_proxy_url)
-_de_api = _make_api(_de_proxy_url(_proxy_url)) if _proxy_url else None
+_fallback_api = _make_api(_country_proxy_url(_proxy_url, _FALLBACK_COUNTRY)) if _proxy_url else None
 
 
 def _fetch(api: YouTubeTranscriptApi, video_id: str, preferred_langs: list[str]) -> tuple[str | None, str | None]:
@@ -86,9 +89,9 @@ def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) 
     """
     text, reason = _fetch(_api, video_id, preferred_langs)
     if reason == "country_blocked":
-        if _de_api is not None:
-            print(f"    [RETRY] Video geo-gesperrt, versuche DE-Proxy für video_id={video_id}.")
-            text, reason = _fetch(_de_api, video_id, preferred_langs)
+        if _fallback_api is not None:
+            print(f"    [RETRY] Video geo-gesperrt, versuche {_FALLBACK_COUNTRY}-Proxy für video_id={video_id}.")
+            text, reason = _fetch(_fallback_api, video_id, preferred_langs)
             if reason != "country_blocked":
                 return text, reason
         print(f"    [BLOCKED] Video in dieser Region gesperrt (country_blocked) für video_id={video_id}.")
