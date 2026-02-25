@@ -7,8 +7,8 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 - **Two-phase pipeline**: Separate collection (fetch + summarize) from reporting (render + send), so transcripts and LLM calls only happen when new videos arrive — not on every digest
 - **Two source modes**: OAuth-based subscription list or explicit channel IDs/handles
 - **Incremental runs**: Tracks the last-checked timestamp per channel in `last_run.json`; only fetches videos published since the last run
-- **Transcript fetching**: Prefers German, falls back to English, then any available language
-- **AI summarization**: Generates structured HTML summaries (overview, key points, takeaway) with clickable timestamp links into the video
+- **Transcript fetching**: Configurable language priority (`TRANSCRIPT_LANGS`, default: `de,en`); falls back to any available language
+- **AI summarization**: Generates structured HTML summaries (overview, key points, takeaway) with clickable timestamp links; output language configurable via `SUMMARY_LANG` (default: German)
 - **Transcript and summary storage**: Transcripts and summaries are cached to `data/`. On subsequent runs, videos that already have both a transcript and a summary are skipped entirely — no redundant YouTube or LLM calls. If only the transcript is missing it is fetched; if only the summary is missing the stored transcript is re-used and only the LLM call is made
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
 - **Browsable archive export**: Single portable HTML file with client-side search, channel filter, sort, and pagination — works fully offline
@@ -189,7 +189,7 @@ Each report script activates the virtual environment, renders the HTML, sends th
 |---|---|
 | `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
-| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, sort, and pagination |
+| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel filter, sort, and pagination |
 | `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries |
 | `store.py` | SQLite + file store: `data/videos.db` (metadata), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
@@ -207,7 +207,7 @@ Each report script activates the virtual environment, renders the HTML, sends th
 The YouTube Data API has a daily quota of **10,000 units**. Fetching videos from many channels in a single run can exhaust this quickly. The tool stops gracefully when the quota is exceeded, but remaining channels are skipped for that run.
 
 ### Transcript availability
-- Only **German and English** transcripts are requested by preference. Videos in other languages may fall back to an auto-generated transcript or show a "no transcript" notice.
+- Transcript languages are requested in the order defined by `TRANSCRIPT_LANGS` (default: `de,en`). Videos without a matching transcript fall back to any available language; if no transcript exists at all a "no transcript" notice is shown.
 - **Live streams**, **Shorts**, and some copyright-claimed videos may have no transcript.
 - **Region-locked videos** (VideoUnplayable) are detected and skipped gracefully.
 

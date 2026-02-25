@@ -79,7 +79,7 @@ python repair.py --force-summarize
 
 ## Export archive
 
-`export.py` renders stored videos into a self-contained HTML file for offline browsing (client-side search, sort, pagination).
+`export.py` renders stored videos into a self-contained HTML file for offline browsing (client-side search, channel filter, sort, pagination).
 
 ```bash
 python export.py                        # last 7 days (default)
@@ -112,13 +112,13 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 |---|---|
 | `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
-| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, sort, and pagination |
+| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel filter, sort, and pagination |
 | `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries |
 | `store.py` | SQLite + file store: `data/videos.db` (metadata), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
 | `summarize.py` | Legacy all-in-one CLI (fetch + render in one pass, no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (auth, subscriptions, video search, channel resolution) |
-| `transcripts.py` | `youtube-transcript-api` wrapper; prefers DE then EN; handles ip_blocked / rate_limited / country_blocked errors |
-| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); strips markdown fences from responses |
+| `transcripts.py` | `youtube-transcript-api` wrapper; language priority via `TRANSCRIPT_LANGS` (default: de,en); handles ip_blocked / rate_limited / country_blocked errors |
+| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); summary language via `SUMMARY_LANG`; strips markdown fences from responses |
 | `renderer.py` | Jinja2 renderer; writes the final HTML file |
 | `template.html.j2` | Self-contained HTML template with embedded dark-theme CSS |
 | `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/channel-filter/sort/pagination |
