@@ -62,18 +62,25 @@ def build_client() -> OpenAI:
 
 
 def _dedup_timestamps(html: str) -> str:
-    """Remove consecutive duplicate timestamp links from the HTML summary.
+    """Within each <p> and <li>, remove duplicate timestamp links with the same t= value.
 
-    The LLM sometimes emits the same [MM:SS] link several times in a row
-    (common for short videos where many sentences share one segment). Only
-    the first occurrence of a consecutive run is kept.
+    The LLM sometimes assigns the same transcript segment (same t= seconds) to
+    multiple sentences in a paragraph, producing repeated identical links. Only
+    the first occurrence of each t= value within a block element is kept.
     """
-    return re.sub(
-        r'(<a\b[^>]*\bt=(\d+)[^>]*>.*?</a>)(?:\s*<a\b[^>]*\bt=\2[^>]*>.*?</a>)+',
-        r'\1',
-        html,
-        flags=re.DOTALL,
-    )
+    ts_re = re.compile(r'<a\b[^>]*\bt=(\d+)[^>]*>.*?</a>', re.DOTALL)
+
+    def dedup_block(m):
+        seen: set[str] = set()
+        def keep_first(tm: re.Match) -> str:
+            t = tm.group(1)
+            if t in seen:
+                return ''
+            seen.add(t)
+            return tm.group(0)
+        return ts_re.sub(keep_first, m.group(0))
+
+    return re.sub(r'<(?:p|li)\b[^>]*>.*?</(?:p|li)>', dedup_block, html, flags=re.DOTALL)
 
 
 def _parse_tags(content: str) -> tuple[str, list[str]]:
