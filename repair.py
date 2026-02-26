@@ -46,9 +46,8 @@ def parse_args():
     )
     parser.add_argument(
         "--video",
-        nargs="+",
-        metavar="ID",
-        help="Limit repairs to these video IDs.",
+        metavar="ID,ID,...",
+        help="Comma-separated list of video IDs to limit repairs to.",
     )
     parser.add_argument(
         "--force-summarize",
@@ -67,7 +66,7 @@ def parse_args():
 def main():
     args = parse_args()
     model = args.model or os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
-    video_filter = set(args.video) if args.video else None
+    video_filter = {v.strip() for v in args.video.split(",") if v.strip()} if args.video else None
 
     entries = store.get_all_videos()
     if video_filter:
