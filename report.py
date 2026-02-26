@@ -55,6 +55,11 @@ def parse_args():
         default=None,
         help="Send the rendered report to this email address via SMTP.",
     )
+    parser.add_argument(
+        "--show-model",
+        action="store_true",
+        help="Show the LLM model name badge on each video card.",
+    )
     return parser.parse_args()
 
 
@@ -151,7 +156,7 @@ def main():
             "duration": _fmt_duration(e.get("duration")),
             "thumbnail_url": e["thumbnail_url"],
             "summary": e["summary"],
-            "summary_model": e.get("summary_model"),
+            "summary_model": e.get("summary_model") if args.show_model else None,
             "transcript_error": e.get("transcript_error"),
         })
 

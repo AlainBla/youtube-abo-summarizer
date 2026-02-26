@@ -41,6 +41,11 @@ def parse_args():
         default=None,
         help="Output HTML file path (default: export_YYYY-MM-DD_HH-MM.html).",
     )
+    parser.add_argument(
+        "--show-model",
+        action="store_true",
+        help="Show the LLM model name badge on each video card.",
+    )
     return parser.parse_args()
 
 
@@ -92,7 +97,7 @@ def main():
             "duration": _fmt_duration(e.get("duration")),
             "thumbnail_url": e["thumbnail_url"],
             "summary": e.get("summary"),
-            "summary_model": e.get("summary_model"),
+            "summary_model": e.get("summary_model") if args.show_model else None,
             "transcript_error": e.get("transcript_error"),
             "tags": e.get("tags") or [],
         }
