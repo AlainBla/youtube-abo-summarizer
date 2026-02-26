@@ -41,7 +41,13 @@ seconds (e.g. [1:23] → t=83).
   it belongs to — not at the end of the paragraph. Each sentence that covers a new transcript
   segment gets its own timestamp immediately following the full stop. For longer paragraphs,
   this means 3–4 timestamps are distributed across the paragraph at the sentence level, not
-  grouped at the end."""
+  grouped at the end.
+
+After the HTML summary, append exactly one line in this format:
+<!-- tags: Tag1, Tag2, Tag3 -->
+List 3–7 concise English topic tags that best describe the video content.
+Use title case. No hashtags, no quotes. Always write this line in English,
+regardless of the summary language."""
 
 
 def build_client() -> OpenAI:
@@ -55,8 +61,21 @@ def build_client() -> OpenAI:
     return OpenAI(base_url=base_url, api_key=api_key)
 
 
-def summarize_video(video_id: str, title: str, transcript: str, model: str) -> str:
-    """Return an HTML-fragment summary of the video."""
+def _parse_tags(content: str) -> tuple[str, list[str]]:
+    """Extract <!-- tags: ... --> comment from end of content.
+
+    Returns (html_without_comment, tags_list). Tags list is [] if not found.
+    """
+    m = re.search(r'<!--\s*tags:\s*([^>]+?)-->', content, re.IGNORECASE)
+    if not m:
+        return content, []
+    tags = [t.strip() for t in m.group(1).split(',') if t.strip()]
+    html = content[:m.start()].rstrip()
+    return html, tags
+
+
+def summarize_video(video_id: str, title: str, transcript: str, model: str) -> tuple[str, list[str]]:
+    """Return an (HTML-fragment summary, tags list) tuple for the video."""
     client = build_client()
     user_message = f"Video ID: {video_id}\nVideo title: {title}\n\nTranscript (with timestamps):\n{transcript}"
     response = client.chat.completions.create(
@@ -70,4 +89,4 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> s
     content = response.choices[0].message.content.strip()
     # Some models (e.g. Gemma3) wrap the HTML in a markdown code fence; strip it.
     content = re.sub(r"^```[a-zA-Z]*\s*\n?(.*?)\n?```$", r"\1", content, flags=re.DOTALL).strip()
-    return content
+    return _parse_tags(content)

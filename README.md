@@ -8,10 +8,10 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 - **Two source modes**: OAuth-based subscription list or explicit channel IDs/handles
 - **Incremental runs**: Tracks the last-checked timestamp per channel in `last_run.json`; only fetches videos published since the last run
 - **Transcript fetching**: Configurable language priority (`TRANSCRIPT_LANGS`, default: `de,en`); falls back to any available language
-- **AI summarization**: Generates structured HTML summaries written as flowing prose (bullet points only for genuine enumerations); sections are in chronological order and scaled to video length (2–3 sections for short videos, up to 6–10 for long ones); each section contains clickable timestamp links placed inline after the relevant sentence; output language configurable via `SUMMARY_LANG` (default: German)
+- **AI summarization**: Generates structured HTML summaries written as flowing prose (bullet points only for genuine enumerations); sections are in chronological order and scaled to video length (2–3 sections for short videos, up to 6–10 for long ones); each section contains clickable timestamp links placed inline after the relevant sentence; output language configurable via `SUMMARY_LANG` (default: German). The same LLM call also extracts 3–7 concise English topic tags, stored alongside the summary
 - **Transcript and summary storage**: Transcripts and summaries are cached to `data/`. On subsequent runs, videos that already have both a transcript and a summary are skipped entirely — no redundant YouTube or LLM calls. If only the transcript is missing it is fetched; if only the summary is missing the stored transcript is re-used and only the LLM call is made
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
-- **Browsable archive export**: Single portable HTML file with client-side search, channel filter, sort, and pagination — works fully offline
+- **Browsable archive export**: Single portable HTML file with client-side search, channel filter, tag filter, sort, and pagination — works fully offline; tag chips on cards are clickable and toggle the tag filter
 - **Repair tool**: Re-fetches missing transcripts and re-summarizes missing or broken summaries; supports targeting specific videos
 - **Email delivery**: Sends the report via SMTP
 - **Cron-ready**: Includes shell scripts for frequent collection and daily/6-hour/12-hour digest delivery
@@ -99,7 +99,7 @@ No YouTube API calls or LLM calls happen here — it reads only from `data/`.
 
 ## Usage — export archive
 
-`export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, a channel filter dropdown, sorting by date/channel/title, and pagination (20 items per page). No server required.
+`export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, a channel filter dropdown, a tag filter dropdown, sorting by date/channel/title, and pagination (20 items per page). Tag chips on each video card are clickable and set the tag filter directly. No server required.
 
 ```bash
 # Last 7 days (default)
@@ -138,10 +138,12 @@ python repair.py --force-summarize
 | Flag | Description |
 |---|---|
 | `--video ID [ID ...]` | Restrict to specific video IDs |
-| `--force-summarize` | Re-summarize even if a summary already exists |
+| `--force-summarize` | Re-summarize even if a summary already exists; also re-generates tags |
 | `--dry-run` | Print what would be done without writing anything |
 
 `country_blocked` videos are never re-fetched (permanent restriction).
+
+To backfill tags on videos summarized before tag support was added, run `python repair.py --force-summarize`.
 
 ## Usage — all-in-one mode (for ad-hoc runs)
 
@@ -190,13 +192,13 @@ Each report script activates the virtual environment, renders the HTML, sends th
 |---|---|
 | `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
-| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel filter, sort, and pagination |
-| `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries |
-| `store.py` | SQLite + file store: `data/videos.db` (metadata), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
+| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel filter, tag filter, sort, and pagination |
+| `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries (also re-generates tags with `--force-summarize`) |
+| `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling |
-| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns HTML-fragment summaries with chronological sections, proportional depth, and timestamp links |
+| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns `(summary_html, tags)` tuple — structured HTML with chronological sections, proportional depth, and timestamp links, plus 3–7 English topic tags extracted from a `<!-- tags: ... -->` comment appended by the model |
 | `renderer.py` | Jinja2 renderer; writes the final HTML report |
 | `template.html.j2` | Self-contained dark-theme HTML template |
 | `state.py` | Reads/writes `last_run.json` (per-channel ISO timestamps) |

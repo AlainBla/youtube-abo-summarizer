@@ -7,6 +7,7 @@ Layout:
     summaries/<id>.html     — HTML-fragment summary (one file per video)
 """
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS videos (
 _MIGRATIONS = [
     ("duration",      "ALTER TABLE videos ADD COLUMN duration TEXT"),
     ("summary_model", "ALTER TABLE videos ADD COLUMN summary_model TEXT"),
+    ("tags",          "ALTER TABLE videos ADD COLUMN tags TEXT"),
 ]
 
 
@@ -62,6 +64,7 @@ def get_video(video_id: str) -> dict | None:
     d = dict(row)
     d["has_transcript"] = (TRANSCRIPTS_DIR / f"{video_id}.txt").exists()
     d["has_summary"] = (SUMMARIES_DIR / f"{video_id}.html").exists()
+    d["tags"] = json.loads(d["tags"]) if d.get("tags") else []
     return d
 
 
@@ -72,20 +75,22 @@ def add_video(entry: dict) -> bool:
         video_id, channel_id, channel_title, title, published_at (ISO str),
         thumbnail_url, duration (ISO 8601 str|None), summary_model (str|None),
         transcript (str|None), summary (str|None), transcript_error (str|None),
-        collected_at (ISO str).
+        tags (list[str]|None), collected_at (ISO str).
     """
+    tags = entry.get("tags")
+    tags_json = json.dumps(tags) if tags else None
     with _conn() as c:
         try:
             c.execute(
                 """INSERT INTO videos
                    (video_id, channel_id, channel_title, title, published_at,
-                    thumbnail_url, duration, summary_model, transcript_error, collected_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    thumbnail_url, duration, summary_model, transcript_error, tags, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry["video_id"], entry["channel_id"], entry["channel_title"],
                     entry["title"], entry["published_at"], entry["thumbnail_url"],
                     entry.get("duration"), entry.get("summary_model"),
-                    entry.get("transcript_error"), entry["collected_at"],
+                    entry.get("transcript_error"), tags_json, entry["collected_at"],
                 ),
             )
         except sqlite3.IntegrityError:
@@ -108,12 +113,14 @@ def update_video_with_summary(
     summary: str | None,
     transcript_error: str | None,
     summary_model: str | None = None,
+    tags: list[str] | None = None,
 ) -> None:
-    """Update transcript_error and summary_model in DB; write transcript/summary files if provided."""
+    """Update transcript_error, summary_model, and tags in DB; write transcript/summary files if provided."""
+    tags_json = json.dumps(tags) if tags else None
     with _conn() as c:
         c.execute(
-            "UPDATE videos SET transcript_error = ?, summary_model = ? WHERE video_id = ?",
-            (transcript_error, summary_model, video_id),
+            "UPDATE videos SET transcript_error = ?, summary_model = ?, tags = ? WHERE video_id = ?",
+            (transcript_error, summary_model, tags_json, video_id),
         )
     if transcript is not None:
         (TRANSCRIPTS_DIR / f"{video_id}.txt").write_text(transcript, encoding="utf-8")
@@ -138,6 +145,7 @@ def get_videos_since(since: datetime) -> list[dict]:
         s_path = SUMMARIES_DIR / f"{d['video_id']}.html"
         d["transcript"] = t_path.read_text(encoding="utf-8") if t_path.exists() else None
         d["summary"] = s_path.read_text(encoding="utf-8") if s_path.exists() else None
+        d["tags"] = json.loads(d["tags"]) if d.get("tags") else []
         result.append(d)
     return result
 
@@ -158,6 +166,7 @@ def get_all_videos() -> list[dict]:
         s_path = SUMMARIES_DIR / f"{d['video_id']}.html"
         d["transcript"] = t_path.read_text(encoding="utf-8") if t_path.exists() else None
         d["summary"] = s_path.read_text(encoding="utf-8") if s_path.exists() else None
+        d["tags"] = json.loads(d["tags"]) if d.get("tags") else []
         result.append(d)
     return result
 

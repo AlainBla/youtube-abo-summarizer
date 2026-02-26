@@ -135,9 +135,9 @@ def main():
 
         if needs_summary or needs_transcript:
             print(f"    Summarizing via {model}...")
-            summary = openrouter.summarize_video(vid_id, vid_title, transcript, model)
+            summary, tags = openrouter.summarize_video(vid_id, vid_title, transcript, model)
             store.update_video_with_summary(
-                vid_id, None, summary, t_error, summary_model=model
+                vid_id, None, summary, t_error, summary_model=model, tags=tags
             )
             n_summarized += 1
 

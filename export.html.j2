@@ -164,6 +164,23 @@
 
     .no-videos { color: #555; font-style: italic; font-size: 0.9rem; padding: 1rem 0; }
 
+    /* ── Tag chips ── */
+    .tag-chip {
+      display: inline-block;
+      font-size: 0.72rem;
+      background: #1e2a1e;
+      color: #7abf7a;
+      border: 1px solid #2d4a2d;
+      border-radius: 3px;
+      padding: 0.05rem 0.45rem;
+      margin: 0 0.25rem 0.25rem 0;
+      cursor: pointer;
+      user-select: none;
+    }
+    .tag-chip:hover { background: #253525; border-color: #3d6a3d; }
+    .tag-chip.active { background: #2d4a2d; color: #a0dfa0; border-color: #4a7a4a; }
+    .video-tags { margin-bottom: 0.4rem; }
+
     /* ── Pagination ── */
     .pagination {
       max-width: 900px;
@@ -220,6 +237,9 @@
   <select id="channel-filter">
     <option value="">Alle Kanäle</option>
   </select>
+  <select id="tag-filter">
+    <option value="">Alle Tags</option>
+  </select>
   <select id="sort">
     <option value="date-desc">Neueste zuerst</option>
     <option value="date-asc">Älteste zuerst</option>
@@ -269,6 +289,30 @@ let focusedIndex = -1;
   });
 })();
 
+// Populate tag filter dropdown
+(function() {
+  var seen = {};
+  var tags = [];
+  VIDEOS.forEach(function(v) {
+    (v.tags || []).forEach(function(t) {
+      if (!seen[t]) { seen[t] = true; tags.push(t); }
+    });
+  });
+  tags.sort(function(a, b) { return a.localeCompare(b, undefined, {sensitivity: 'base'}); });
+  var sel = document.getElementById('tag-filter');
+  tags.forEach(function(t) {
+    var opt = document.createElement('option');
+    opt.value = t; opt.textContent = t;
+    sel.appendChild(opt);
+  });
+})();
+
+function setTagFilter(tag) {
+  var sel = document.getElementById('tag-filter');
+  sel.value = (sel.value === tag) ? '' : tag;
+  applyFiltersAndSort();
+}
+
 function escHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
@@ -297,8 +341,8 @@ function buildCard(v) {
     const preview = cut !== -1 ? v.summary.slice(0, cut + 4) : v.summary;
     if (rest) {
       summaryHtml = preview
-        + '<div class="summary-details" hidden>' + rest + '</div>'
-        + '<button class="summary-toggle" onclick="toggleSummary(this)">&#9660; mehr</button>';
+        + '<button class="summary-toggle" onclick="toggleSummary(this)">&#9660; mehr</button>'
+        + '<div class="summary-details" hidden>' + rest + '</div>';
     } else {
       summaryHtml = preview;
     }
@@ -312,11 +356,23 @@ function buildCard(v) {
     summaryHtml = '<p class="no-transcript unavailable">Kein Transkript f\u00fcr dieses Video verf\u00fcgbar.</p>';
   }
 
+  var tagsHtml = '';
+  if (v.tags && v.tags.length) {
+    var activeTag = document.getElementById('tag-filter').value;
+    tagsHtml = '<div class="video-tags">'
+      + v.tags.map(function(t) {
+          var cls = 'tag-chip' + (activeTag === t ? ' active' : '');
+          return '<span class="' + cls + '" onclick="setTagFilter(\'' + escHtml(t) + '\')">' + escHtml(t) + '</span>';
+        }).join('')
+      + '</div>';
+  }
+
   return '<article class="video-card">'
     + '<div class="video-thumb">' + thumb + '</div>'
     + '<div class="video-body">'
     + '<a class="video-title" href="https://www.youtube.com/watch?v=' + escHtml(v.video_id) + '" target="_blank" rel="noopener">' + escHtml(v.title) + '</a>'
     + '<div class="video-meta">' + escHtml(v.channel_title) + ' &middot; ' + escHtml(v.published_at_display) + metaExtras + '</div>'
+    + tagsHtml
     + '<div class="video-summary">' + summaryHtml + '</div>'
     + '</div>'
     + '</article>';
@@ -326,9 +382,11 @@ function applyFiltersAndSort() {
   const q = document.getElementById('search').value.trim().toLowerCase();
   const sort = document.getElementById('sort').value;
   const channelId = document.getElementById('channel-filter').value;
+  const tagFilter = document.getElementById('tag-filter').value;
 
   filtered = VIDEOS.filter(function(v) {
     if (channelId && v.channel_id !== channelId) return false;
+    if (tagFilter && !(v.tags || []).includes(tagFilter)) return false;
     if (q) {
       var text = v.title.toLowerCase() + ' ' + stripHtml(v.summary || '').toLowerCase();
       if (text.indexOf(q) === -1) return false;
@@ -390,7 +448,7 @@ function renderPage(page) {
 }
 
 function toggleSummary(btn) {
-  var details = btn.previousElementSibling;
+  var details = btn.nextElementSibling;
   var open = details.hidden === false;
   details.hidden = open;
   btn.textContent = open ? '\u25bc mehr' : '\u25b2 weniger';
@@ -434,6 +492,7 @@ document.getElementById('search').addEventListener('input', function() {
 });
 
 document.getElementById('channel-filter').addEventListener('change', applyFiltersAndSort);
+document.getElementById('tag-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('sort').addEventListener('change', applyFiltersAndSort);
 
 applyFiltersAndSort();

@@ -94,6 +94,7 @@ def main():
             "summary": e.get("summary"),
             "summary_model": e.get("summary_model"),
             "transcript_error": e.get("transcript_error"),
+            "tags": e.get("tags") or [],
         }
         for e in entries
     ]

@@ -180,9 +180,10 @@ def main():
             # Summarize only if we have a transcript and no summary yet
             if transcript and (not existing or not existing["has_summary"]):
                 print(f"    Summarizing via {model}...")
-                summary = openrouter.summarize_video(vid_id, vid_title, transcript, model)
+                summary, tags = openrouter.summarize_video(vid_id, vid_title, transcript, model)
             else:
                 summary = None
+                tags = None
 
             if existing:
                 store.update_video_with_summary(
@@ -191,6 +192,7 @@ def main():
                     summary,
                     transcript_error,
                     model if summary else existing.get("summary_model"),
+                    tags=tags,
                 )
             else:
                 added = store.add_video({
@@ -205,6 +207,7 @@ def main():
                     "transcript": transcript,
                     "summary": summary,
                     "transcript_error": transcript_error,
+                    "tags": tags,
                     "collected_at": now.isoformat(),
                 })
                 if added:

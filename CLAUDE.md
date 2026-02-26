@@ -73,13 +73,14 @@ python repair.py --force-summarize
 ```
 
 - Missing transcripts are re-fetched (skips `country_blocked` videos permanently).
-- `--force-summarize` re-runs the LLM even if a summary already exists.
+- `--force-summarize` re-runs the LLM even if a summary already exists; also re-generates and stores tags.
 - `--video ID [ID ...]` restricts all operations to the specified video IDs.
 - `--dry-run` prints what would be done without writing anything.
+- To backfill tags on existing videos (after upgrading from a version without tag support): `python repair.py --force-summarize`
 
 ## Export archive
 
-`export.py` renders stored videos into a self-contained HTML file for offline browsing (client-side search, channel filter, sort, pagination).
+`export.py` renders stored videos into a self-contained HTML file for offline browsing (client-side search, channel filter, tag filter, sort, pagination).
 
 ```bash
 python export.py                        # last 7 days (default)
@@ -112,16 +113,16 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 |---|---|
 | `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
-| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel filter, sort, and pagination |
+| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel filter, tag filter, sort, and pagination |
 | `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries |
-| `store.py` | SQLite + file store: `data/videos.db` (metadata), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
+| `store.py` | SQLite + file store: `data/videos.db` (metadata, including `tags TEXT` column storing JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
 | `summarize.py` | Legacy all-in-one CLI (fetch + render in one pass, no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (auth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language priority via `TRANSCRIPT_LANGS` (default: de,en); handles ip_blocked / rate_limited / country_blocked errors; `VideoUnplayable` is only classified as `country_blocked` when the reason mentions "country"/"region" — on `country_blocked`, retries once with a country-pinned Webshare proxy (`PROXY_FALLBACK_COUNTRY`, default: DE) if `WEBSHARE_PROXY_URL` is set; other `VideoUnplayable` causes fall to `unavailable` (retryable) |
-| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); summary language via `SUMMARY_LANG`; structured prompt enforces chronological sections scaled to video length, written as flowing prose (`<p>`) with bullets only for genuine enumerations, timestamp links placed inline after each relevant sentence; strips markdown fences from responses |
+| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); summary language via `SUMMARY_LANG`; structured prompt enforces chronological sections scaled to video length, written as flowing prose (`<p>`) with bullets only for genuine enumerations, timestamp links placed inline after each relevant sentence; strips markdown fences from responses; extracts 3–7 English topic tags from the `<!-- tags: ... -->` comment appended by the model; returns `(summary_html, tags_list)` tuple |
 | `renderer.py` | Jinja2 renderer; writes the final HTML file |
 | `template.html.j2` | Self-contained HTML template with embedded dark-theme CSS |
-| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/channel-filter/sort/pagination |
+| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/channel-filter/tag-filter/sort/pagination; tag chips on cards are clickable and toggle the tag filter |
 | `state.py` | Reads/writes `last_run.json` (channel_id → last checked ISO timestamp) |
 | `send_mail.py` | Standalone script; sends an HTML file as an email via SMTP_SSL |
 
