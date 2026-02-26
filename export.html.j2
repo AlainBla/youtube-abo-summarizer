@@ -174,6 +174,12 @@
     .pagination button:disabled { color: #444; cursor: default; }
     .pagination .page-info { color: #777; font-size: 0.9rem; }
 
+    .video-card.focused {
+      border-color: #ff4444;
+      box-shadow: 0 0 0 1px #ff4444;
+      scroll-margin-top: 1rem;
+    }
+
     .page-footer {
       max-width: 900px;
       margin: 2rem auto 0;
@@ -209,6 +215,7 @@
     <option value="title">Titel A–Z</option>
   </select>
   <span class="results-count" id="results-count"></span>
+  <span class="results-count" style="color:#444">j/k &mdash; vor/zurück</span>
 </div>
 
 <div id="grid"></div>
@@ -226,6 +233,7 @@ const PAGE_SIZE = 20;
 let filtered = [];
 let currentPage = 1;
 let debounceTimer = null;
+let focusedIndex = -1;
 
 // Populate channel filter dropdown
 (function() {
@@ -307,6 +315,8 @@ function applyFiltersAndSort() {
     return true;
   });
 
+  focusedIndex = -1;
+
   filtered.sort(function(a, b) {
     switch (sort) {
       case 'date-asc':
@@ -337,6 +347,13 @@ function renderPage(page) {
     ? slice.map(buildCard).join('')
     : '<p class="no-videos">Keine Videos gefunden.</p>';
 
+  // Restore focused highlight after re-render
+  if (focusedIndex >= 0) {
+    var localIdx = focusedIndex - (currentPage - 1) * PAGE_SIZE;
+    var cards = document.getElementById('grid').querySelectorAll('.video-card');
+    if (cards[localIdx]) cards[localIdx].classList.add('focused');
+  }
+
   document.getElementById('results-count').textContent =
     total + ' Video' + (total !== 1 ? 's' : '');
 
@@ -350,6 +367,38 @@ function renderPage(page) {
     + '<span class="page-info">Seite ' + currentPage + ' von ' + pages + '</span>'
     + '<button onclick="renderPage(' + (currentPage + 1) + ')"' + nextDisabled + '>Weiter &#8594;</button>';
 }
+
+function focusCard(idx) {
+  if (filtered.length === 0) return;
+  idx = Math.max(0, Math.min(filtered.length - 1, idx));
+  focusedIndex = idx;
+
+  var targetPage = Math.floor(idx / PAGE_SIZE) + 1;
+  if (targetPage !== currentPage) {
+    renderPage(targetPage);
+  } else {
+    var cards = document.getElementById('grid').querySelectorAll('.video-card');
+    cards.forEach(function(c) { c.classList.remove('focused'); });
+    var localIdx = idx - (currentPage - 1) * PAGE_SIZE;
+    if (cards[localIdx]) cards[localIdx].classList.add('focused');
+  }
+
+  var localIdx = idx - (currentPage - 1) * PAGE_SIZE;
+  var cards = document.getElementById('grid').querySelectorAll('.video-card');
+  if (cards[localIdx]) cards[localIdx].scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === 'j' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    focusCard(focusedIndex < 0 ? 0 : focusedIndex + 1);
+  } else if (e.key === 'k' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    focusCard(focusedIndex < 0 ? 0 : focusedIndex - 1);
+  }
+});
 
 document.getElementById('search').addEventListener('input', function() {
   clearTimeout(debounceTimer);
