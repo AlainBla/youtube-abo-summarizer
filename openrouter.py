@@ -36,7 +36,7 @@ Include timestamp links to the relevant positions in the video using this exact 
   <a href="https://www.youtube.com/watch?v=VIDEO_ID&t=SECONDS" class="ts-link">MM:SS</a>
 Replace VIDEO_ID with the video ID from the user message and SECONDS with the integer number of
 seconds (e.g. [1:23] → t=83).
-- For <h3> headings: place the timestamp link at the start of the heading.
+- For <h3> headings: place the timestamp link at the end of the heading.
 - For <p> paragraphs and <li> items: place each timestamp link directly after the sentence
   it belongs to — not at the end of the paragraph. Each sentence that covers a new transcript
   segment gets its own timestamp immediately following the full stop. For longer paragraphs,
