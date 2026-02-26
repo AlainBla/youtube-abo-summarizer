@@ -37,12 +37,13 @@ python collect.py --file channels.txt [--hours N]
 ### Report phase — run on digest schedule (e.g. every 6 h or daily)
 
 ```bash
-python report.py [--hours 24] [--output summary.html] [--skip-empty] [--send-to EMAIL]
+python report.py [--hours 24] [--output summary.html] [--skip-empty] [--send-to EMAIL] [--show-model]
 ```
 
 - Reads `data/videos.db`, includes videos published within the last `--hours` hours.
 - `--skip-empty` omits channels with no videos in the window.
 - `--send-to EMAIL` sends the rendered HTML via SMTP after writing the file.
+- `--show-model` shows the LLM model name badge on each video card (hidden by default).
 - No YouTube API calls, no LLM calls.
 
 ### Cron scripts
@@ -87,9 +88,11 @@ python export.py                        # last 7 days (default)
 python export.py --all                  # all videos in store
 python export.py --hours 48             # custom time window
 python export.py --all --output full_archive.html
+python export.py --show-model           # include LLM model badge on cards
 ```
 
 `--hours` and `--all` are mutually exclusive. Default output filename: `export_YYYY-MM-DD_HH-MM.html`.
+`--show-model` shows the LLM model name badge on each card (hidden by default).
 
 ## All-in-one mode (legacy)
 

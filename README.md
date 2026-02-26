@@ -93,6 +93,9 @@ python report.py --hours 6 --output summary_6h.html
 
 # Skip channels with no new videos and send via email
 python report.py --hours 24 --skip-empty --send-to you@example.com
+
+# Show the LLM model badge on each card
+python report.py --show-model
 ```
 
 No YouTube API calls or LLM calls happen here — it reads only from `data/`.
@@ -113,9 +116,13 @@ python export.py --hours 48
 
 # Custom output filename
 python export.py --all --output full_archive.html
+
+# Show the LLM model badge on each card
+python export.py --show-model
 ```
 
 `--hours` and `--all` are mutually exclusive. The default output filename is `export_YYYY-MM-DD_HH-MM.html`.
+The LLM model badge is hidden by default; use `--show-model` to display it.
 
 ## Usage — repair
 
