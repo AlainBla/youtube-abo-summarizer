@@ -61,6 +61,21 @@ def build_client() -> OpenAI:
     return OpenAI(base_url=base_url, api_key=api_key)
 
 
+def _dedup_timestamps(html: str) -> str:
+    """Remove consecutive duplicate timestamp links from the HTML summary.
+
+    The LLM sometimes emits the same [MM:SS] link several times in a row
+    (common for short videos where many sentences share one segment). Only
+    the first occurrence of a consecutive run is kept.
+    """
+    return re.sub(
+        r'(<a\b[^>]*\bt=(\d+)[^>]*>.*?</a>)(?:\s*<a\b[^>]*\bt=\2[^>]*>.*?</a>)+',
+        r'\1',
+        html,
+        flags=re.DOTALL,
+    )
+
+
 def _parse_tags(content: str) -> tuple[str, list[str]]:
     """Extract <!-- tags: ... --> comment from end of content.
 
@@ -89,4 +104,5 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> t
     content = response.choices[0].message.content.strip()
     # Some models (e.g. Gemma3) wrap the HTML in a markdown code fence; strip it.
     content = re.sub(r"^```[a-zA-Z]*\s*\n?(.*?)\n?```$", r"\1", content, flags=re.DOTALL).strip()
-    return _parse_tags(content)
+    html, tags = _parse_tags(content)
+    return _dedup_timestamps(html), tags
