@@ -104,6 +104,8 @@ No YouTube API calls or LLM calls happen here — it reads only from `data/`.
 
 `export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, a channel filter dropdown, a tag filter dropdown, sorting by date/channel/title, and pagination (20 items per page). Tag chips on each video card are clickable and set the tag filter directly. No server required.
 
+![Export archive screenshot](YoutubeExportScreenshot.png)
+
 ```bash
 # Last 7 days (default)
 python export.py
