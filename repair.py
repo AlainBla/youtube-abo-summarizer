@@ -55,12 +55,18 @@ def parse_args():
         action="store_true",
         help="Re-summarize even if a summary file already exists.",
     )
+    parser.add_argument(
+        "--model",
+        metavar="MODEL_ID",
+        default=None,
+        help="LLM model to use for summarization (overrides LLM_MODEL / OPENROUTER_MODEL env vars).",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    model = os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
+    model = args.model or os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
     video_filter = set(args.video) if args.video else None
 
     entries = store.get_all_videos()
