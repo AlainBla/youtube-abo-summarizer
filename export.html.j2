@@ -125,6 +125,18 @@
     }
     .video-summary a.ts-link:hover { background: #3d1e1e; color: #ff9999; }
 
+    .summary-toggle {
+      background: none;
+      border: none;
+      color: #555;
+      font-size: 0.8rem;
+      cursor: pointer;
+      padding: 0.25rem 0;
+      margin-top: 0.25rem;
+      display: block;
+    }
+    .summary-toggle:hover { color: #aaa; }
+
     .video-summary h3 {
       font-size: 0.85rem;
       font-weight: 700;
@@ -280,7 +292,16 @@ function buildCard(v) {
 
   let summaryHtml;
   if (v.summary) {
-    summaryHtml = v.summary;
+    const cut = v.summary.indexOf('</p>');
+    const rest = cut !== -1 ? v.summary.slice(cut + 4).trim() : '';
+    const preview = cut !== -1 ? v.summary.slice(0, cut + 4) : v.summary;
+    if (rest) {
+      summaryHtml = preview
+        + '<div class="summary-details" hidden>' + rest + '</div>'
+        + '<button class="summary-toggle" onclick="toggleSummary(this)">&#9660; mehr</button>';
+    } else {
+      summaryHtml = preview;
+    }
   } else if (v.transcript_error === 'ip_blocked') {
     summaryHtml = '<p class="no-transcript ip-blocked">&#x26A0; Kein Transkript &mdash; YouTube blockiert Transkript-Anfragen von dieser IP-Adresse (Rechenzentrum erkannt).</p>';
   } else if (v.transcript_error === 'rate_limited') {
@@ -366,6 +387,13 @@ function renderPage(page) {
     '<button onclick="renderPage(' + (currentPage - 1) + ')"' + prevDisabled + '>&#8592; Zur\u00fcck</button>'
     + '<span class="page-info">Seite ' + currentPage + ' von ' + pages + '</span>'
     + '<button onclick="renderPage(' + (currentPage + 1) + ')"' + nextDisabled + '>Weiter &#8594;</button>';
+}
+
+function toggleSummary(btn) {
+  var details = btn.previousElementSibling;
+  var open = details.hidden === false;
+  details.hidden = open;
+  btn.textContent = open ? '\u25bc mehr' : '\u25b2 weniger';
 }
 
 function focusCard(idx) {
