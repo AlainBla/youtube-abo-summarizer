@@ -21,7 +21,7 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 ## Requirements
 
 - Python 3.8+
-- A [Google Cloud project](https://console.cloud.google.com/) with the YouTube Data API v3 enabled and OAuth 2.0 credentials
+- A [Google Cloud project](https://console.cloud.google.com/) with the YouTube Data API v3 enabled and OAuth 2.0 credentials — required for fetching your subscription list via `--auth`; explicit channel IDs, handles, or a channel file can be used as an alternative
 - An LLM backend: [OpenRouter](https://openrouter.ai) API key (default) **or** a local [Ollama](https://ollama.com) instance
 - An SMTP server for email delivery (optional)
 
