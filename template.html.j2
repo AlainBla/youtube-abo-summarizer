@@ -111,6 +111,40 @@
       transition: border-color 0.15s;
     }
     .video-card:hover { border-color: #444; }
+    .video-card.is-read { opacity: 0.6; }
+    .video-card.is-read .video-title { color: #888; }
+    .video-card.is-bookmarked { border-color: #7a5a10; box-shadow: 0 0 0 1px #7a5a10; }
+
+    .video-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .video-actions button {
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 4px;
+      color: #888;
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .video-actions button:hover {
+      background: #333;
+      border-color: #555;
+      color: #bbb;
+    }
+    .video-actions button.is-active {
+      background: #2d4a2d;
+      border-color: #4a7a4a;
+      color: #a0dfa0;
+    }
+    .video-actions button.bookmark-btn.is-active {
+      background: #4a3a10;
+      border-color: #7a5a10;
+      color: #e0c060;
+    }
 
     .video-thumb {
       flex-shrink: 0;
@@ -305,6 +339,10 @@
         {% endif %}
       </div>
       <div class="video-body">
+        <div class="video-actions">
+          <button class="read-btn" data-video-id="{{ video.video_id }}" onclick="toggleRead('{{ video.video_id }}')">✓ Gelesen</button>
+          <button class="bookmark-btn" data-video-id="{{ video.video_id }}" onclick="toggleBookmark('{{ video.video_id }}')">★ Merken</button>
+        </div>
         <a class="video-title" href="https://www.youtube.com/watch?v={{ video.video_id }}" target="_blank">{{ video.title }}</a>
         <div class="video-meta">{{ video.published_at }}{% if video.duration %} &middot; {{ video.duration }}{% endif %}{% if video.summary_model %}<span class="model-badge">{{ video.summary_model }}</span>{% endif %}</div>
         {% if next_anchor %}<a class="skip-link" href="{{ next_anchor }}">skip ↓</a>{% endif %}
@@ -333,6 +371,83 @@
 <footer class="page-footer">
   youtube-abo-summarizer
 </footer>
+
+<script>
+(function() {
+  const COOKIE_READ = 'yt_read';
+  const COOKIE_BOOKMARK = 'yt_bookmark';
+  const COOKIE_DAYS = 365;
+
+  function setCookie(name, value) {
+    const d = new Date();
+    d.setTime(d.getTime() + (COOKIE_DAYS * 24 * 60 * 60 * 1000));
+    document.cookie = name + '=' + encodeURIComponent(value) + ';expires=' + d.toUTCString() + ';path=/';
+  }
+
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return match ? decodeURIComponent(match[2]) : '';
+  }
+
+  function getSet(name) {
+    const val = getCookie(name);
+    return val ? new Set(val.split(',').filter(Boolean)) : new Set();
+  }
+
+  function saveSet(name, set) {
+    setCookie(name, Array.from(set).join(','));
+  }
+
+  window.toggleRead = function(videoId) {
+    const set = getSet(COOKIE_READ);
+    const card = document.getElementById('video-' + videoId);
+    const btn = card.querySelector('.read-btn');
+    if (set.has(videoId)) {
+      set.delete(videoId);
+      card.classList.remove('is-read');
+      btn.classList.remove('is-active');
+    } else {
+      set.add(videoId);
+      card.classList.add('is-read');
+      btn.classList.add('is-active');
+    }
+    saveSet(COOKIE_READ, set);
+  };
+
+  window.toggleBookmark = function(videoId) {
+    const set = getSet(COOKIE_BOOKMARK);
+    const card = document.getElementById('video-' + videoId);
+    const btn = card.querySelector('.bookmark-btn');
+    if (set.has(videoId)) {
+      set.delete(videoId);
+      card.classList.remove('is-bookmarked');
+      btn.classList.remove('is-active');
+    } else {
+      set.add(videoId);
+      card.classList.add('is-bookmarked');
+      btn.classList.add('is-active');
+    }
+    saveSet(COOKIE_BOOKMARK, set);
+  };
+
+  // Initialize state on page load
+  document.addEventListener('DOMContentLoaded', function() {
+    const readSet = getSet(COOKIE_READ);
+    const bookmarkSet = getSet(COOKIE_BOOKMARK);
+    document.querySelectorAll('.video-card').forEach(function(card) {
+      const videoId = card.id.replace('video-', '');
+      if (readSet.has(videoId)) {
+        card.classList.add('is-read');
+        card.querySelector('.read-btn').classList.add('is-active');
+      }
+      if (bookmarkSet.has(videoId)) {
+        card.classList.add('is-bookmarked');
+        card.querySelector('.bookmark-btn').classList.add('is-active');
+      }
+    });
+  });
+})();
+</script>
 
 </body>
 </html>

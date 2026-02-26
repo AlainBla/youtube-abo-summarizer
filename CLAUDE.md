@@ -81,7 +81,7 @@ python repair.py --force-summarize
 
 ## Export archive
 
-`export.py` renders stored videos into a self-contained HTML file for offline browsing (client-side search, channel filter, tag filter, sort, pagination).
+`export.py` renders stored videos into a self-contained HTML file for offline browsing (client-side search, channel/tag/read/bookmark filters, sort, pagination; read and bookmark state persisted in browser cookies).
 
 ```bash
 python export.py                        # last 7 days (default)
@@ -124,8 +124,8 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `transcripts.py` | `youtube-transcript-api` wrapper; language priority via `TRANSCRIPT_LANGS` (default: de,en); handles ip_blocked / rate_limited / country_blocked errors; `VideoUnplayable` is only classified as `country_blocked` when the reason mentions "country"/"region" — on `country_blocked`, retries once with a country-pinned Webshare proxy (`PROXY_FALLBACK_COUNTRY`, default: DE) if `WEBSHARE_PROXY_URL` is set; other `VideoUnplayable` causes fall to `unavailable` (retryable) |
 | `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); summary language via `SUMMARY_LANG`; structured prompt enforces chronological sections scaled to video length, written as flowing prose (`<p>`) with bullets only for genuine enumerations, timestamp links placed inline after each relevant sentence; strips markdown fences from responses; extracts 3–7 English topic tags from the `<!-- tags: ... -->` comment appended by the model; returns `(summary_html, tags_list)` tuple |
 | `renderer.py` | Jinja2 renderer; writes the final HTML file |
-| `template.html.j2` | Self-contained HTML template with embedded dark-theme CSS |
-| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/channel-filter/tag-filter/sort/pagination; tag chips on cards are clickable and toggle the tag filter |
+| `template.html.j2` | Self-contained HTML template with embedded dark-theme CSS; read/bookmark buttons on each card, state persisted in browser cookies (365 days) |
+| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/channel-filter/tag-filter/read-filter/bookmark-filter/sort/pagination; tag chips on cards are clickable and toggle the tag filter; read/bookmark state persisted in browser cookies |
 | `state.py` | Reads/writes `last_run.json` (channel_id → last checked ISO timestamp) |
 | `send_mail.py` | Standalone script; sends an HTML file as an email via SMTP_SSL |
 

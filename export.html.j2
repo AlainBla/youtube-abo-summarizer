@@ -71,6 +71,40 @@
       transition: border-color 0.15s;
     }
     .video-card:hover { border-color: #444; }
+    .video-card.is-read { opacity: 0.6; }
+    .video-card.is-read .video-title { color: #888; }
+    .video-card.is-bookmarked { border-color: #7a5a10; box-shadow: 0 0 0 1px #7a5a10; }
+
+    .video-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.4rem;
+    }
+    .video-actions button {
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 4px;
+      color: #888;
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .video-actions button:hover {
+      background: #333;
+      border-color: #555;
+      color: #bbb;
+    }
+    .video-actions button.is-active {
+      background: #2d4a2d;
+      border-color: #4a7a4a;
+      color: #a0dfa0;
+    }
+    .video-actions button.bookmark-btn.is-active {
+      background: #4a3a10;
+      border-color: #7a5a10;
+      color: #e0c060;
+    }
 
     .video-thumb { flex-shrink: 0; width: 200px; }
     .video-thumb img { width: 100%; border-radius: 5px; display: block; }
@@ -240,6 +274,15 @@
   <select id="tag-filter">
     <option value="">Alle Tags</option>
   </select>
+  <select id="read-filter">
+    <option value="">Alle Videos</option>
+    <option value="unread">Nur ungelesen</option>
+    <option value="read">Nur gelesen</option>
+  </select>
+  <select id="bookmark-filter">
+    <option value="">Alle Videos</option>
+    <option value="bookmarked">Nur gemerkt</option>
+  </select>
   <select id="sort">
     <option value="date-desc">Neueste zuerst</option>
     <option value="date-asc">Älteste zuerst</option>
@@ -266,6 +309,54 @@ let filtered = [];
 let currentPage = 1;
 let debounceTimer = null;
 let focusedIndex = -1;
+
+// Cookie helpers
+const COOKIE_READ = 'yt_read';
+const COOKIE_BOOKMARK = 'yt_bookmark';
+const COOKIE_DAYS = 365;
+
+function setCookie(name, value) {
+  const d = new Date();
+  d.setTime(d.getTime() + (COOKIE_DAYS * 24 * 60 * 60 * 1000));
+  document.cookie = name + '=' + encodeURIComponent(value) + ';expires=' + d.toUTCString() + ';path=/';
+}
+
+function getCookie(name) {
+  const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+  return match ? decodeURIComponent(match[2]) : '';
+}
+
+function getSet(name) {
+  const val = getCookie(name);
+  return val ? new Set(val.split(',').filter(Boolean)) : new Set();
+}
+
+function saveSet(name, set) {
+  setCookie(name, Array.from(set).join(','));
+}
+
+let readSet = getSet(COOKIE_READ);
+let bookmarkSet = getSet(COOKIE_BOOKMARK);
+
+window.toggleRead = function(videoId) {
+  if (readSet.has(videoId)) {
+    readSet.delete(videoId);
+  } else {
+    readSet.add(videoId);
+  }
+  saveSet(COOKIE_READ, readSet);
+  applyFiltersAndSort();
+};
+
+window.toggleBookmark = function(videoId) {
+  if (bookmarkSet.has(videoId)) {
+    bookmarkSet.delete(videoId);
+  } else {
+    bookmarkSet.add(videoId);
+  }
+  saveSet(COOKIE_BOOKMARK, bookmarkSet);
+  applyFiltersAndSort();
+};
 
 // Populate channel filter dropdown
 (function() {
@@ -367,9 +458,19 @@ function buildCard(v) {
       + '</div>';
   }
 
-  return '<article class="video-card">'
+  const isRead = readSet.has(v.video_id);
+  const isBookmarked = bookmarkSet.has(v.video_id);
+  const cardClass = 'video-card' + (isRead ? ' is-read' : '') + (isBookmarked ? ' is-bookmarked' : '');
+  const readBtnClass = 'read-btn' + (isRead ? ' is-active' : '');
+  const bookmarkBtnClass = 'bookmark-btn' + (isBookmarked ? ' is-active' : '');
+
+  return '<article class="' + cardClass + '">'
     + '<div class="video-thumb">' + thumb + '</div>'
     + '<div class="video-body">'
+    + '<div class="video-actions">'
+    + '<button class="' + readBtnClass + '" onclick="toggleRead(\'' + escHtml(v.video_id) + '\')">✓ Gelesen</button>'
+    + '<button class="' + bookmarkBtnClass + '" onclick="toggleBookmark(\'' + escHtml(v.video_id) + '\')">★ Merken</button>'
+    + '</div>'
     + '<a class="video-title" href="https://www.youtube.com/watch?v=' + escHtml(v.video_id) + '" target="_blank" rel="noopener">' + escHtml(v.title) + '</a>'
     + '<div class="video-meta">' + escHtml(v.channel_title) + ' &middot; ' + escHtml(v.published_at_display) + metaExtras + '</div>'
     + tagsHtml
@@ -383,10 +484,15 @@ function applyFiltersAndSort() {
   const sort = document.getElementById('sort').value;
   const channelId = document.getElementById('channel-filter').value;
   const tagFilter = document.getElementById('tag-filter').value;
+  const readFilter = document.getElementById('read-filter').value;
+  const bookmarkFilter = document.getElementById('bookmark-filter').value;
 
   filtered = VIDEOS.filter(function(v) {
     if (channelId && v.channel_id !== channelId) return false;
     if (tagFilter && !(v.tags || []).includes(tagFilter)) return false;
+    if (readFilter === 'read' && !readSet.has(v.video_id)) return false;
+    if (readFilter === 'unread' && readSet.has(v.video_id)) return false;
+    if (bookmarkFilter === 'bookmarked' && !bookmarkSet.has(v.video_id)) return false;
     if (q) {
       var text = v.title.toLowerCase() + ' ' + stripHtml(v.summary || '').toLowerCase();
       if (text.indexOf(q) === -1) return false;
@@ -493,6 +599,8 @@ document.getElementById('search').addEventListener('input', function() {
 
 document.getElementById('channel-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('tag-filter').addEventListener('change', applyFiltersAndSort);
+document.getElementById('read-filter').addEventListener('change', applyFiltersAndSort);
+document.getElementById('bookmark-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('sort').addEventListener('change', applyFiltersAndSort);
 
 applyFiltersAndSort();
