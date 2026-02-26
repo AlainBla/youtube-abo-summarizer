@@ -2,6 +2,8 @@
 
 Fetches new videos from your YouTube subscriptions (or an explicit channel list), retrieves their transcripts, summarizes them with an LLM, and renders a self-contained HTML report — optionally delivered by email. Supports [OpenRouter](https://openrouter.ai) (default) and local [Ollama](https://ollama.com) instances (or any OpenAI-compatible endpoint).
 
+![youtube-abo-summarizer](youtube-abo-summarizer.png)
+
 ## Features
 
 - **Two-phase pipeline**: Separate collection (fetch + summarize) from reporting (render + send), so transcripts and LLM calls only happen when new videos arrive — not on every digest
@@ -103,8 +105,6 @@ No YouTube API calls or LLM calls happen here — it reads only from `data/`.
 ## Usage — export archive
 
 `export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, a channel filter dropdown, a tag filter dropdown, sorting by date/channel/title, and pagination (20 items per page). Tag chips on each video card are clickable and set the tag filter directly. No server required.
-
-![Export archive screenshot](YoutubeExportScreenshot.png)
 
 ```bash
 # Last 7 days (default)
