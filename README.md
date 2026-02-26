@@ -14,7 +14,8 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 - **Transcript and summary storage**: Transcripts and summaries are cached to `data/`. On subsequent runs, videos that already have both a transcript and a summary are skipped entirely — no redundant YouTube or LLM calls. If only the transcript is missing it is fetched; if only the summary is missing the stored transcript is re-used and only the LLM call is made
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
 - **Browsable archive export**: Single portable HTML file with client-side search, channel filter, tag filter, read/bookmark filter, sort, and pagination — works fully offline; tag chips on cards are clickable and toggle the tag filter
-- **Read/bookmark tracking**: Each video card has "Gelesen" (read) and "Merken" (bookmark) buttons; state is persisted in browser cookies (365 days) and shared between the report and export views
+- **Read/bookmark tracking**: Each video card has read and bookmark buttons; state is persisted in browser cookies (365 days) and shared between the report and export views
+- **Multi-language UI**: Report and export templates support German (`de`, default) and English (`en`); select via `--lang` on the CLI; the export additionally shows an in-page language selector that persists the choice in a cookie and falls back to the browser's preferred language
 - **Repair tool**: Re-fetches missing transcripts and re-summarizes missing or broken summaries; supports targeting specific videos
 - **Email delivery**: Sends the report via SMTP
 - **Cron-ready**: Includes shell scripts for frequent collection and daily/6-hour/12-hour digest delivery
@@ -99,6 +100,9 @@ python report.py --hours 24 --skip-empty --send-to you@example.com
 
 # Show the LLM model badge on each card
 python report.py --show-model
+
+# Render the report in English
+python report.py --lang en
 ```
 
 No YouTube API calls or LLM calls happen here — it reads only from `data/`.
@@ -106,6 +110,8 @@ No YouTube API calls or LLM calls happen here — it reads only from `data/`.
 ## Usage — export archive
 
 `export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, channel/tag/read/bookmark filter dropdowns, sorting by date/channel/title, and pagination (20 items per page). Tag chips on each video card are clickable and set the tag filter directly. Read and bookmark state is tracked via browser cookies and persists across sessions. No server required.
+
+A language selector in the page header lets you switch between German and English at any time. The choice is stored in a cookie (`yt_lang`) and automatically applied when you open any export file. If no cookie is set, the browser's preferred language is used; if that language is not supported, the embedded default (set via `--lang`) is used.
 
 ```bash
 # Last 7 days (default)
@@ -122,6 +128,9 @@ python export.py --all --output full_archive.html
 
 # Show the LLM model badge on each card
 python export.py --show-model
+
+# Embed English as the fallback language (overridden by cookie/browser)
+python export.py --lang en
 ```
 
 `--hours` and `--all` are mutually exclusive. The default output filename is `export_YYYY-MM-DD_HH-MM.html`.
@@ -163,7 +172,7 @@ To backfill tags on videos summarized before tag support was added, run `python 
 python summarize.py --auth
 python summarize.py --auth --hours 12
 python summarize.py UC123abc @SomeHandle
-python summarize.py --file channels.txt --output report.html --skip-empty
+python summarize.py --file channels.txt --output report.html --skip-empty --lang en
 ```
 
 ## Email delivery (standalone)
@@ -209,8 +218,10 @@ Each report script activates the virtual environment, renders the HTML, sends th
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling |
 | `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns `(summary_html, tags)` tuple — structured HTML with chronological sections, proportional depth, and timestamp links, plus 3–7 English topic tags extracted from a `<!-- tags: ... -->` comment appended by the model |
-| `renderer.py` | Jinja2 renderer; writes the final HTML report |
-| `template.html.j2` | Self-contained dark-theme HTML report template; includes read/bookmark buttons with cookie-based state |
+| `renderer.py` | Jinja2 renderer; writes the final HTML report; accepts `lang=` kwarg |
+| `i18n.py` | UI string dicts for `de` (default) and `en`; `get_strings()` and `resolve_lang()` helpers used by the renderer |
+| `template.html.j2` | Self-contained dark-theme HTML report template; read/bookmark buttons with cookie-based state; all UI strings sourced from `i18n.py` via `{{ t.xxx }}` |
+| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/channel/tag/read/bookmark filters, sort, pagination; in-page language selector (cookie `yt_lang`, browser fallback); full `de`/`en` string set in the embedded `I18N` object |
 | `state.py` | Reads/writes `last_run.json` (per-channel ISO timestamps) |
 | `send_mail.py` | SMTP email sender |
 

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang }}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>YouTube Summary — {{ generated_date }}</title>
+  <title>{{ t.page_title }} — {{ generated_date }}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -291,13 +291,13 @@
 <body>
 
 <header class="page-header">
-  <h1>YouTube Summary</h1>
-  <p class="meta">Generated {{ generated_date }} &mdash; {{ total_videos }} video{{ 's' if total_videos != 1 else '' }} across {{ channels|length }} channel{{ 's' if channels|length != 1 else '' }}</p>
+  <h1>{{ t.page_title }}</h1>
+  <p class="meta">{{ meta_line }}</p>
 </header>
 
 {% if channels %}
 <nav class="toc">
-  <p class="toc-title">Contents</p>
+  <p class="toc-title">{{ t.contents }}</p>
   {% for channel in channels %}
   <div class="toc-channel">
     <a class="toc-channel-link" href="#channel-{{ channel.channel_id }}">{{ channel.title }}</a>
@@ -318,7 +318,7 @@
 <section class="channel-section" id="channel-{{ channel.channel_id }}">
   <div class="channel-header">
     <h2>{{ channel.title }}</h2>
-    <span class="channel-badge">{{ channel.videos|length }} new</span>
+    <span class="channel-badge">{{ channel.videos|length }} {{ t.new_badge }}</span>
   </div>
 
   {% if channel.videos %}
@@ -335,35 +335,35 @@
         {% if video.thumbnail_url %}
           <img src="{{ video.thumbnail_url }}" alt="{{ video.title }}">
         {% else %}
-          <div class="no-thumb">No thumbnail</div>
+          <div class="no-thumb">{{ t.no_thumb }}</div>
         {% endif %}
       </div>
       <div class="video-body">
         <div class="video-actions">
-          <button class="read-btn" data-video-id="{{ video.video_id }}" onclick="toggleRead('{{ video.video_id }}')">✓ Gelesen</button>
-          <button class="bookmark-btn" data-video-id="{{ video.video_id }}" onclick="toggleBookmark('{{ video.video_id }}')">★ Merken</button>
+          <button class="read-btn" data-video-id="{{ video.video_id }}" onclick="toggleRead('{{ video.video_id }}')">{{ t.read_btn }}</button>
+          <button class="bookmark-btn" data-video-id="{{ video.video_id }}" onclick="toggleBookmark('{{ video.video_id }}')">{{ t.bookmark_btn }}</button>
         </div>
         <a class="video-title" href="https://www.youtube.com/watch?v={{ video.video_id }}" target="_blank">{{ video.title }}</a>
         <div class="video-meta">{{ video.published_at }}{% if video.duration %} &middot; {{ video.duration }}{% endif %}{% if video.summary_model %}<span class="model-badge">{{ video.summary_model }}</span>{% endif %}</div>
-        {% if next_anchor %}<a class="skip-link" href="{{ next_anchor }}">skip ↓</a>{% endif %}
+        {% if next_anchor %}<a class="skip-link" href="{{ next_anchor }}">{{ t.skip }}</a>{% endif %}
         <div class="video-summary">
           {% if video.summary %}
             {{ video.summary }}
           {% elif video.transcript_error == "ip_blocked" %}
-            <p class="no-transcript ip-blocked">&#x26A0; Kein Transkript &mdash; YouTube blockiert Transkript-Anfragen von dieser IP-Adresse (Rechenzentrum erkannt).</p>
+            <p class="no-transcript ip-blocked">{{ t.transcript_ip_blocked }}</p>
           {% elif video.transcript_error == "rate_limited" %}
-            <p class="no-transcript rate-limited">&#x26A0; Kein Transkript &mdash; YouTube hat die Anfrage abgelehnt (zu viele Anfragen in kurzer Zeit).</p>
+            <p class="no-transcript rate-limited">{{ t.transcript_rate_limited }}</p>
           {% elif video.transcript_error == "country_blocked" %}
-            <p class="no-transcript country-blocked">&#x1F310; Kein Transkript &mdash; Video ist nur in bestimmten Regionen verfügbar (Geoblocking).</p>
+            <p class="no-transcript country-blocked">{{ t.transcript_country_blocked }}</p>
           {% else %}
-            <p class="no-transcript unavailable">Kein Transkript für dieses Video verfügbar.</p>
+            <p class="no-transcript unavailable">{{ t.transcript_unavailable }}</p>
           {% endif %}
         </div>
       </div>
     </article>
     {% endfor %}
   {% else %}
-    <p class="no-videos">No new videos in the selected time range.</p>
+    <p class="no-videos">{{ t.no_videos }}</p>
   {% endif %}
 </section>
 {% endfor %}

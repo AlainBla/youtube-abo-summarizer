@@ -46,6 +46,13 @@ def parse_args():
         action="store_true",
         help="Show the LLM model name badge on each video card.",
     )
+    parser.add_argument(
+        "--lang",
+        metavar="LANG",
+        default=None,
+        help="Default UI language embedded in the export: de (default) or en. "
+             "Overridden by cookie or browser language preference.",
+    )
     return parser.parse_args()
 
 
@@ -105,7 +112,7 @@ def main():
     ]
 
     print(f"Rendering {len(videos)} video(s) → {output_path}")
-    renderer.render_export_html(videos, output_path)
+    renderer.render_export_html(videos, output_path, lang=args.lang or "de")
     print("Done.")
 
 

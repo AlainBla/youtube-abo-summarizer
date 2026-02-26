@@ -67,6 +67,12 @@ def parse_args():
         action="store_true",
         help="Exclude channels with no videos from the output.",
     )
+    parser.add_argument(
+        "--lang",
+        metavar="LANG",
+        default=None,
+        help="UI language for the rendered report: de (default) or en.",
+    )
     return parser.parse_args()
 
 
@@ -194,7 +200,7 @@ def main():
         channels_data = [ch for ch in channels_data if ch["videos"]]
 
     print(f"\nRendering HTML → {output_path}")
-    renderer.render_html(channels_data, output_path)
+    renderer.render_html(channels_data, output_path, lang=args.lang or "de")
     print("Done.")
 
 

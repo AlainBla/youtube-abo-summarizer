@@ -60,6 +60,12 @@ def parse_args():
         action="store_true",
         help="Show the LLM model name badge on each video card.",
     )
+    parser.add_argument(
+        "--lang",
+        metavar="LANG",
+        default=None,
+        help="UI language for the rendered report: de (default) or en.",
+    )
     return parser.parse_args()
 
 
@@ -131,7 +137,7 @@ def main():
         print(f"No videos in store published in the last {args.hours} hour(s).")
         if not args.skip_empty:
             # Render an empty report anyway so a mail doesn't get skipped silently
-            renderer.render_html([], output_path)
+            renderer.render_html([], output_path, lang=args.lang or "de")
             print(f"Empty report written → {output_path}")
         sys.exit(0)
 
@@ -170,7 +176,7 @@ def main():
         sys.exit(0)
 
     print(f"Rendering HTML → {output_path}")
-    renderer.render_html(channels_data, output_path)
+    renderer.render_html(channels_data, output_path, lang=args.lang or "de")
 
     if args.send_to:
         subject = f"YouTube Summary {datetime.now().strftime('%Y-%m-%d %H:%M')}"

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="{{ default_lang }}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -20,6 +20,13 @@
       margin: 0 auto 1.5rem;
       border-bottom: 2px solid #ff0000;
       padding-bottom: 1rem;
+    }
+    .header-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
     }
     .page-header h1 { font-size: 1.8rem; font-weight: 700; color: #fff; }
     .page-header .meta { color: #888; font-size: 0.9rem; margin-top: 0.25rem; }
@@ -46,7 +53,8 @@
     }
     .controls-bar input[type="search"]:focus { border-color: #555; }
     .controls-bar input[type="search"]::placeholder { color: #555; }
-    .controls-bar select {
+    .controls-bar select,
+    .lang-select {
       background: #1a1a1a;
       border: 1px solid #2a2a2a;
       border-radius: 6px;
@@ -56,7 +64,9 @@
       outline: none;
       cursor: pointer;
     }
-    .controls-bar select:focus { border-color: #555; }
+    .controls-bar select:focus,
+    .lang-select:focus { border-color: #555; }
+    .lang-select { align-self: center; }
     .results-count { color: #666; font-size: 0.85rem; white-space: nowrap; }
 
     /* ── Video cards ── */
@@ -262,14 +272,22 @@
 <body>
 
 <header class="page-header">
-  <h1>YouTube Export</h1>
-  <p class="meta">Generiert {{ generated_date }} &mdash; {{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}</p>
+  <div class="header-row">
+    <div>
+      <h1 id="page-title">YouTube Export</h1>
+      <p class="meta" id="page-meta">{{ generated_date }} &mdash; {{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}</p>
+    </div>
+    <select id="lang-select" class="lang-select" title="Language / Sprache">
+      <option value="de">Deutsch</option>
+      <option value="en">English</option>
+    </select>
+  </div>
 </header>
 
 <div class="controls-bar">
-  <input type="search" id="search" placeholder="Titel oder Zusammenfassung durchsuchen&hellip;" autocomplete="off">
+  <input type="search" id="search" placeholder="Suchen&hellip;" autocomplete="off">
   <select id="channel-filter">
-    <option value="">Alle Kanäle</option>
+    <option value="">Alle Kan&auml;le</option>
   </select>
   <select id="tag-filter">
     <option value="">Alle Tags</option>
@@ -285,12 +303,12 @@
   </select>
   <select id="sort">
     <option value="date-desc">Neueste zuerst</option>
-    <option value="date-asc">Älteste zuerst</option>
-    <option value="channel">Kanal A–Z</option>
-    <option value="title">Titel A–Z</option>
+    <option value="date-asc">&Auml;lteste zuerst</option>
+    <option value="channel">Kanal A&ndash;Z</option>
+    <option value="title">Titel A&ndash;Z</option>
   </select>
   <span class="results-count" id="results-count"></span>
-  <span class="results-count" style="color:#444">j/k &mdash; vor/zurück</span>
+  <span class="results-count" id="key-hint" style="color:#444">j/k &mdash; vor/zur&uuml;ck</span>
 </div>
 
 <div id="grid"></div>
@@ -304,15 +322,89 @@
 <script>
 const VIDEOS = {{ videos_json }};
 const PAGE_SIZE = 20;
+const TOTAL_VIDEOS = {{ total_videos }};
+const GENERATED_DATE = '{{ generated_date }}';
+const EMBEDDED_DEFAULT = '{{ default_lang }}';
+
+// ── i18n ──────────────────────────────────────────────────────────────────────
+const I18N = {
+  de: {
+    pageTitle: 'YouTube Export',
+    generated: function(date, n) {
+      return 'Generiert ' + date + ' \u2014 ' + n + ' Video' + (n !== 1 ? 's' : '');
+    },
+    searchPlaceholder: 'Titel oder Zusammenfassung durchsuchen\u2026',
+    allChannels: 'Alle Kan\u00e4le',
+    allTags: 'Alle Tags',
+    allVideos: 'Alle Videos',
+    unreadOnly: 'Nur ungelesen',
+    readOnly: 'Nur gelesen',
+    bookmarkedOnly: 'Nur gemerkt',
+    sortDateDesc: 'Neueste zuerst',
+    sortDateAsc: '\u00c4lteste zuerst',
+    sortChannel: 'Kanal A\u2013Z',
+    sortTitle: 'Titel A\u2013Z',
+    keyHint: 'j/k \u2014 vor/zur\u00fcck',
+    noThumb: 'Kein Thumbnail',
+    readBtn: '\u2713 Gelesen',
+    bookmarkBtn: '\u2605 Merken',
+    showMore: '\u25bc mehr',
+    showLess: '\u25b2 weniger',
+    transcriptIpBlocked: '\u26a0 Kein Transkript \u2014 YouTube blockiert Transkript-Anfragen von dieser IP-Adresse (Rechenzentrum erkannt).',
+    transcriptRateLimited: '\u26a0 Kein Transkript \u2014 YouTube hat die Anfrage abgelehnt (zu viele Anfragen in kurzer Zeit).',
+    transcriptCountryBlocked: '\ud83c\udf10 Kein Transkript \u2014 Video ist nur in bestimmten Regionen verf\u00fcgbar (Geoblocking).',
+    transcriptUnavailable: 'Kein Transkript f\u00fcr dieses Video verf\u00fcgbar.',
+    noVideos: 'Keine Videos gefunden.',
+    results: function(n) { return n + ' Video' + (n !== 1 ? 's' : ''); },
+    prevPage: '\u2190 Zur\u00fcck',
+    pageInfo: function(cur, total) { return 'Seite ' + cur + ' von ' + total; },
+    nextPage: 'Weiter \u2192'
+  },
+  en: {
+    pageTitle: 'YouTube Export',
+    generated: function(date, n) {
+      return 'Generated ' + date + ' \u2014 ' + n + ' video' + (n !== 1 ? 's' : '');
+    },
+    searchPlaceholder: 'Search title or summary\u2026',
+    allChannels: 'All channels',
+    allTags: 'All tags',
+    allVideos: 'All videos',
+    unreadOnly: 'Unread only',
+    readOnly: 'Read only',
+    bookmarkedOnly: 'Bookmarked only',
+    sortDateDesc: 'Newest first',
+    sortDateAsc: 'Oldest first',
+    sortChannel: 'Channel A\u2013Z',
+    sortTitle: 'Title A\u2013Z',
+    keyHint: 'j/k \u2014 prev/next',
+    noThumb: 'No thumbnail',
+    readBtn: '\u2713 Read',
+    bookmarkBtn: '\u2605 Save',
+    showMore: '\u25bc more',
+    showLess: '\u25b2 less',
+    transcriptIpBlocked: '\u26a0 No transcript \u2014 YouTube is blocking transcript requests from this IP address (data center detected).',
+    transcriptRateLimited: '\u26a0 No transcript \u2014 YouTube rejected the request (too many requests in a short time).',
+    transcriptCountryBlocked: '\ud83c\udf10 No transcript \u2014 Video is only available in certain regions (geo-blocking).',
+    transcriptUnavailable: 'No transcript available for this video.',
+    noVideos: 'No videos found.',
+    results: function(n) { return n + ' video' + (n !== 1 ? 's' : ''); },
+    prevPage: '\u2190 Back',
+    pageInfo: function(cur, total) { return 'Page ' + cur + ' of ' + total; },
+    nextPage: 'Next \u2192'
+  }
+};
+
+var currentLang = EMBEDDED_DEFAULT;
 
 let filtered = [];
 let currentPage = 1;
 let debounceTimer = null;
 let focusedIndex = -1;
 
-// Cookie helpers
+// ── Cookie helpers ─────────────────────────────────────────────────────────────
 const COOKIE_READ = 'yt_read';
 const COOKIE_BOOKMARK = 'yt_bookmark';
+const COOKIE_LANG = 'yt_lang';
 const COOKIE_DAYS = 365;
 
 function setCookie(name, value) {
@@ -358,7 +450,62 @@ window.toggleBookmark = function(videoId) {
   applyFiltersAndSort();
 };
 
-// Populate channel filter dropdown
+// ── Language detection ─────────────────────────────────────────────────────────
+function detectLang() {
+  var cookieLang = getCookie(COOKIE_LANG);
+  if (cookieLang && I18N[cookieLang]) return cookieLang;
+
+  var browserLangs = navigator.languages ? Array.from(navigator.languages) : [navigator.language || ''];
+  for (var i = 0; i < browserLangs.length; i++) {
+    var prefix = browserLangs[i].split('-')[0].toLowerCase();
+    if (I18N[prefix]) return prefix;
+  }
+
+  if (I18N[EMBEDDED_DEFAULT]) return EMBEDDED_DEFAULT;
+  return 'de';
+}
+
+// ── Apply language ─────────────────────────────────────────────────────────────
+function applyLang(lang) {
+  currentLang = lang;
+  setCookie(COOKIE_LANG, lang);
+  var s = I18N[lang];
+
+  document.documentElement.lang = lang;
+  document.title = s.pageTitle + ' \u2014 ' + GENERATED_DATE;
+  document.getElementById('page-title').textContent = s.pageTitle;
+  document.getElementById('page-meta').textContent = s.generated(GENERATED_DATE, TOTAL_VIDEOS);
+  document.getElementById('search').placeholder = s.searchPlaceholder;
+  document.getElementById('key-hint').textContent = s.keyHint;
+  document.getElementById('lang-select').value = lang;
+
+  // channel-filter first option
+  document.querySelector('#channel-filter option[value=""]').textContent = s.allChannels;
+  // tag-filter first option
+  document.querySelector('#tag-filter option[value=""]').textContent = s.allTags;
+
+  // read-filter
+  var rfOpts = document.getElementById('read-filter').options;
+  rfOpts[0].textContent = s.allVideos;
+  rfOpts[1].textContent = s.unreadOnly;
+  rfOpts[2].textContent = s.readOnly;
+
+  // bookmark-filter
+  var bfOpts = document.getElementById('bookmark-filter').options;
+  bfOpts[0].textContent = s.allVideos;
+  bfOpts[1].textContent = s.bookmarkedOnly;
+
+  // sort
+  var sortOpts = document.getElementById('sort').options;
+  sortOpts[0].textContent = s.sortDateDesc;
+  sortOpts[1].textContent = s.sortDateAsc;
+  sortOpts[2].textContent = s.sortChannel;
+  sortOpts[3].textContent = s.sortTitle;
+
+  applyFiltersAndSort();
+}
+
+// ── Populate channel filter dropdown ──────────────────────────────────────────
 (function() {
   var seen = {};
   var channels = [];
@@ -380,7 +527,7 @@ window.toggleBookmark = function(videoId) {
   });
 })();
 
-// Populate tag filter dropdown
+// ── Populate tag filter dropdown ───────────────────────────────────────────────
 (function() {
   var seen = {};
   var tags = [];
@@ -417,9 +564,11 @@ function stripHtml(html) {
 }
 
 function buildCard(v) {
+  var s = I18N[currentLang];
+
   const thumb = v.thumbnail_url
     ? '<img src="' + escHtml(v.thumbnail_url) + '" alt="' + escHtml(v.title) + '">'
-    : '<div class="no-thumb">No thumbnail</div>';
+    : '<div class="no-thumb">' + s.noThumb + '</div>';
 
   let metaExtras = '';
   if (v.duration) metaExtras += ' &middot; ' + escHtml(v.duration);
@@ -432,19 +581,19 @@ function buildCard(v) {
     const preview = cut !== -1 ? v.summary.slice(0, cut + 4) : v.summary;
     if (rest) {
       summaryHtml = preview
-        + '<button class="summary-toggle" onclick="toggleSummary(this)">&#9660; mehr</button>'
+        + '<button class="summary-toggle" onclick="toggleSummary(this)">' + s.showMore + '</button>'
         + '<div class="summary-details" hidden>' + rest + '</div>';
     } else {
       summaryHtml = preview;
     }
   } else if (v.transcript_error === 'ip_blocked') {
-    summaryHtml = '<p class="no-transcript ip-blocked">&#x26A0; Kein Transkript &mdash; YouTube blockiert Transkript-Anfragen von dieser IP-Adresse (Rechenzentrum erkannt).</p>';
+    summaryHtml = '<p class="no-transcript ip-blocked">' + s.transcriptIpBlocked + '</p>';
   } else if (v.transcript_error === 'rate_limited') {
-    summaryHtml = '<p class="no-transcript rate-limited">&#x26A0; Kein Transkript &mdash; YouTube hat die Anfrage abgelehnt (zu viele Anfragen in kurzer Zeit).</p>';
+    summaryHtml = '<p class="no-transcript rate-limited">' + s.transcriptRateLimited + '</p>';
   } else if (v.transcript_error === 'country_blocked') {
-    summaryHtml = '<p class="no-transcript country-blocked">&#x1F310; Kein Transkript &mdash; Video ist nur in bestimmten Regionen verf\u00fcgbar (Geoblocking).</p>';
+    summaryHtml = '<p class="no-transcript country-blocked">' + s.transcriptCountryBlocked + '</p>';
   } else {
-    summaryHtml = '<p class="no-transcript unavailable">Kein Transkript f\u00fcr dieses Video verf\u00fcgbar.</p>';
+    summaryHtml = '<p class="no-transcript unavailable">' + s.transcriptUnavailable + '</p>';
   }
 
   var tagsHtml = '';
@@ -468,8 +617,8 @@ function buildCard(v) {
     + '<div class="video-thumb">' + thumb + '</div>'
     + '<div class="video-body">'
     + '<div class="video-actions">'
-    + '<button class="' + readBtnClass + '" onclick="toggleRead(\'' + escHtml(v.video_id) + '\')">✓ Gelesen</button>'
-    + '<button class="' + bookmarkBtnClass + '" onclick="toggleBookmark(\'' + escHtml(v.video_id) + '\')">★ Merken</button>'
+    + '<button class="' + readBtnClass + '" onclick="toggleRead(\'' + escHtml(v.video_id) + '\')">' + s.readBtn + '</button>'
+    + '<button class="' + bookmarkBtnClass + '" onclick="toggleBookmark(\'' + escHtml(v.video_id) + '\')">' + s.bookmarkBtn + '</button>'
     + '</div>'
     + '<a class="video-title" href="https://www.youtube.com/watch?v=' + escHtml(v.video_id) + '" target="_blank" rel="noopener">' + escHtml(v.title) + '</a>'
     + '<div class="video-meta">' + escHtml(v.channel_title) + ' &middot; ' + escHtml(v.published_at_display) + metaExtras + '</div>'
@@ -521,6 +670,7 @@ function applyFiltersAndSort() {
 }
 
 function renderPage(page) {
+  var s = I18N[currentLang];
   var total = filtered.length;
   var pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   currentPage = Math.min(Math.max(1, page), pages);
@@ -530,7 +680,7 @@ function renderPage(page) {
 
   document.getElementById('grid').innerHTML = slice.length
     ? slice.map(buildCard).join('')
-    : '<p class="no-videos">Keine Videos gefunden.</p>';
+    : '<p class="no-videos">' + s.noVideos + '</p>';
 
   // Restore focused highlight after re-render
   if (focusedIndex >= 0) {
@@ -539,8 +689,7 @@ function renderPage(page) {
     if (cards[localIdx]) cards[localIdx].classList.add('focused');
   }
 
-  document.getElementById('results-count').textContent =
-    total + ' Video' + (total !== 1 ? 's' : '');
+  document.getElementById('results-count').textContent = s.results(total);
 
   var pag = document.getElementById('pagination');
   if (pages <= 1) { pag.innerHTML = ''; return; }
@@ -548,16 +697,16 @@ function renderPage(page) {
   var prevDisabled = currentPage <= 1 ? ' disabled' : '';
   var nextDisabled = currentPage >= pages ? ' disabled' : '';
   pag.innerHTML =
-    '<button onclick="renderPage(' + (currentPage - 1) + ')"' + prevDisabled + '>&#8592; Zur\u00fcck</button>'
-    + '<span class="page-info">Seite ' + currentPage + ' von ' + pages + '</span>'
-    + '<button onclick="renderPage(' + (currentPage + 1) + ')"' + nextDisabled + '>Weiter &#8594;</button>';
+    '<button onclick="renderPage(' + (currentPage - 1) + ')"' + prevDisabled + '>' + s.prevPage + '</button>'
+    + '<span class="page-info">' + s.pageInfo(currentPage, pages) + '</span>'
+    + '<button onclick="renderPage(' + (currentPage + 1) + ')"' + nextDisabled + '>' + s.nextPage + '</button>';
 }
 
 function toggleSummary(btn) {
   var details = btn.nextElementSibling;
   var open = details.hidden === false;
   details.hidden = open;
-  btn.textContent = open ? '\u25bc mehr' : '\u25b2 weniger';
+  btn.textContent = open ? I18N[currentLang].showMore : I18N[currentLang].showLess;
 }
 
 function focusCard(idx) {
@@ -602,8 +751,11 @@ document.getElementById('tag-filter').addEventListener('change', applyFiltersAnd
 document.getElementById('read-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('bookmark-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('sort').addEventListener('change', applyFiltersAndSort);
+document.getElementById('lang-select').addEventListener('change', function() {
+  applyLang(this.value);
+});
 
-applyFiltersAndSort();
+applyLang(detectLang());
 </script>
 
 </body>

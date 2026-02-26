@@ -37,7 +37,7 @@ python collect.py --file channels.txt [--hours N]
 ### Report phase — run on digest schedule (e.g. every 6 h or daily)
 
 ```bash
-python report.py [--hours 24] [--output summary.html] [--skip-empty] [--send-to EMAIL] [--show-model]
+python report.py [--hours 24] [--output summary.html] [--skip-empty] [--send-to EMAIL] [--show-model] [--lang de|en]
 ```
 
 - Reads `data/videos.db`, includes videos published within the last `--hours` hours.
@@ -89,6 +89,7 @@ python export.py --all                  # all videos in store
 python export.py --hours 48             # custom time window
 python export.py --all --output full_archive.html
 python export.py --show-model           # include LLM model badge on cards
+python export.py --lang en              # embedded default language (overridden by cookie/browser)
 ```
 
 `--hours` and `--all` are mutually exclusive. Default output filename: `export_YYYY-MM-DD_HH-MM.html`.
@@ -99,7 +100,7 @@ python export.py --show-model           # include LLM model badge on cards
 `summarize.py` still works as before — it fetches, summarizes, and renders in a single pass without touching `data/`. Useful for one-off runs or testing.
 
 ```bash
-python summarize.py --auth [--hours 24] [--output summary.html] [--skip-empty]
+python summarize.py --auth [--hours 24] [--output summary.html] [--skip-empty] [--lang de|en]
 python summarize.py UC123abc UC456def [--hours 24]
 python summarize.py --file channels.txt [--hours 24]
 ```
@@ -123,9 +124,10 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `youtube_client.py` | YouTube Data API v3 wrapper (auth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language priority via `TRANSCRIPT_LANGS` (default: de,en); handles ip_blocked / rate_limited / country_blocked errors; `VideoUnplayable` is only classified as `country_blocked` when the reason mentions "country"/"region" — on `country_blocked`, retries once with a country-pinned Webshare proxy (`PROXY_FALLBACK_COUNTRY`, default: DE) if `WEBSHARE_PROXY_URL` is set; other `VideoUnplayable` causes fall to `unavailable` (retryable) |
 | `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); summary language via `SUMMARY_LANG`; structured prompt enforces chronological sections scaled to video length, written as flowing prose (`<p>`) with bullets only for genuine enumerations, timestamp links placed inline after each relevant sentence; strips markdown fences from responses; extracts 3–7 English topic tags from the `<!-- tags: ... -->` comment appended by the model; returns `(summary_html, tags_list)` tuple |
-| `renderer.py` | Jinja2 renderer; writes the final HTML file |
-| `template.html.j2` | Self-contained HTML template with embedded dark-theme CSS; read/bookmark buttons on each card, state persisted in browser cookies (365 days) |
-| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/channel-filter/tag-filter/read-filter/bookmark-filter/sort/pagination; tag chips on cards are clickable and toggle the tag filter; read/bookmark state persisted in browser cookies |
+| `renderer.py` | Jinja2 renderer; writes the final HTML file; accepts `lang=` kwarg |
+| `i18n.py` | UI string dicts for `de` (default) and `en`; `get_strings(lang)` and `resolve_lang(lang)` helpers |
+| `template.html.j2` | Self-contained HTML template with embedded dark-theme CSS; read/bookmark buttons on each card, state persisted in browser cookies (365 days); strings from `i18n.py` via Jinja2 `{{ t.xxx }}` |
+| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/channel-filter/tag-filter/read-filter/bookmark-filter/sort/pagination; tag chips on cards are clickable and toggle the tag filter; read/bookmark and language (`yt_lang`) state persisted in browser cookies; language selector in page header (priority: cookie → browser language → embedded default) |
 | `state.py` | Reads/writes `last_run.json` (channel_id → last checked ISO timestamp) |
 | `send_mail.py` | Standalone script; sends an HTML file as an email via SMTP_SSL |
 
