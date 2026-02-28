@@ -217,8 +217,8 @@ Each report script activates the virtual environment, renders the HTML, sends th
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling |
-| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns `(summary_html, tags)` tuple — structured HTML with chronological sections, proportional depth, and timestamp links, plus 3–7 English topic tags extracted from a `<!-- tags: ... -->` comment appended by the model |
-| `renderer.py` | Jinja2 renderer; writes the final HTML report; accepts `lang=` kwarg |
+| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns `(summary_html, tags)` tuple — structured HTML with chronological sections, proportional depth, and timestamp links, plus 3–7 English topic tags extracted from a `<!-- tags: ... -->` comment appended by the model; `max_tokens=8192` |
+| `renderer.py` | Jinja2 renderer; writes the final HTML report; accepts `lang=` kwarg; sanitizes summaries at render time to strip any trailing incomplete HTML tag (guards against LLM output truncated mid-tag) |
 | `i18n.py` | UI string dicts for `de` (default) and `en`; `get_strings()` and `resolve_lang()` helpers used by the renderer |
 | `template.html.j2` | Self-contained dark-theme HTML report template; read/bookmark buttons with cookie-based state; all UI strings sourced from `i18n.py` via `{{ t.xxx }}` |
 | `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/channel/tag/read/bookmark filters, sort, pagination; in-page language selector (cookie `yt_lang`, browser fallback); full `de`/`en` string set in the embedded `I18N` object |
