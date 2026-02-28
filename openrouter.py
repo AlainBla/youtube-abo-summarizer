@@ -106,7 +106,7 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> t
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
         ],
-        max_tokens=4096,
+        max_tokens=8192,
     )
     content = response.choices[0].message.content.strip()
     # Some models (e.g. Gemma3) wrap the HTML in a markdown code fence; strip it.
