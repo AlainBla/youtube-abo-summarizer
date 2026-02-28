@@ -492,7 +492,7 @@ window.toggleRead = function(videoId) {
     readSet.add(videoId);
   }
   saveSet(COOKIE_READ, readSet);
-  applyFiltersAndSort();
+  applyFiltersAndSort(currentPage);
 };
 
 window.toggleBookmark = function(videoId) {
@@ -502,7 +502,7 @@ window.toggleBookmark = function(videoId) {
     bookmarkSet.add(videoId);
   }
   saveSet(COOKIE_BOOKMARK, bookmarkSet);
-  applyFiltersAndSort();
+  applyFiltersAndSort(currentPage);
 };
 
 // ── Language detection ─────────────────────────────────────────────────────────
@@ -691,7 +691,7 @@ function buildCard(v) {
     + '</article>';
 }
 
-function applyFiltersAndSort() {
+function applyFiltersAndSort(page) {
   const q = document.getElementById('search').value.trim().toLowerCase();
   const sort = document.getElementById('sort').value;
   const channelId = document.getElementById('channel-filter').value;
@@ -731,7 +731,7 @@ function applyFiltersAndSort() {
     }
   });
 
-  renderPage(1);
+  renderPage(page || 1);
 }
 
 function renderPage(page) {
