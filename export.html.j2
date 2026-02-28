@@ -67,6 +67,30 @@
     .controls-bar select:focus,
     .lang-select:focus { border-color: #555; }
     .lang-select { align-self: center; }
+    /* ── Control groups (label + select/input pairs) ── */
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .ctrl-label {
+      font-size: 0.8rem;
+      color: #666;
+      white-space: nowrap;
+    }
+    .controls-bar input[type="date"] {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-size: 0.9rem;
+      padding: 0.45rem 0.5rem;
+      outline: none;
+      cursor: pointer;
+      color-scheme: dark;
+    }
+    .controls-bar input[type="date"]:focus { border-color: #555; }
+    .controls-bar input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
     .results-count { color: #666; font-size: 0.85rem; white-space: nowrap; }
 
     /* ── Video cards ── */
@@ -278,35 +302,54 @@
       <p class="meta" id="page-meta">{{ generated_date }} &mdash; {{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}</p>
     </div>
     <select id="lang-select" class="lang-select" title="Language / Sprache">
-      <option value="de">Deutsch</option>
-      <option value="en">English</option>
+      <option value="de">&#x1F1E9;&#x1F1EA; Deutsch</option>
+      <option value="en">&#x1F1EC;&#x1F1E7; English</option>
     </select>
   </div>
 </header>
 
 <div class="controls-bar">
   <input type="search" id="search" placeholder="Suchen&hellip;" autocomplete="off">
-  <select id="channel-filter">
-    <option value="">Alle Kan&auml;le</option>
-  </select>
-  <select id="tag-filter">
-    <option value="">Alle Tags</option>
-  </select>
-  <select id="read-filter">
-    <option value="">Alle Videos</option>
-    <option value="unread">Nur ungelesen</option>
-    <option value="read">Nur gelesen</option>
-  </select>
-  <select id="bookmark-filter">
-    <option value="">Alle Videos</option>
-    <option value="bookmarked">Nur gemerkt</option>
-  </select>
-  <select id="sort">
-    <option value="date-desc">Neueste zuerst</option>
-    <option value="date-asc">&Auml;lteste zuerst</option>
-    <option value="channel">Kanal A&ndash;Z</option>
-    <option value="title">Titel A&ndash;Z</option>
-  </select>
+  <div class="control-group">
+    <label class="ctrl-label" for="date-filter" id="label-date">Ab</label>
+    <input type="date" id="date-filter">
+  </div>
+  <div class="control-group">
+    <label class="ctrl-label" for="channel-filter" id="label-channel">Kanal</label>
+    <select id="channel-filter">
+      <option value="">Alle</option>
+    </select>
+  </div>
+  <div class="control-group">
+    <label class="ctrl-label" for="tag-filter" id="label-tag">Tag</label>
+    <select id="tag-filter">
+      <option value="">Alle</option>
+    </select>
+  </div>
+  <div class="control-group">
+    <label class="ctrl-label" for="read-filter" id="label-read">Gelesen</label>
+    <select id="read-filter">
+      <option value="">Alle</option>
+      <option value="unread">Nur ungelesen</option>
+      <option value="read">Nur gelesen</option>
+    </select>
+  </div>
+  <div class="control-group">
+    <label class="ctrl-label" for="bookmark-filter" id="label-bookmark">Merken</label>
+    <select id="bookmark-filter">
+      <option value="">Alle</option>
+      <option value="bookmarked">Nur gemerkt</option>
+    </select>
+  </div>
+  <div class="control-group">
+    <label class="ctrl-label" for="sort" id="label-sort">Sortierung</label>
+    <select id="sort">
+      <option value="date-desc">Neueste zuerst</option>
+      <option value="date-asc">&Auml;lteste zuerst</option>
+      <option value="channel">Kanal A&ndash;Z</option>
+      <option value="title">Titel A&ndash;Z</option>
+    </select>
+  </div>
   <span class="results-count" id="results-count"></span>
   <span class="results-count" id="key-hint" style="color:#444">j/k &mdash; vor/zur&uuml;ck</span>
 </div>
@@ -334,9 +377,15 @@ const I18N = {
       return 'Generiert ' + date + ' \u2014 ' + n + ' Video' + (n !== 1 ? 's' : '');
     },
     searchPlaceholder: 'Titel oder Zusammenfassung durchsuchen\u2026',
-    allChannels: 'Alle Kan\u00e4le',
-    allTags: 'Alle Tags',
-    allVideos: 'Alle Videos',
+    allChannels: 'Alle',
+    allTags: 'Alle',
+    allVideos: 'Alle',
+    labelFrom: 'Ab',
+    labelChannel: 'Kanal',
+    labelTag: 'Tag',
+    labelRead: 'Gelesen',
+    labelBookmark: 'Merken',
+    labelSort: 'Sortierung',
     unreadOnly: 'Nur ungelesen',
     readOnly: 'Nur gelesen',
     bookmarkedOnly: 'Nur gemerkt',
@@ -366,9 +415,15 @@ const I18N = {
       return 'Generated ' + date + ' \u2014 ' + n + ' video' + (n !== 1 ? 's' : '');
     },
     searchPlaceholder: 'Search title or summary\u2026',
-    allChannels: 'All channels',
-    allTags: 'All tags',
-    allVideos: 'All videos',
+    allChannels: 'All',
+    allTags: 'All',
+    allVideos: 'All',
+    labelFrom: 'From',
+    labelChannel: 'Channel',
+    labelTag: 'Tag',
+    labelRead: 'Read',
+    labelBookmark: 'Bookmark',
+    labelSort: 'Sort',
     unreadOnly: 'Unread only',
     readOnly: 'Read only',
     bookmarkedOnly: 'Bookmarked only',
@@ -501,6 +556,14 @@ function applyLang(lang) {
   sortOpts[1].textContent = s.sortDateAsc;
   sortOpts[2].textContent = s.sortChannel;
   sortOpts[3].textContent = s.sortTitle;
+
+  // control labels
+  document.getElementById('label-date').textContent = s.labelFrom;
+  document.getElementById('label-channel').textContent = s.labelChannel;
+  document.getElementById('label-tag').textContent = s.labelTag;
+  document.getElementById('label-read').textContent = s.labelRead;
+  document.getElementById('label-bookmark').textContent = s.labelBookmark;
+  document.getElementById('label-sort').textContent = s.labelSort;
 
   applyFiltersAndSort();
 }
@@ -635,6 +698,7 @@ function applyFiltersAndSort() {
   const tagFilter = document.getElementById('tag-filter').value;
   const readFilter = document.getElementById('read-filter').value;
   const bookmarkFilter = document.getElementById('bookmark-filter').value;
+  const dateFrom = document.getElementById('date-filter').value; // "YYYY-MM-DD" or ""
 
   filtered = VIDEOS.filter(function(v) {
     if (channelId && v.channel_id !== channelId) return false;
@@ -642,6 +706,7 @@ function applyFiltersAndSort() {
     if (readFilter === 'read' && !readSet.has(v.video_id)) return false;
     if (readFilter === 'unread' && readSet.has(v.video_id)) return false;
     if (bookmarkFilter === 'bookmarked' && !bookmarkSet.has(v.video_id)) return false;
+    if (dateFrom && v.published_at.slice(0, 10) < dateFrom) return false;
     if (q) {
       var text = v.title.toLowerCase() + ' ' + stripHtml(v.summary || '').toLowerCase();
       if (text.indexOf(q) === -1) return false;
@@ -750,6 +815,7 @@ document.getElementById('channel-filter').addEventListener('change', applyFilter
 document.getElementById('tag-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('read-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('bookmark-filter').addEventListener('change', applyFiltersAndSort);
+document.getElementById('date-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('sort').addEventListener('change', applyFiltersAndSort);
 document.getElementById('lang-select').addEventListener('change', function() {
   applyLang(this.value);
