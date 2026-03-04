@@ -17,6 +17,9 @@ Usage:
   # Explicit channels (IDs, handles, or URLs)
   python collect.py UC123abc UC456def [--hours N]
   python collect.py --file channels.txt [--hours N]
+
+  # Single video
+  python collect.py --video VIDEO_ID
 """
 
 import argparse
@@ -32,7 +35,7 @@ import state
 import store
 import transcripts as tr
 import openrouter
-from youtube_client import build_service, get_subscribed_channels, get_new_videos, get_video_durations, resolve_channel_id
+from youtube_client import build_service, get_subscribed_channels, get_new_videos, get_video_durations, resolve_channel_id, get_video_by_id
 
 load_dotenv()
 
@@ -51,6 +54,11 @@ def parse_args():
         "--file",
         metavar="FILE",
         help="Path to a text file with one channel ID/handle/URL per line.",
+    )
+    source.add_argument(
+        "--video",
+        metavar="VIDEO_ID",
+        help="Fetch a single video by its YouTube ID.",
     )
     parser.add_argument(
         "channels",
@@ -92,9 +100,85 @@ def _load_identifiers_from_file(path: str) -> list[str]:
         return [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
 
+def _process_single_video(service, video_id: str, model: str, now: datetime) -> bool:
+    """Fetch and process a single video. Returns True if added to store."""
+    print(f"Fetching video {video_id}...")
+    video = get_video_by_id(service, video_id)
+    if not video:
+        print(f"Error: video '{video_id}' not found.", file=sys.stderr)
+        return False
+
+    vid_id = video["video_id"]
+    vid_title = video["title"]
+    channel_id = video["channel_id"]
+    channel_title = video["channel_title"]
+
+    print(f"  → {vid_title}")
+
+    existing = store.get_video(vid_id)
+
+    if existing and existing["has_transcript"] and existing["has_summary"]:
+        print(f"    Already in store with transcript and summary, skipping.")
+        return False
+
+    # Fetch transcript only if not already stored
+    if existing and existing["has_transcript"]:
+        transcript = (store.TRANSCRIPTS_DIR / f"{vid_id}.txt").read_text(encoding="utf-8")
+        transcript_error = existing.get("transcript_error")
+    else:
+        transcript, transcript_error = tr.get_transcript(vid_id)
+        if not transcript:
+            if not transcript_error or transcript_error == "unavailable":
+                print("    No transcript available.")
+            elif transcript_error == "country_blocked":
+                print("    Video in dieser Region gesperrt — kein Transkript.")
+
+    # Summarize only if we have a transcript and no summary yet
+    summary = None
+    tags = None
+    if transcript and (not existing or not existing["has_summary"]):
+        print(f"    Summarizing via {model}...")
+        summary, tags = openrouter.summarize_video(vid_id, vid_title, transcript, model)
+
+    if existing:
+        store.update_video_with_summary(
+            vid_id,
+            transcript if not existing["has_transcript"] else None,
+            summary,
+            transcript_error,
+            model if summary else existing.get("summary_model"),
+            tags=tags,
+        )
+        return False
+    else:
+        return store.add_video({
+            "channel_id": channel_id,
+            "channel_title": channel_title,
+            "video_id": vid_id,
+            "title": vid_title,
+            "published_at": video["published_at"],
+            "thumbnail_url": video["thumbnail_url"],
+            "duration": video.get("duration"),
+            "summary_model": model if summary else None,
+            "transcript": transcript,
+            "summary": summary,
+            "transcript_error": transcript_error,
+            "tags": tags,
+            "collected_at": now.isoformat(),
+        })
+
+
 def main():
     args = parse_args()
     model = os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
+
+    # --- Handle single video ---
+    if args.video:
+        service = build_service()
+        now = datetime.now(tz=timezone.utc)
+        added = _process_single_video(service, args.video, model, now)
+        print(f"\nDone. {'Added to store.' if added else 'No new video added.'}")
+        return
 
     # --- Resolve channel list ---
     if args.auth:
@@ -110,7 +194,7 @@ def main():
             identifiers = args.channels
         else:
             print(
-                "Error: provide --auth, --file, or channel identifiers as arguments.",
+                "Error: provide --auth, --file, --video, or channel identifiers as arguments.",
                 file=sys.stderr,
             )
             sys.exit(1)

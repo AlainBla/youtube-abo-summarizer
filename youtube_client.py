@@ -107,6 +107,40 @@ def get_video_durations(service, video_ids: list[str]) -> dict[str, str]:
     return result
 
 
+def get_video_by_id(service, video_id: str) -> dict | None:
+    """Fetch video metadata by ID. Returns dict with video details or None if not found."""
+    for attempt in range(3):
+        try:
+            resp = service.videos().list(
+                part="snippet,contentDetails",
+                id=video_id,
+            ).execute()
+            items = resp.get("items", [])
+            if not items:
+                return None
+            item = items[0]
+            snippet = item["snippet"]
+            thumbnails = snippet.get("thumbnails", {})
+            thumbnail_url = (
+                thumbnails.get("medium", thumbnails.get("default", {})).get("url", "")
+            )
+            return {
+                "video_id": video_id,
+                "title": snippet["title"],
+                "published_at": snippet["publishedAt"],
+                "thumbnail_url": thumbnail_url,
+                "duration": item["contentDetails"]["duration"],
+                "channel_id": snippet["channelId"],
+                "channel_title": snippet["channelTitle"],
+            }
+        except HttpError as e:
+            if e.resp.status >= 500 and attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            raise
+    return None
+
+
 def _get_uploads_playlist_id(service, channel_id: str) -> str | None:
     """Return the uploads playlist ID for a channel (costs 1 quota unit)."""
     resp = service.channels().list(

@@ -731,7 +731,7 @@ function applyFiltersAndSort(page) {
     }
   });
 
-  renderPage(page || 1);
+  renderPage(typeof page === 'number' ? page : 1);
 }
 
 function renderPage(page) {
