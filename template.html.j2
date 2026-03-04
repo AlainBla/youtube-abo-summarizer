@@ -115,12 +115,7 @@
     .video-card.is-read .video-title { color: #888; }
     .video-card.is-bookmarked { border-color: #7a5a10; box-shadow: 0 0 0 1px #7a5a10; }
 
-    .video-actions {
-      display: flex;
-      gap: 0.5rem;
-      margin-bottom: 0.5rem;
-    }
-    .video-actions button {
+    .video-thumb .video-actions button {
       background: #2a2a2a;
       border: 1px solid #3a3a3a;
       border-radius: 4px;
@@ -130,17 +125,17 @@
       cursor: pointer;
       transition: all 0.15s;
     }
-    .video-actions button:hover {
+    .video-thumb .video-actions button:hover {
       background: #333;
       border-color: #555;
       color: #bbb;
     }
-    .video-actions button.is-active {
+    .video-thumb .video-actions button.is-active {
       background: #2d4a2d;
       border-color: #4a7a4a;
       color: #a0dfa0;
     }
-    .video-actions button.bookmark-btn.is-active {
+    .video-thumb .video-actions button.bookmark-btn.is-active {
       background: #4a3a10;
       border-color: #7a5a10;
       color: #e0c060;
@@ -149,6 +144,15 @@
     .video-thumb {
       flex-shrink: 0;
       width: 200px;
+      position: sticky;
+      top: 1rem;
+      align-self: flex-start;
+    }
+    .video-thumb-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.6rem;
     }
     .video-thumb img {
       width: 100%;
@@ -165,6 +169,11 @@
       justify-content: center;
       color: #555;
       font-size: 0.75rem;
+    }
+    .video-thumb .video-actions {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
     }
 
     .video-body { flex: 1; min-width: 0; }
@@ -332,17 +341,19 @@
     {% endif %}
     <article class="video-card" id="video-{{ video.video_id }}">
       <div class="video-thumb">
-        {% if video.thumbnail_url %}
-          <img src="{{ video.thumbnail_url }}" alt="{{ video.title }}">
-        {% else %}
-          <div class="no-thumb">{{ t.no_thumb }}</div>
-        {% endif %}
+        <div class="video-thumb-inner">
+          {% if video.thumbnail_url %}
+            <img src="{{ video.thumbnail_url }}" alt="{{ video.title }}">
+          {% else %}
+            <div class="no-thumb">{{ t.no_thumb }}</div>
+          {% endif %}
+          <div class="video-actions">
+            <button class="read-btn" data-video-id="{{ video.video_id }}" onclick="toggleRead('{{ video.video_id }}')">{{ t.read_btn }}</button>
+            <button class="bookmark-btn" data-video-id="{{ video.video_id }}" onclick="toggleBookmark('{{ video.video_id }}')">{{ t.bookmark_btn }}</button>
+          </div>
+        </div>
       </div>
       <div class="video-body">
-        <div class="video-actions">
-          <button class="read-btn" data-video-id="{{ video.video_id }}" onclick="toggleRead('{{ video.video_id }}')">{{ t.read_btn }}</button>
-          <button class="bookmark-btn" data-video-id="{{ video.video_id }}" onclick="toggleBookmark('{{ video.video_id }}')">{{ t.bookmark_btn }}</button>
-        </div>
         <a class="video-title" href="https://www.youtube.com/watch?v={{ video.video_id }}" target="_blank">{{ video.title }}</a>
         <div class="video-meta">{{ video.published_at }}{% if video.duration %} &middot; {{ video.duration }}{% endif %}{% if video.summary_model %}<span class="model-badge">{{ video.summary_model }}</span>{% endif %}</div>
         {% if next_anchor %}<a class="skip-link" href="{{ next_anchor }}">{{ t.skip }}</a>{% endif %}
@@ -401,7 +412,7 @@
   window.toggleRead = function(videoId) {
     const set = getSet(COOKIE_READ);
     const card = document.getElementById('video-' + videoId);
-    const btn = card.querySelector('.read-btn');
+    const btn = card.querySelector('.video-thumb .read-btn');
     if (set.has(videoId)) {
       set.delete(videoId);
       card.classList.remove('is-read');
@@ -417,7 +428,7 @@
   window.toggleBookmark = function(videoId) {
     const set = getSet(COOKIE_BOOKMARK);
     const card = document.getElementById('video-' + videoId);
-    const btn = card.querySelector('.bookmark-btn');
+    const btn = card.querySelector('.video-thumb .bookmark-btn');
     if (set.has(videoId)) {
       set.delete(videoId);
       card.classList.remove('is-bookmarked');
@@ -438,11 +449,11 @@
       const videoId = card.id.replace('video-', '');
       if (readSet.has(videoId)) {
         card.classList.add('is-read');
-        card.querySelector('.read-btn').classList.add('is-active');
+        card.querySelector('.video-thumb .read-btn').classList.add('is-active');
       }
       if (bookmarkSet.has(videoId)) {
         card.classList.add('is-bookmarked');
-        card.querySelector('.bookmark-btn').classList.add('is-active');
+        card.querySelector('.video-thumb .bookmark-btn').classList.add('is-active');
       }
     });
   });

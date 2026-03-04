@@ -57,8 +57,8 @@ def parse_args():
     )
     source.add_argument(
         "--video",
-        metavar="VIDEO_ID",
-        help="Fetch a single video by its YouTube ID.",
+        metavar="VIDEO_IDS",
+        help="Comma-separated list of video IDs to fetch.",
     )
     parser.add_argument(
         "channels",
@@ -172,12 +172,16 @@ def main():
     args = parse_args()
     model = os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
 
-    # --- Handle single video ---
+    # --- Handle single video(s) ---
     if args.video:
+        video_ids = [v.strip() for v in args.video.split(",") if v.strip()]
         service = build_service()
         now = datetime.now(tz=timezone.utc)
-        added = _process_single_video(service, args.video, model, now)
-        print(f"\nDone. {'Added to store.' if added else 'No new video added.'}")
+        added_count = 0
+        for vid in video_ids:
+            if _process_single_video(service, vid, model, now):
+                added_count += 1
+        print(f"\nDone. {added_count} video(s) added to store.")
         return
 
     # --- Resolve channel list ---
