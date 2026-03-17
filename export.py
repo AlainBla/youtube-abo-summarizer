@@ -53,6 +53,13 @@ def parse_args():
         help="Default UI language embedded in the export: de (default) or en. "
              "Overridden by cookie or browser language preference.",
     )
+    parser.add_argument(
+        "--sync-url",
+        metavar="URL",
+        default=None,
+        help="URL of the sync server to embed in the export HTML. "
+             "Enables cross-browser read/bookmark sync.",
+    )
     return parser.parse_args()
 
 
@@ -112,7 +119,7 @@ def main():
     ]
 
     print(f"Rendering {len(videos)} video(s) → {output_path}")
-    renderer.render_export_html(videos, output_path, lang=args.lang or "de")
+    renderer.render_export_html(videos, output_path, lang=args.lang or "de", sync_url=args.sync_url)
     print("Done.")
 
 

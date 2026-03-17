@@ -94,6 +94,7 @@ def render_export_html(
     videos: list[dict],
     output_path: str,
     lang: str = i18n_module.DEFAULT_LANG,
+    sync_url: str | None = None,
 ) -> None:
     """Render and write a self-contained export HTML file with embedded video data.
 
@@ -118,6 +119,7 @@ def render_export_html(
         generated_date=date.today().strftime("%B %d, %Y"),
         total_videos=len(videos),
         default_lang=lang,
+        sync_url=sync_url,
     )
 
     with open(output_path, "w", encoding="utf-8") as f:
