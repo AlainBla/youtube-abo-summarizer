@@ -1,0 +1,4 @@
+flask
+itsdangerous
+python-dotenv
+pytest
