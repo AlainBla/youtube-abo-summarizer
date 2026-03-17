@@ -1,6 +1,8 @@
 """Sync server — persists read/bookmark state per user, magic-link auth."""
 import os
+import re
 import sqlite3
+import sys
 import time
 import uuid
 import smtplib
@@ -83,6 +85,10 @@ def close_db(exc: BaseException | None) -> None:
     db = g.pop("db", None)
     if db:
         db.close()
+
+
+# Ensure DB schema exists on every process start (CREATE TABLE IF NOT EXISTS = safe to repeat)
+init_db()
 
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
@@ -178,7 +184,10 @@ def request_link():
         f"?token={urlquote(token)}"
         f"&redirect_uri={urlquote(redirect_uri)}"
     )
-    _send_magic_link(email, link)
+    try:
+        _send_magic_link(email, link)
+    except Exception as exc:
+        print(f"[sync] SMTP error for {email}: {exc}", file=sys.stderr)
     return jsonify({}), 200
 
 
@@ -268,8 +277,10 @@ def post_state():
                 return jsonify({"error": "entry must be {value, ts} object"}), 400
             value = entry.get("value")
             ts = entry.get("ts")
-            if value not in (0, 1) or not isinstance(ts, str) or not ts:
-                return jsonify({"error": "entry must have value (0|1) and ts"}), 400
+            if value not in (0, 1) or not isinstance(ts, str) or not re.match(
+                r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$', ts
+            ):
+                return jsonify({"error": "entry must have value (0|1) and ts (ISO 8601 UTC)"}), 400
 
             existing = db.execute(
                 "SELECT updated_at FROM video_state "
