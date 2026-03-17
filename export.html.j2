@@ -675,6 +675,11 @@ function applyServerState(serverData) {
       method: 'POST',
       headers: {'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json'},
       body: JSON.stringify(pushBack)
+    }).then(function(r) {
+      if (r && r.status === 401) {
+        localStorage.removeItem('yt_sync_token');
+        showSyncLoggedOut();
+      }
     }).catch(function() {});  // fire-and-forget
   }
 }
@@ -719,7 +724,13 @@ function initSync() {
       });
     })
     .then(function(r) {
-      return r ? r.json() : null;
+      if (!r) return null;
+      if (r.status === 401) {
+        localStorage.removeItem('yt_sync_token');
+        showSyncLoggedOut();
+        return null;
+      }
+      return r.json();
     })
     .then(function(serverData) {
       if (!serverData) return;
@@ -778,8 +789,16 @@ function syncToggle(type, videoId, value) {
     headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
     body: JSON.stringify(body)
   })
-  .then(function(r) { return r.json(); })
+  .then(function(r) {
+    if (r.status === 401) {
+      localStorage.removeItem('yt_sync_token');
+      showSyncLoggedOut();
+      return null;
+    }
+    return r.json();
+  })
   .then(function(serverData) {
+    if (!serverData) return;
     applyServerState(serverData);
     updateSyncStatus(
       I18N[currentLang || 'de'].syncStatusSynced +
