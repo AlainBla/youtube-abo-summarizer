@@ -418,6 +418,9 @@ const PAGE_SIZE = 20;
 const TOTAL_VIDEOS = {{ total_videos }};
 const GENERATED_DATE = '{{ generated_date }}';
 const EMBEDDED_DEFAULT = '{{ default_lang }}';
+{% if sync_url %}
+const SYNC_URL = "{{ sync_url }}";
+{% endif %}
 
 // ── i18n ──────────────────────────────────────────────────────────────────────
 const I18N = {
@@ -457,7 +460,16 @@ const I18N = {
     results: function(n) { return n + ' Video' + (n !== 1 ? 's' : ''); },
     prevPage: '\u2190 Zur\u00fcck',
     pageInfo: function(cur, total) { return 'Seite ' + cur + ' von ' + total; },
-    nextPage: 'Weiter \u2192'
+    nextPage: 'Weiter \u2192',
+    syncEmailPlaceholder: 'E-Mail f\u00fcr Sync',
+    syncSendLink: 'Link senden',
+    syncLogout: 'Abmelden',
+    syncStatusNotLoggedIn: 'Nicht angemeldet',
+    syncStatusSending: 'Link wird gesendet\u2026',
+    syncStatusSent: 'Link gesendet \u2014 E-Mail pr\u00fcfen',
+    syncStatusSyncing: 'Synchronisiere\u2026',
+    syncStatusSynced: 'Synchronisiert',
+    syncStatusFailed: 'Sync fehlgeschlagen',
   },
   en: {
     pageTitle: 'YouTube Export',
@@ -495,7 +507,16 @@ const I18N = {
     results: function(n) { return n + ' video' + (n !== 1 ? 's' : ''); },
     prevPage: '\u2190 Back',
     pageInfo: function(cur, total) { return 'Page ' + cur + ' of ' + total; },
-    nextPage: 'Next \u2192'
+    nextPage: 'Next \u2192',
+    syncEmailPlaceholder: 'Email for sync',
+    syncSendLink: 'Send link',
+    syncLogout: 'Log out',
+    syncStatusNotLoggedIn: 'Not logged in',
+    syncStatusSending: 'Sending link\u2026',
+    syncStatusSent: 'Link sent \u2014 check your email',
+    syncStatusSyncing: 'Syncing\u2026',
+    syncStatusSynced: 'Synced',
+    syncStatusFailed: 'Sync failed',
   }
 };
 
@@ -542,6 +563,7 @@ window.toggleRead = function(videoId) {
     readSet.add(videoId);
   }
   saveSet(COOKIE_READ, readSet);
+  {% if sync_url %}syncToggle('read', videoId, readSet.has(videoId) ? 1 : 0);{% endif %}
   applyFiltersAndSort(currentPage);
 };
 
@@ -552,8 +574,223 @@ window.toggleBookmark = function(videoId) {
     bookmarkSet.add(videoId);
   }
   saveSet(COOKIE_BOOKMARK, bookmarkSet);
+  {% if sync_url %}syncToggle('bookmark', videoId, bookmarkSet.has(videoId) ? 1 : 0);{% endif %}
   applyFiltersAndSort(currentPage);
 };
+
+{% if sync_url %}
+// ── Sync helpers ────────────────────────────────────────────────────────────
+
+function updateSyncStatus(msg) {
+  var el = document.getElementById('sync-status');
+  if (el) el.textContent = msg;
+}
+
+function getSyncToken() {
+  return localStorage.getItem('yt_sync_token') || '';
+}
+
+function getLocalTs(type) {
+  try {
+    return JSON.parse(localStorage.getItem('yt_' + type + '_ts') || '{}');
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveLocalTs(type, obj) {
+  localStorage.setItem('yt_' + type + '_ts', JSON.stringify(obj));
+}
+
+function getIsoNow() {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+function showSyncLoggedIn(email) {
+  document.getElementById('sync-login').style.display = 'none';
+  document.getElementById('sync-user').style.display = '';
+  document.getElementById('sync-user-email').textContent = email;
+}
+
+function showSyncLoggedOut() {
+  document.getElementById('sync-login').style.display = '';
+  document.getElementById('sync-user').style.display = 'none';
+  updateSyncStatus(I18N[currentLang || 'de'].syncStatusNotLoggedIn);
+}
+
+// Merge server state into local cookies + localStorage.
+// Returns { read: pushBackEntries, bookmark: pushBackEntries } of locally-newer entries.
+function applyServerState(serverData) {
+  var readTs = getLocalTs('read');
+  var bookmarkTs = getLocalTs('bookmark');
+  var pushBack = {read: {}, bookmark: {}};
+
+  ['read', 'bookmark'].forEach(function(type) {
+    var serverEntries = serverData[type] || {};
+    var localTs = type === 'read' ? readTs : bookmarkTs;
+    var localSet = type === 'read' ? readSet : bookmarkSet;
+
+    // Process server entries
+    Object.keys(serverEntries).forEach(function(vid) {
+      var entry = serverEntries[vid];
+      var srvTs = entry.ts;
+      var locTs = localTs[vid] || '1970-01-01T00:00:00Z';
+      if (srvTs >= locTs) {
+        // Server wins — apply to local
+        localTs[vid] = srvTs;
+        if (entry.value === 1) {
+          localSet.add(vid);
+        } else {
+          localSet.delete(vid);
+        }
+      } else {
+        // Local wins — collect for push-back
+        pushBack[type][vid] = {value: localSet.has(vid) ? 1 : 0, ts: locTs};
+      }
+    });
+
+    // Local entries absent from server response are also locally-newer
+    Object.keys(localTs).forEach(function(vid) {
+      if (!serverEntries[vid]) {
+        pushBack[type][vid] = {value: localSet.has(vid) ? 1 : 0, ts: localTs[vid]};
+      }
+    });
+
+    // Persist updated timestamps
+    if (type === 'read') { readTs = localTs; }
+    else { bookmarkTs = localTs; }
+  });
+
+  saveLocalTs('read', readTs);
+  saveLocalTs('bookmark', bookmarkTs);
+  saveSet(COOKIE_READ, readSet);
+  saveSet(COOKIE_BOOKMARK, bookmarkSet);
+
+  var hasPushBack = (
+    Object.keys(pushBack.read).length + Object.keys(pushBack.bookmark).length > 0
+  );
+  if (hasPushBack) {
+    var tok = getSyncToken();
+    fetch(SYNC_URL + '/api/state', {
+      method: 'POST',
+      headers: {'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json'},
+      body: JSON.stringify(pushBack)
+    }).catch(function() {});  // fire-and-forget
+  }
+}
+
+function initSync() {
+  // Step 1: harvest #session=UUID from URL fragment, then strip immediately
+  var hash = window.location.hash;
+  var m = hash.match(/[#&]session=([^&]+)/);
+  if (m) {
+    localStorage.setItem('yt_sync_token', decodeURIComponent(m[1]));
+    try {
+      history.replaceState(
+        null, '',
+        window.location.pathname + window.location.search
+      );
+    } catch (e) {}  // file:// may throw SecurityError — silently continue
+  }
+
+  var token = getSyncToken();
+  if (!token) {
+    showSyncLoggedOut();
+    return;
+  }
+
+  var s = I18N[currentLang || 'de'];
+  updateSyncStatus(s.syncStatusSyncing);
+
+  fetch(SYNC_URL + '/api/whoami', {headers: {'Authorization': 'Bearer ' + token}})
+    .then(function(r) {
+      if (r.status === 401) {
+        localStorage.removeItem('yt_sync_token');
+        showSyncLoggedOut();
+        return null;
+      }
+      return r.json();
+    })
+    .then(function(data) {
+      if (!data) return null;
+      showSyncLoggedIn(data.email);
+      return fetch(SYNC_URL + '/api/state', {
+        headers: {'Authorization': 'Bearer ' + token}
+      });
+    })
+    .then(function(r) {
+      return r ? r.json() : null;
+    })
+    .then(function(serverData) {
+      if (!serverData) return;
+      applyServerState(serverData);
+      applyFiltersAndSort(currentPage);
+      updateSyncStatus(
+        I18N[currentLang || 'de'].syncStatusSynced +
+        ' \u2014 ' + new Date().toLocaleTimeString()
+      );
+    })
+    .catch(function() {
+      updateSyncStatus(I18N[currentLang || 'de'].syncStatusFailed);
+    });
+}
+
+function syncRequestLink() {
+  var email = (document.getElementById('sync-email').value || '').trim();
+  if (!email) return;
+  var s = I18N[currentLang || 'de'];
+  updateSyncStatus(s.syncStatusSending);
+  fetch(SYNC_URL + '/auth/request-link', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email: email, redirect_uri: window.location.href})
+  })
+  .then(function() { updateSyncStatus(s.syncStatusSent); })
+  .catch(function() { updateSyncStatus(s.syncStatusFailed); });
+}
+
+function doLogout() {
+  var token = getSyncToken();
+  if (token) {
+    fetch(SYNC_URL + '/api/session', {
+      method: 'DELETE',
+      headers: {'Authorization': 'Bearer ' + token}
+    }).catch(function() {});
+  }
+  localStorage.removeItem('yt_sync_token');
+  showSyncLoggedOut();
+}
+
+function syncToggle(type, videoId, value) {
+  var token = getSyncToken();
+  if (!token) return;
+  var ts = getIsoNow();
+  var localTs = getLocalTs(type);
+  localTs[videoId] = ts;
+  saveLocalTs(type, localTs);
+  var body = {};
+  body[type] = {};
+  body[type][videoId] = {value: value, ts: ts};
+  var otherType = type === 'read' ? 'bookmark' : 'read';
+  body[otherType] = {};
+  fetch(SYNC_URL + '/api/state', {
+    method: 'POST',
+    headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(serverData) {
+    applyServerState(serverData);
+    updateSyncStatus(
+      I18N[currentLang || 'de'].syncStatusSynced +
+      ' \u2014 ' + new Date().toLocaleTimeString()
+    );
+  })
+  .catch(function() {
+    updateSyncStatus(I18N[currentLang || 'de'].syncStatusFailed);
+  });
+}
+{% endif %}
 
 // ── Language detection ─────────────────────────────────────────────────────────
 function detectLang() {
@@ -615,6 +852,17 @@ function applyLang(lang) {
   document.getElementById('label-bookmark').textContent = s.labelBookmark;
   document.getElementById('label-sort').textContent = s.labelSort;
 
+  {% if sync_url %}
+  // Update sync bar strings
+  (function() {
+    var emailEl = document.getElementById('sync-email');
+    if (emailEl) emailEl.placeholder = s.syncEmailPlaceholder;
+    var sendEl = document.getElementById('sync-send-btn');
+    if (sendEl) sendEl.textContent = s.syncSendLink;
+    var logoutEl = document.getElementById('sync-logout-btn');
+    if (logoutEl) logoutEl.textContent = s.syncLogout;
+  })();
+  {% endif %}
   applyFiltersAndSort();
 }
 
@@ -872,6 +1120,9 @@ document.getElementById('lang-select').addEventListener('change', function() {
 });
 
 applyLang(detectLang());
+{% if sync_url %}
+initSync();
+{% endif %}
 </script>
 
 </body>
