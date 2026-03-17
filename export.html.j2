@@ -291,6 +291,42 @@
       .video-card { flex-direction: column; }
       .video-thumb { width: 100%; }
     }
+    {% if sync_url %}
+    /* ── Sync bar ── */
+    .sync-bar {
+      max-width: 900px;
+      margin: 0 auto 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      font-size: 0.9rem;
+    }
+    .sync-bar input[type="email"] {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-size: 0.9rem;
+      padding: 0.35rem 0.6rem;
+      outline: none;
+      min-width: 200px;
+    }
+    .sync-bar input[type="email"]:focus { border-color: #555; }
+    .sync-bar input[type="email"]::placeholder { color: #555; }
+    .sync-bar button {
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      color: #ccc;
+      font-size: 0.85rem;
+      padding: 0.35rem 0.75rem;
+      cursor: pointer;
+    }
+    .sync-bar button:hover { background: #333; }
+    .sync-user-email { color: #aaa; font-size: 0.85rem; }
+    .sync-status { color: #555; font-size: 0.8rem; margin-left: auto; }
+    {% endif %}
   </style>
 </head>
 <body>
@@ -307,6 +343,20 @@
     </select>
   </div>
 </header>
+
+{% if sync_url %}
+<div class="sync-bar" id="sync-bar">
+  <div id="sync-login">
+    <input type="email" id="sync-email" placeholder="E-Mail für Sync" autocomplete="email">
+    <button id="sync-send-btn" onclick="syncRequestLink()">Link senden</button>
+  </div>
+  <div id="sync-user" style="display:none">
+    <span class="sync-user-email" id="sync-user-email"></span>
+    <button id="sync-logout-btn" onclick="doLogout()">Abmelden</button>
+  </div>
+  <span class="sync-status" id="sync-status"></span>
+</div>
+{% endif %}
 
 <div class="controls-bar">
   <input type="search" id="search" placeholder="Suchen&hellip;" autocomplete="off">
