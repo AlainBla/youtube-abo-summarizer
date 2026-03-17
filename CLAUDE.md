@@ -95,6 +95,26 @@ python export.py --lang en              # embedded default language (overridden 
 `--hours` and `--all` are mutually exclusive. Default output filename: `export_YYYY-MM-DD_HH-MM.html`.
 `--show-model` shows the LLM model name badge on each card (hidden by default).
 
+## Sync server (optional)
+
+`sync-server/` is a standalone Flask service for syncing read/bookmark state across browsers.
+
+```bash
+cd sync-server
+cp .env.example .env   # fill in SECRET_KEY, BASE_URL, SMTP_*
+pip install -r requirements.txt
+python sync_server.py
+```
+
+Pass `--sync-url` to `export.py` to embed the server URL in generated HTML:
+
+```bash
+python export.py --all --sync-url https://sync.example.com --output archive.html
+```
+
+Users log in via magic link (email → click link → session stored in browser localStorage).
+State syncs automatically on page load and on each read/bookmark toggle.
+
 ## All-in-one mode (legacy)
 
 `summarize.py` still works as before — it fetches, summarizes, and renders in a single pass without touching `data/`. Useful for one-off runs or testing.
@@ -130,6 +150,7 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date-filter/channel-filter/tag-filter/read-filter/bookmark-filter/sort/pagination; each filter and sort control has a visible label (`ctrl-label`); date filter accepts a "published after" date and filters client-side via ISO string comparison; tag chips on cards are clickable and toggle the tag filter; read/bookmark and language (`yt_lang`) state persisted in browser cookies; language selector in page header with flag emoji (🇩🇪/🇬🇧), priority: cookie → browser language → embedded default |
 | `state.py` | Reads/writes `last_run.json` (channel_id → last checked ISO timestamp) |
 | `send_mail.py` | Standalone script; sends an HTML file as an email via SMTP_SSL |
+| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth, per-user read/bookmark state in SQLite, last-write-wins merge |
 
 ## Credentials and Sensitive Files
 

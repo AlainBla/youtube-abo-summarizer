@@ -136,6 +136,26 @@ python export.py --lang en
 `--hours` and `--all` are mutually exclusive. The default output filename is `export_YYYY-MM-DD_HH-MM.html`.
 The LLM model badge is hidden by default; use `--show-model` to display it.
 
+## Sync server (optional)
+
+`sync-server/` is a standalone Flask service for syncing read/bookmark state across browsers.
+
+```bash
+cd sync-server
+cp .env.example .env   # fill in SECRET_KEY, BASE_URL, SMTP_*
+pip install -r requirements.txt
+python sync_server.py
+```
+
+Pass `--sync-url` to `export.py` to embed the server URL in generated HTML:
+
+```bash
+python export.py --all --sync-url https://sync.example.com --output archive.html
+```
+
+Users log in via magic link (email → click link → session stored in browser localStorage).
+State syncs automatically on page load and on each read/bookmark toggle.
+
 ## Usage — repair
 
 `repair.py` scans the store and fixes missing or broken transcripts and summaries. The most common use case is re-summarizing specific videos after finding bad model output.
@@ -224,6 +244,7 @@ Each report script activates the virtual environment, renders the HTML, sends th
 | `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date/channel/tag/read/bookmark filters (each with a visible label), sort, pagination; in-page language selector with flag emoji (cookie `yt_lang`, browser fallback); full `de`/`en` string set in the embedded `I18N` object |
 | `state.py` | Reads/writes `last_run.json` (per-channel ISO timestamps) |
 | `send_mail.py` | SMTP email sender |
+| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth, per-user read/bookmark state in SQLite, last-write-wins merge |
 
 ## Limitations
 
