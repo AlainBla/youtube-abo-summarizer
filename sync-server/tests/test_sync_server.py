@@ -114,7 +114,7 @@ def test_verify_creates_user_on_first_login(client):
 def test_verify_idempotent_for_existing_user(client):
     token = sync_server.serializer.dumps({"email": "existing@example.com"})
     client.get(f"/auth/verify?token={token}&redirect_uri=http://testserver/")
-    r2 = token2 = sync_server.serializer.dumps({"email": "existing@example.com"})
+    token2 = sync_server.serializer.dumps({"email": "existing@example.com"})
     r = client.get(f"/auth/verify?token={token2}&redirect_uri=http://testserver/")
     assert r.status_code == 302  # no error on second login
 
