@@ -2,6 +2,7 @@
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import time
 import uuid
@@ -331,6 +332,42 @@ def delete_session():
     db.execute("DELETE FROM sessions WHERE token = ?", (token,))
     db.commit()
     return "", 204
+
+
+@app.route("/api/ingest", methods=["OPTIONS", "POST"])
+def ingest():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+    user = _get_session_user()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+    if user["email"] not in INGEST_EMAILS:
+        return jsonify({"error": "forbidden"}), 403
+    data = request.get_json(silent=True) or {}
+    video_id = str(data.get("video_id") or "")
+    if not re.match(r"^[A-Za-z0-9_-]{11}$", video_id):
+        return jsonify({"error": "invalid video_id"}), 400
+    if not COLLECT_SCRIPT or not os.path.isfile(COLLECT_SCRIPT):
+        return jsonify({"error": "ingest not configured"}), 500
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, COLLECT_SCRIPT, "--video", video_id],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            return jsonify({"error": "timeout"}), 500
+    except OSError as exc:
+        return jsonify({"error": str(exc)}), 500
+    if proc.returncode != 0:
+        msg = stderr.strip() or "collect.py exited with non-zero status"
+        return jsonify({"error": msg}), 500
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
