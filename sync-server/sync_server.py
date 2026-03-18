@@ -25,6 +25,12 @@ ALLOWED_EMAILS = {
     for e in os.environ.get("ALLOWED_EMAILS", "").split(",")
     if e.strip()
 }
+COLLECT_SCRIPT = os.environ.get("COLLECT_SCRIPT", "")
+INGEST_EMAILS = {
+    e.strip().lower()
+    for e in os.environ.get("INGEST_EMAILS", "").split(",")
+    if e.strip()
+}
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", 587))
 SMTP_USER = os.environ.get("SMTP_USER", "")
@@ -233,7 +239,11 @@ def whoami():
     user = _get_session_user()
     if not user:
         return jsonify({"error": "unauthorized"}), 401
-    return jsonify({"email": user["email"]})
+    can_ingest = (
+        user["email"] in INGEST_EMAILS
+        and bool(COLLECT_SCRIPT)
+    )
+    return jsonify({"email": user["email"], "can_ingest": can_ingest})
 
 
 @app.route("/api/state")

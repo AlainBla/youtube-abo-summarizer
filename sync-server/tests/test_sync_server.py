@@ -159,6 +159,39 @@ def test_whoami_valid_token(client, session_token):
     assert r.get_json()["email"] == "user@example.com"
 
 
+# ── GET /api/whoami — can_ingest ─────────────────────────────────────────────
+
+def test_whoami_can_ingest_false_by_default(client, session_token):
+    # No INGEST_EMAILS set → can_ingest must be False
+    r = client.get("/api/whoami", headers={"Authorization": f"Bearer {session_token}"})
+    assert r.status_code == 200
+    assert r.get_json().get("can_ingest") is False
+
+
+def test_whoami_can_ingest_false_without_collect_script(client, session_token, monkeypatch, tmp_path):
+    # INGEST_EMAILS set but COLLECT_SCRIPT not set → False
+    monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
+    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", "")
+    r = client.get("/api/whoami", headers={"Authorization": f"Bearer {session_token}"})
+    assert r.get_json().get("can_ingest") is False
+
+
+def test_whoami_can_ingest_true(client, session_token, monkeypatch):
+    # Both INGEST_EMAILS and COLLECT_SCRIPT set for this user → True
+    monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
+    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", "/some/collect.py")
+    r = client.get("/api/whoami", headers={"Authorization": f"Bearer {session_token}"})
+    assert r.get_json().get("can_ingest") is True
+
+
+def test_whoami_can_ingest_false_email_not_in_list(client, session_token, monkeypatch):
+    # COLLECT_SCRIPT set, but user's email not in INGEST_EMAILS → False
+    monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"other@example.com"})
+    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", "/some/collect.py")
+    r = client.get("/api/whoami", headers={"Authorization": f"Bearer {session_token}"})
+    assert r.get_json().get("can_ingest") is False
+
+
 # ── GET /api/state ────────────────────────────────────────────────────────────
 
 def test_get_state_empty(client, session_token):
