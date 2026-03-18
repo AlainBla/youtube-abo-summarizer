@@ -118,14 +118,18 @@ function extractVideoId(raw) {
 Handles: `youtube.com/watch?v=ID`, `youtu.be/ID`, `youtube.com/embed/ID`, `youtube.com/shorts/ID`, `youtube.com/live/ID`, bare 11-char ID.
 
 **`doIngest()` function:**
+
+Status feedback is displayed via the existing `updateSyncStatus()` helper, which writes to the existing `#sync-status` span already present in the sync bar. No new status element is needed.
+
+Steps:
 1. Extract video ID from input using `extractVideoId()`
-2. Validate locally against `/^[A-Za-z0-9_-]{11}$/` — show `syncStatusIngestFailed` immediately if invalid
-3. Disable `#ingest-btn` and set status to `syncStatusIngesting` ("Wird hinzugefügt…")
+2. Validate locally against `/^[A-Za-z0-9_-]{11}$/` — call `updateSyncStatus(s.syncStatusIngestFailed)` immediately if invalid, return
+3. Disable `#ingest-btn` and call `updateSyncStatus(s.syncStatusIngesting)` ("Wird hinzugefügt…")
 4. Retrieve the session token via `getSyncToken()` — this is the existing helper already present in the sync bar JS (not a new function)
 5. POST `{ video_id }` to `SYNC_URL + '/api/ingest'` with `Authorization: Bearer <token>`
 6. Re-enable `#ingest-btn` (in both success and error paths)
-7. On 200: set status to `syncStatusIngested`, clear input
-8. On non-200 other than 401: set status to `syncStatusIngestFailed`
+7. On 200: call `updateSyncStatus(s.syncStatusIngested)`, clear input
+8. On non-200 other than 401: call `updateSyncStatus(s.syncStatusIngestFailed)`
 9. On 401: clear token (`localStorage.removeItem('yt_sync_token')`), call `showSyncLoggedOut()` — same behaviour as other sync operations on session expiry
 
 **New i18n keys** (added to `I18N.de` and `I18N.en`):
