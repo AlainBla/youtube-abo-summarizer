@@ -303,7 +303,8 @@
       flex-wrap: wrap;
       font-size: 0.9rem;
     }
-    .sync-bar input[type="email"] {
+    .sync-bar input[type="email"],
+    .sync-bar input[type="text"] {
       background: #1a1a1a;
       border: 1px solid #2a2a2a;
       border-radius: 6px;
@@ -313,8 +314,10 @@
       outline: none;
       min-width: 200px;
     }
-    .sync-bar input[type="email"]:focus { border-color: #555; }
-    .sync-bar input[type="email"]::placeholder { color: #555; }
+    .sync-bar input[type="email"]:focus,
+    .sync-bar input[type="text"]:focus { border-color: #555; }
+    .sync-bar input[type="email"]::placeholder,
+    .sync-bar input[type="text"]::placeholder { color: #555; }
     .sync-bar button {
       background: #2a2a2a;
       border: 1px solid #3a3a3a;
@@ -354,6 +357,10 @@
   <div id="sync-user" style="display:none">
     <span class="sync-user-email" id="sync-user-email"></span>
     <button id="sync-logout-btn" onclick="doLogout()">Abmelden</button>
+  </div>
+  <div id="sync-ingest" style="display:none">
+    <input type="text" id="ingest-input" placeholder="YouTube URL oder Video-ID" autocomplete="off">
+    <button id="ingest-btn" onclick="doIngest()">Hinzufügen</button>
   </div>
   <span class="sync-status" id="sync-status"></span>
 </div>
@@ -471,6 +478,11 @@ const I18N = {
     syncStatusSyncing: 'Synchronisiere\u2026',
     syncStatusSynced: 'Synchronisiert',
     syncStatusFailed: 'Sync fehlgeschlagen',
+    ingestPlaceholder: 'YouTube URL oder Video-ID',
+    ingestBtn: 'Hinzuf\u00fcgen',
+    syncStatusIngesting: 'Wird hinzugef\u00fcgt\u2026',
+    syncStatusIngested: 'Video hinzugef\u00fcgt',
+    syncStatusIngestFailed: 'Hinzuf\u00fcgen fehlgeschlagen',
   },
   en: {
     pageTitle: 'YouTube Export',
@@ -518,6 +530,11 @@ const I18N = {
     syncStatusSyncing: 'Syncing\u2026',
     syncStatusSynced: 'Synced',
     syncStatusFailed: 'Sync failed',
+    ingestPlaceholder: 'YouTube URL or video ID',
+    ingestBtn: 'Add',
+    syncStatusIngesting: 'Adding video\u2026',
+    syncStatusIngested: 'Video added',
+    syncStatusIngestFailed: 'Failed to add video',
   }
 };
 
@@ -616,6 +633,8 @@ function showSyncLoggedIn(email) {
 function showSyncLoggedOut() {
   document.getElementById('sync-login').style.display = '';
   document.getElementById('sync-user').style.display = 'none';
+  var ingest = document.getElementById('sync-ingest');
+  if (ingest) ingest.style.display = 'none';
   updateSyncStatus(I18N[currentLang || 'de'].syncStatusNotLoggedIn);
 }
 
@@ -720,6 +739,7 @@ function initSync() {
     .then(function(data) {
       if (!data) return null;
       showSyncLoggedIn(data.email);
+      if (data.can_ingest) showIngestUI();
       return fetch(SYNC_URL + '/api/state', {
         headers: {'Authorization': 'Bearer ' + token}
       });
@@ -745,6 +765,57 @@ function initSync() {
     .catch(function() {
       updateSyncStatus(I18N[currentLang || 'de'].syncStatusFailed);
     });
+}
+
+function extractVideoId(raw) {
+  var m = raw.match(/(?:v=|youtu\.be\/|embed\/|shorts\/|live\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : raw.trim();
+}
+
+function showIngestUI() {
+  var el = document.getElementById('sync-ingest');
+  if (el) el.style.display = '';
+}
+
+function doIngest() {
+  var raw = (document.getElementById('ingest-input').value || '').trim();
+  var videoId = extractVideoId(raw);
+  var s = I18N[currentLang || 'de'];
+  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+    updateSyncStatus(s.syncStatusIngestFailed);
+    return;
+  }
+  var btn = document.getElementById('ingest-btn');
+  if (btn) btn.disabled = true;
+  updateSyncStatus(s.syncStatusIngesting);
+  var token = getSyncToken();
+  fetch(SYNC_URL + '/api/ingest', {
+    method: 'POST',
+    headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
+    body: JSON.stringify({video_id: videoId})
+  })
+  .then(function(r) {
+    if (btn) btn.disabled = false;
+    if (r.status === 401) {
+      localStorage.removeItem('yt_sync_token');
+      showSyncLoggedOut();
+      return null;
+    }
+    return r.json().then(function(body) { return {status: r.status, body: body}; });
+  })
+  .then(function(res) {
+    if (!res) return;
+    if (res.status === 200) {
+      updateSyncStatus(s.syncStatusIngested);
+      document.getElementById('ingest-input').value = '';
+    } else {
+      updateSyncStatus(s.syncStatusIngestFailed);
+    }
+  })
+  .catch(function() {
+    if (btn) btn.disabled = false;
+    updateSyncStatus(s.syncStatusIngestFailed);
+  });
 }
 
 function syncRequestLink() {
@@ -881,6 +952,10 @@ function applyLang(lang) {
     if (sendEl) sendEl.textContent = s.syncSendLink;
     var logoutEl = document.getElementById('sync-logout-btn');
     if (logoutEl) logoutEl.textContent = s.syncLogout;
+    var ingestInput = document.getElementById('ingest-input');
+    if (ingestInput) ingestInput.placeholder = s.ingestPlaceholder;
+    var ingestBtn = document.getElementById('ingest-btn');
+    if (ingestBtn) ingestBtn.textContent = s.ingestBtn;
   })();
   {% endif %}
   applyFiltersAndSort();
