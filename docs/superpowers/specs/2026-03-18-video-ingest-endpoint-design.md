@@ -58,11 +58,11 @@ The route is registered with `methods=["OPTIONS", "POST"]`. An `OPTIONS` request
 { "video_id": "dQw4w9WgXcQ" }
 ```
 
-**Validation:**
-- Bearer token auth (same session middleware as all `/api/*` endpoints)
-- User email must be in `INGEST_EMAILS` → 403 `{"error": "forbidden"}` if not
-- `video_id` must match `^[A-Za-z0-9_-]{11}$` → 400 `{"error": "invalid video_id"}` if not
-- `COLLECT_SCRIPT` must be set and the file must exist → 500 `{"error": "ingest not configured"}` if not
+**Validation (checked in this order):**
+1. Bearer token missing, invalid, or expired → 401 `{"error": "unauthorized"}`
+2. User email not in `INGEST_EMAILS` → 403 `{"error": "forbidden"}`
+3. `video_id` does not match `^[A-Za-z0-9_-]{11}$` → 400 `{"error": "invalid video_id"}`
+4. `COLLECT_SCRIPT` not set or file does not exist (checked per-request, not at startup) → 500 `{"error": "ingest not configured"}`
 
 **Execution:**
 ```python
@@ -76,8 +76,9 @@ subprocess.run(
 
 **Responses:**
 - `200 {"ok": true}` — exit code 0
-- `500 {"error": "<stderr>"}` — non-zero exit code; `stderr` is `result.stderr.strip()` (may be empty string)
-- `500 {"error": "timeout"}` — `subprocess.TimeoutExpired`; since `TimeoutExpired.stderr` is `None`, the literal string `"timeout"` is returned instead
+- `500 {"error": "<stderr or fallback>"}` — non-zero exit code; `error` is `result.stderr.strip()` if non-empty, otherwise `"collect.py exited with non-zero status"`. Dependency errors (wrong virtualenv etc.) also fall through this path via the subprocess stderr.
+- `500 {"error": "timeout"}` — `subprocess.TimeoutExpired`; `TimeoutExpired.stderr` is `None`, so the literal string `"timeout"` is used
+- `401 {"error": "unauthorized"}` — Bearer token missing, invalid, or expired
 - `403 {"error": "forbidden"}` — user not in INGEST_EMAILS
 - `400 {"error": "invalid video_id"}` — regex mismatch
 
@@ -104,6 +105,7 @@ if (data.can_ingest) showIngestUI();
   <button id="ingest-btn" onclick="doIngest()">Hinzufügen</button>
 </div>
 ```
+The German strings are intentional static defaults (matching the pattern of the rest of the template). `applyLang()` overwrites them on page load; no Jinja2 templating is needed.
 
 **Client-side URL → ID extraction** (never sends URLs to server):
 ```js
@@ -119,11 +121,12 @@ Handles: `youtube.com/watch?v=ID`, `youtu.be/ID`, `youtube.com/embed/ID`, `youtu
 1. Extract video ID from input using `extractVideoId()`
 2. Validate locally against `/^[A-Za-z0-9_-]{11}$/` — show `syncStatusIngestFailed` immediately if invalid
 3. Disable `#ingest-btn` and set status to `syncStatusIngesting` ("Wird hinzugefügt…")
-4. Retrieve the session token via `getSyncToken()`
+4. Retrieve the session token via `getSyncToken()` — this is the existing helper already present in the sync bar JS (not a new function)
 5. POST `{ video_id }` to `SYNC_URL + '/api/ingest'` with `Authorization: Bearer <token>`
-6. Re-enable `#ingest-btn`
+6. Re-enable `#ingest-btn` (in both success and error paths)
 7. On 200: set status to `syncStatusIngested`, clear input
-8. On error: set status to `syncStatusIngestFailed`
+8. On non-200 other than 401: set status to `syncStatusIngestFailed`
+9. On 401: clear token (`localStorage.removeItem('yt_sync_token')`), call `showSyncLoggedOut()` — same behaviour as other sync operations on session expiry
 
 **New i18n keys** (added to `I18N.de` and `I18N.en`):
 
