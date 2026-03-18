@@ -754,7 +754,7 @@ function syncRequestLink() {
   fetch(SYNC_URL + '/auth/request-link', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({email: email, redirect_uri: window.location.href})
+    body: JSON.stringify({email: email, redirect_uri: window.location.origin + window.location.pathname + window.location.search})
   })
   .then(function() { updateSyncStatus(s.syncStatusSent); })
   .catch(function() { updateSyncStatus(s.syncStatusFailed); });

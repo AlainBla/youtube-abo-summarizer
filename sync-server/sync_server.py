@@ -151,7 +151,8 @@ def _send_magic_link(email: str, link: str) -> None:
     msg["From"] = SMTP_FROM
     msg["To"] = email
     msg.set_content(f"Click to log in:\n\n{link}\n\nExpires in 15 minutes.")
-    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as smtp:
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+        smtp.starttls()
         smtp.login(SMTP_USER, SMTP_PASS)
         smtp.send_message(msg)
 
