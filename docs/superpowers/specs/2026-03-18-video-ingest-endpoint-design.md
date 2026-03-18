@@ -49,7 +49,9 @@ Two new variables in `sync-server/.env` (and `.env.example`):
 
 ---
 
-### `POST /api/ingest`  `Authorization: Bearer TOKEN`
+### `POST /api/ingest`  `Authorization: Bearer TOKEN`  (also handles `OPTIONS`)
+
+The route is registered with `methods=["OPTIONS", "POST"]`. An `OPTIONS` request returns `{}` 200 immediately (same pattern as `/api/state` and `/api/session`), allowing cross-origin CORS preflight to succeed.
 
 **Request body:**
 ```json
@@ -74,7 +76,8 @@ subprocess.run(
 
 **Responses:**
 - `200 {"ok": true}` — exit code 0
-- `500 {"error": "<stderr>"}` — non-zero exit code or timeout
+- `500 {"error": "<stderr>"}` — non-zero exit code; `stderr` is `result.stderr.strip()` (may be empty string)
+- `500 {"error": "timeout"}` — `subprocess.TimeoutExpired`; since `TimeoutExpired.stderr` is `None`, the literal string `"timeout"` is returned instead
 - `403 {"error": "forbidden"}` — user not in INGEST_EMAILS
 - `400 {"error": "invalid video_id"}` — regex mismatch
 
@@ -88,10 +91,11 @@ CORS headers apply as on all other endpoints.
 
 All additions are inside the existing `{% if sync_url %}` guard.
 
-**`/api/whoami` response handling** — `initSync()` stores `can_ingest` and conditionally shows the ingest UI:
+**`/api/whoami` response handling** — inside `initSync()`, after the existing `showSyncLoggedIn(data.email)` call and state-fetch chain, the response's `can_ingest` flag is checked:
 ```js
 if (data.can_ingest) showIngestUI();
 ```
+`showIngestUI()` sets `document.getElementById('sync-ingest').style.display = ''`.
 
 **Ingest HTML** (inside `.sync-bar`, after the login/user divs):
 ```html
@@ -104,20 +108,22 @@ if (data.can_ingest) showIngestUI();
 **Client-side URL → ID extraction** (never sends URLs to server):
 ```js
 function extractVideoId(raw) {
-  var m = raw.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
+  var m = raw.match(/(?:v=|youtu\.be\/|embed\/|shorts\/|live\/)([A-Za-z0-9_-]{11})/);
   return m ? m[1] : raw.trim();
 }
 ```
 
-Handles: `youtube.com/watch?v=ID`, `youtu.be/ID`, `youtube.com/embed/ID`, bare 11-char ID.
+Handles: `youtube.com/watch?v=ID`, `youtu.be/ID`, `youtube.com/embed/ID`, `youtube.com/shorts/ID`, `youtube.com/live/ID`, bare 11-char ID.
 
 **`doIngest()` function:**
-1. Extract video ID from input
-2. Validate locally against `/^[A-Za-z0-9_-]{11}$/` — show error immediately if invalid
-3. Set status to `syncStatusIngesting` ("Wird hinzugefügt…")
-4. POST `{ video_id }` to `SYNC_URL + '/api/ingest'` with Bearer token
-5. On 200: set status to `syncStatusIngested`, clear input
-6. On error: set status to `syncStatusIngestFailed`
+1. Extract video ID from input using `extractVideoId()`
+2. Validate locally against `/^[A-Za-z0-9_-]{11}$/` — show `syncStatusIngestFailed` immediately if invalid
+3. Disable `#ingest-btn` and set status to `syncStatusIngesting` ("Wird hinzugefügt…")
+4. Retrieve the session token via `getSyncToken()`
+5. POST `{ video_id }` to `SYNC_URL + '/api/ingest'` with `Authorization: Bearer <token>`
+6. Re-enable `#ingest-btn`
+7. On 200: set status to `syncStatusIngested`, clear input
+8. On error: set status to `syncStatusIngestFailed`
 
 **New i18n keys** (added to `I18N.de` and `I18N.en`):
 
