@@ -142,6 +142,7 @@
 
     .video-thumb { flex-shrink: 0; width: 200px; }
     .video-thumb img { width: 100%; border-radius: 5px; display: block; }
+    .video-embed { margin-top: 6px; width: 100%; aspect-ratio: 16/9; border: none; border-radius: 5px; display: block; }
     .video-thumb .no-thumb {
       width: 100%;
       aspect-ratio: 16/9;
@@ -993,8 +994,10 @@ function buildCard(v) {
   const readBtnClass = 'read-btn' + (isRead ? ' is-active' : '');
   const bookmarkBtnClass = 'bookmark-btn' + (isBookmarked ? ' is-active' : '');
 
+  const embed = '<iframe class="video-embed" src="https://www.youtube.com/embed/' + escHtml(v.video_id) + '" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>';
+
   return '<article class="' + cardClass + '">'
-    + '<div class="video-thumb">' + thumb + '</div>'
+    + '<div class="video-thumb">' + thumb + embed + '</div>'
     + '<div class="video-body">'
     + '<div class="video-actions">'
     + '<button class="' + readBtnClass + '" onclick="toggleRead(\'' + escHtml(v.video_id) + '\')">' + s.readBtn + '</button>'
