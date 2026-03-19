@@ -168,6 +168,8 @@
     .video-title:hover { color: #ff4444; }
 
     .video-meta { font-size: 0.8rem; color: #777; margin-bottom: 0.5rem; }
+    .channel-link { cursor: pointer; }
+    .channel-link:hover { color: #aaa; text-decoration: underline; }
 
     .model-badge {
       display: inline-block;
@@ -1007,6 +1009,12 @@ function setTagFilter(tag) {
   applyFiltersAndSort();
 }
 
+function setChannelFilter(channelId) {
+  var sel = document.getElementById('channel-filter');
+  sel.value = (sel.value === channelId) ? '' : channelId;
+  applyFiltersAndSort();
+}
+
 function escHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
@@ -1079,7 +1087,7 @@ function buildCard(v) {
     + '<button class="' + bookmarkBtnClass + '" onclick="toggleBookmark(\'' + escHtml(v.video_id) + '\')">' + s.bookmarkBtn + '</button>'
     + '</div>'
     + '<a class="video-title" href="https://www.youtube.com/watch?v=' + escHtml(v.video_id) + '" target="_blank" rel="noopener">' + escHtml(v.title) + '</a>'
-    + '<div class="video-meta">' + escHtml(v.channel_title) + ' &middot; ' + escHtml(v.published_at_display) + metaExtras + '</div>'
+    + '<div class="video-meta"><span class="channel-link" onclick="setChannelFilter(\'' + escHtml(v.channel_id) + '\')">' + escHtml(v.channel_title) + '</span> &middot; ' + escHtml(v.published_at_display) + metaExtras + '</div>'
     + tagsHtml
     + '<div class="video-summary">' + summaryHtml + '</div>'
     + '</div>'

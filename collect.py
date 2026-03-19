@@ -76,9 +76,9 @@ def parse_args():
     parser.add_argument(
         "--prune-days",
         type=int,
-        default=7,
+        default=None,
         metavar="N",
-        help="Remove store entries older than N days after collecting (default: 7).",
+        help="Remove store entries older than N days after collecting. Omit to keep all entries.",
     )
     return parser.parse_args()
 
@@ -305,9 +305,10 @@ def main():
             state.set_last_run(channel_id, now)
 
     # --- Prune old entries ---
-    removed = store.prune_older_than(args.prune_days)
-    if removed:
-        print(f"\nPruned {removed} store entry(s) older than {args.prune_days} days.")
+    if args.prune_days is not None:
+        removed = store.prune_older_than(args.prune_days)
+        if removed:
+            print(f"\nPruned {removed} store entry(s) older than {args.prune_days} days.")
 
     print(f"\nDone. {total_added} new video(s) added to store.")
 

@@ -32,7 +32,7 @@ python collect.py --file channels.txt [--hours N]
 - Videos already in the store are handled incrementally: skipped entirely if both transcript and summary exist; otherwise only the missing piece is fetched or generated.
 - Without `--hours`, uses each channel's last-run timestamp from `last_run.json`; defaults to 24 h on first run.
 - `--hours N` overrides last-run state and does **not** update it.
-- `--prune-days N` removes store entries older than N days (default: 7).
+- `--prune-days N` removes store entries older than N days. Omitted by default (no pruning).
 
 ### Report phase — run on digest schedule (e.g. every 6 h or daily)
 
@@ -115,6 +115,32 @@ python export.py --all --sync-url https://sync.example.com --output archive.html
 Users log in via magic link (email → click link → session stored in browser localStorage).
 State syncs automatically on page load and on each read/bookmark toggle.
 
+### On-demand video ingest
+
+`POST /api/ingest` lets authorised users trigger `collect.py --video <id>` on the server, so a specific video can be fetched and summarised without waiting for the next scheduled collect run.
+
+Requires two env vars in `sync-server/.env`:
+
+| Variable | Description |
+|---|---|
+| `INGEST_EMAILS` | Comma-separated emails allowed to trigger ingest (empty = nobody) |
+| `COLLECT_SCRIPT` | Absolute path to `collect.py` on the server |
+
+`GET /api/whoami` returns `can_ingest: true` when the logged-in user is in `INGEST_EMAILS` and `COLLECT_SCRIPT` is configured. The export UI shows an "Ingest" button in the sync bar only when `can_ingest` is true.
+
+### Production deployment
+
+`python sync_server.py` is for development only. In production: **Gunicorn + systemd + Nginx**.
+
+- Gunicorn: `gunicorn --workers 2 --bind 127.0.0.1:5000 sync_server:app`
+- Nginx terminates TLS and proxies to `127.0.0.1:5000`
+- Add `ProxyFix` so Flask sees the real client IP (needed for the rate limiter):
+  ```python
+  from werkzeug.middleware.proxy_fix import ProxyFix
+  app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+  ```
+- See README for full systemd unit and Nginx config.
+
 ## All-in-one mode (legacy)
 
 `summarize.py` still works as before — it fetches, summarizes, and renders in a single pass without touching `data/`. Useful for one-off runs or testing.
@@ -142,15 +168,15 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `store.py` | SQLite + file store: `data/videos.db` (metadata, including `tags TEXT` column storing JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
 | `summarize.py` | Legacy all-in-one CLI (fetch + render in one pass, no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (auth, subscriptions, video search, channel resolution) |
-| `transcripts.py` | `youtube-transcript-api` wrapper; language priority via `TRANSCRIPT_LANGS` (default: de,en); handles ip_blocked / rate_limited / country_blocked errors; `VideoUnplayable` is only classified as `country_blocked` when the reason mentions "country"/"region" — on `country_blocked`, retries once with a country-pinned Webshare proxy (`PROXY_FALLBACK_COUNTRY`, default: DE) if `WEBSHARE_PROXY_URL` is set; other `VideoUnplayable` causes fall to `unavailable` (retryable) |
+| `transcripts.py` | `youtube-transcript-api` wrapper; language priority via `TRANSCRIPT_LANGS` (default: de,en); handles ip_blocked / rate_limited / country_blocked errors; `VideoUnplayable` is only classified as `country_blocked` when the reason mentions "country"/"region" — on `country_blocked`, retries once with a country-pinned Webshare proxy (`PROXY_FALLBACK_COUNTRY`, default: DE) if `WEBSHARE_PROXY_URL` is set; other `VideoUnplayable` causes fall to `unavailable` (retryable); `requests.exceptions.ProxyError` and `ConnectionError` are caught and mapped to `unavailable` |
 | `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); summary language via `SUMMARY_LANG`; structured prompt enforces chronological sections scaled to video length, written as flowing prose (`<p>`) with bullets only for genuine enumerations, timestamp links placed inline after each relevant sentence; strips markdown fences from responses; extracts 3–7 English topic tags from the `<!-- tags: ... -->` comment appended by the model; returns `(summary_html, tags_list)` tuple; `max_tokens=16384` |
 | `renderer.py` | Jinja2 renderer; writes the final HTML file; accepts `lang=` kwarg; sanitizes summaries at render time via `_sanitize_summary()` — strips any trailing incomplete HTML tag to guard against LLM output truncated mid-tag (which would cause the browser to consume subsequent cards as an attribute value) |
 | `i18n.py` | UI string dicts for `de` (default) and `en`; `get_strings(lang)` and `resolve_lang(lang)` helpers |
 | `template.html.j2` | Self-contained HTML template with embedded dark-theme CSS; read/bookmark buttons on each card, state persisted in browser cookies (365 days); strings from `i18n.py` via Jinja2 `{{ t.xxx }}` |
-| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date-filter/channel-filter/tag-filter/read-filter/bookmark-filter/sort/pagination; each filter and sort control has a visible label (`ctrl-label`); date filter accepts a "published after" date and filters client-side via ISO string comparison; tag chips on cards are clickable and toggle the tag filter; read/bookmark and language (`yt_lang`) state persisted in browser cookies; language selector in page header with flag emoji (🇩🇪/🇬🇧), priority: cookie → browser language → embedded default |
+| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date-filter/channel-filter/tag-filter/read-filter/bookmark-filter/sort/pagination; each filter and sort control has a visible label (`ctrl-label`); date filter accepts a "published after" date and filters client-side via ISO string comparison; tag chips on cards are clickable and toggle the tag filter; channel name in card meta is clickable and toggles the channel filter (`setChannelFilter()`); read/bookmark and language (`yt_lang`) state persisted in browser cookies; language selector in page header with flag emoji (🇩🇪/🇬🇧), priority: cookie → browser language → embedded default; sync bar shows "Ingest" button when `can_ingest` is true |
 | `state.py` | Reads/writes `last_run.json` (channel_id → last checked ISO timestamp) |
 | `send_mail.py` | Standalone script; sends an HTML file as an email via SMTP_SSL |
-| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth, per-user read/bookmark state in SQLite, last-write-wins merge |
+| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth, per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` triggers `collect.py --video <id>` on the server for users in `INGEST_EMAILS`; `/api/whoami` returns `can_ingest` flag |
 
 ## Credentials and Sensitive Files
 

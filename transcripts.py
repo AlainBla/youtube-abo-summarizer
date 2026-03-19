@@ -4,6 +4,7 @@ import os
 from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
+import requests.exceptions
 from youtube_transcript_api import (
     YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled,
     IpBlocked, RequestBlocked, VideoUnplayable, CouldNotRetrieveTranscript,
@@ -76,6 +77,9 @@ def _fetch(api: YouTubeTranscriptApi, video_id: str, preferred_langs: list[str])
         return None, "unavailable"
     except CouldNotRetrieveTranscript as e:
         print(f"    [ERROR] {type(e).__name__} für video_id={video_id}: {e}")
+        return None, "unavailable"
+    except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError) as e:
+        print(f"    [ERROR] Proxy/Netzwerkfehler für video_id={video_id}: {e}")
         return None, "unavailable"
 
 

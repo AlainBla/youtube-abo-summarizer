@@ -13,7 +13,7 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 - **AI summarization**: Generates structured HTML summaries written as flowing prose (bullet points only for genuine enumerations); sections are in chronological order and scaled to video length (2–3 sections for short videos, up to 6–10 for long ones); each section contains clickable timestamp links placed inline after the relevant sentence; output language configurable via `SUMMARY_LANG` (default: German). The same LLM call also extracts 3–7 concise English topic tags, stored alongside the summary
 - **Transcript and summary storage**: Transcripts and summaries are cached to `data/`. On subsequent runs, videos that already have both a transcript and a summary are skipped entirely — no redundant YouTube or LLM calls. If only the transcript is missing it is fetched; if only the summary is missing the stored transcript is re-used and only the LLM call is made
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
-- **Browsable archive export**: Single portable HTML file with client-side search, date filter (published after), channel filter, tag filter, read/bookmark filter, sort, and pagination — works fully offline; each filter and sort control has a visible label; tag chips on cards are clickable and toggle the tag filter
+- **Browsable archive export**: Single portable HTML file with client-side search, date filter (published after), channel filter, tag filter, read/bookmark filter, sort, and pagination — works fully offline; each filter and sort control has a visible label; tag chips and channel names on cards are clickable and toggle their respective filters directly
 - **Read/bookmark tracking**: Each video card has read and bookmark buttons; state is persisted in browser cookies (365 days) and shared between the report and export views
 - **Multi-language UI**: Report and export templates support German (`de`, default) and English (`en`); select via `--lang` on the CLI; the export additionally shows an in-page language selector that persists the choice in a cookie and falls back to the browser's preferred language
 - **Repair tool**: Re-fetches missing transcripts and re-summarizes missing or broken summaries; supports targeting specific videos
@@ -64,6 +64,17 @@ Place your Google OAuth credentials in `client_secrets.json` (downloaded from th
 | `WEBSHARE_PROXY_URL` | No | Residential proxy URL for transcript fetching |
 | `PROXY_FALLBACK_COUNTRY` | No | Country code used for the geo-block retry (default: `DE`); appended to the Webshare username, e.g. `US`, `GB` |
 
+**Sync server** (`sync-server/.env`) — in addition to the SMTP vars above:
+
+| Variable | Required | Description |
+|---|---|---|
+| `SECRET_KEY` | Yes | Long random string for signing magic-link tokens |
+| `BASE_URL` | Yes | Public URL of the sync server, e.g. `https://sync.example.com` |
+| `ALLOWED_EMAILS` | No | Comma-separated allowlist for magic-link login (empty = any email) |
+| `INGEST_EMAILS` | No | Comma-separated emails allowed to trigger on-demand video ingest (empty = nobody) |
+| `COLLECT_SCRIPT` | No | Absolute path to `collect.py` on the server (required for ingest) |
+| `PORT` | No | Port to listen on (default: `5000`) |
+
 ## Usage — two-phase pipeline (recommended)
 
 The pipeline is split into a **collect** phase and a **report** phase. Run collection frequently so new videos are picked up quickly; run report on whatever digest schedule you want. Transcript fetching and LLM summarization only happen during collection.
@@ -84,7 +95,7 @@ python collect.py UC123abc @SomeHandle
 python collect.py --file channels.txt
 ```
 
-Results are written to `data/` (SQLite metadata + individual transcript and summary files). Videos already in the store are handled incrementally: if both transcript and summary exist they are skipped entirely; if only one is missing, only the missing piece is fetched or generated. Old entries are pruned after 7 days by default (`--prune-days N` to change).
+Results are written to `data/` (SQLite metadata + individual transcript and summary files). Videos already in the store are handled incrementally: if both transcript and summary exist they are skipped entirely; if only one is missing, only the missing piece is fetched or generated. Pass `--prune-days N` to remove entries older than N days; by default nothing is pruned.
 
 ### 2. Report — render and optionally send a digest
 
@@ -155,6 +166,102 @@ python export.py --all --sync-url https://sync.example.com --output archive.html
 
 Users log in via magic link (email → click link → session stored in browser localStorage).
 State syncs automatically on page load and on each read/bookmark toggle.
+
+### On-demand video ingest
+
+`POST /api/ingest` lets authorised users fetch and summarise a specific video on the server without waiting for the next scheduled collection run. This is useful when a video is not yet in the store and you want it available immediately.
+
+Configure in `sync-server/.env`:
+
+| Variable | Description |
+|---|---|
+| `INGEST_EMAILS` | Comma-separated emails allowed to trigger ingest (empty = nobody) |
+| `COLLECT_SCRIPT` | Absolute path to `collect.py` on the server |
+
+`GET /api/whoami` returns `can_ingest: true` when the logged-in user is in `INGEST_EMAILS` and `COLLECT_SCRIPT` is set. The export page shows an "Ingest" button in the sync bar only when `can_ingest` is true.
+
+The endpoint runs `collect.py --video <video_id>` as a subprocess (120 s timeout). The video must already be accessible via the configured YouTube credentials on the server.
+
+### Production deployment
+
+`python sync_server.py` starts Flask's development server — not suitable for production. Use **Gunicorn + systemd + Nginx**:
+
+**1. Install Gunicorn**
+
+```bash
+cd sync-server
+pip install gunicorn
+```
+
+**2. systemd service** — `/etc/systemd/system/yt-sync.service`:
+
+```ini
+[Unit]
+Description=YouTube Export Sync Server
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/path/to/youtube-abo-summarizer/sync-server
+EnvironmentFile=/path/to/youtube-abo-summarizer/sync-server/.env
+ExecStart=/path/to/.venv/bin/gunicorn \
+    --workers 2 \
+    --bind 127.0.0.1:5000 \
+    --access-logfile /var/log/yt-sync/access.log \
+    --error-logfile /var/log/yt-sync/error.log \
+    sync_server:app
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo mkdir -p /var/log/yt-sync && sudo chown www-data /var/log/yt-sync
+sudo systemctl enable --now yt-sync
+```
+
+**3. Nginx reverse proxy** — `/etc/nginx/sites-available/yt-sync`:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name sync.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/sync.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/sync.example.com/privkey.pem;
+
+    location / {
+        proxy_pass         http://127.0.0.1:5000;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 80;
+    server_name sync.example.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/yt-sync /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+# TLS certificate:
+sudo certbot --nginx -d sync.example.com
+```
+
+**4. ProxyFix** — add near the top of `sync_server.py` so Flask sees the real client IP (required for the rate limiter to work correctly behind Nginx):
+
+```python
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+```
+
+After code changes: `sudo systemctl restart yt-sync`
 
 ## Usage — repair
 
@@ -236,15 +343,15 @@ Each report script activates the virtual environment, renders the HTML, sends th
 | `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
-| `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling |
+| `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling; `requests.exceptions.ProxyError` / `ConnectionError` caught and mapped to `unavailable` |
 | `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns `(summary_html, tags)` tuple — structured HTML with chronological sections, proportional depth, and timestamp links, plus 3–7 English topic tags extracted from a `<!-- tags: ... -->` comment appended by the model; `max_tokens=16384` |
 | `renderer.py` | Jinja2 renderer; writes the final HTML report; accepts `lang=` kwarg; sanitizes summaries at render time to strip any trailing incomplete HTML tag (guards against LLM output truncated mid-tag) |
 | `i18n.py` | UI string dicts for `de` (default) and `en`; `get_strings()` and `resolve_lang()` helpers used by the renderer |
 | `template.html.j2` | Self-contained dark-theme HTML report template; read/bookmark buttons with cookie-based state; all UI strings sourced from `i18n.py` via `{{ t.xxx }}` |
-| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date/channel/tag/read/bookmark filters (each with a visible label), sort, pagination; in-page language selector with flag emoji (cookie `yt_lang`, browser fallback); full `de`/`en` string set in the embedded `I18N` object |
+| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date/channel/tag/read/bookmark filters (each with a visible label), sort, pagination; channel name on each card is clickable and toggles the channel filter; in-page language selector with flag emoji (cookie `yt_lang`, browser fallback); full `de`/`en` string set in the embedded `I18N` object; sync bar shows "Ingest" button when `can_ingest` is true |
 | `state.py` | Reads/writes `last_run.json` (per-channel ISO timestamps) |
 | `send_mail.py` | SMTP email sender |
-| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth, per-user read/bookmark state in SQLite, last-write-wins merge |
+| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth, per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` triggers `collect.py --video <id>` for users in `INGEST_EMAILS`; `/api/whoami` returns `can_ingest` flag |
 
 ## Limitations
 
