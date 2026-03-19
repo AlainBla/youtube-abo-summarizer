@@ -108,7 +108,11 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> t
         ],
         max_tokens=16384,
     )
-    content = response.choices[0].message.content.strip()
+    choice = response.choices[0]
+    if choice.message.content is None:
+        finish_reason = getattr(choice, "finish_reason", "unknown")
+        raise ValueError(f"Model returned no content (finish_reason={finish_reason!r})")
+    content = choice.message.content.strip()
     # Some models (e.g. Gemma3) wrap the HTML in a markdown code fence; strip it.
     content = re.sub(r"^```[a-zA-Z]*\s*\n?(.*?)\n?```$", r"\1", content, flags=re.DOTALL).strip()
     html, tags = _parse_tags(content)
