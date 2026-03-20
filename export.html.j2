@@ -576,6 +576,18 @@ function saveSet(name, set) {
 let readSet = getSet(COOKIE_READ);
 let bookmarkSet = getSet(COOKIE_BOOKMARK);
 
+function updateCardInPlace(videoId) {
+  var article = document.querySelector('[data-video-id="' + videoId + '"]');
+  if (!article) return;
+  var isRead = readSet.has(videoId);
+  var isBookmarked = bookmarkSet.has(videoId);
+  article.className = 'video-card' + (isRead ? ' is-read' : '') + (isBookmarked ? ' is-bookmarked' : '');
+  var readBtn = article.querySelector('.read-btn');
+  if (readBtn) readBtn.className = 'read-btn' + (isRead ? ' is-active' : '');
+  var bookmarkBtn = article.querySelector('.bookmark-btn');
+  if (bookmarkBtn) bookmarkBtn.className = 'bookmark-btn' + (isBookmarked ? ' is-active' : '');
+}
+
 window.toggleRead = function(videoId) {
   if (readSet.has(videoId)) {
     readSet.delete(videoId);
@@ -584,7 +596,12 @@ window.toggleRead = function(videoId) {
   }
   saveSet(COOKIE_READ, readSet);
   {% if sync_url %}syncToggle('read', videoId, readSet.has(videoId) ? 1 : 0);{% endif %}
-  applyFiltersAndSort(currentPage);
+  var readFilter = document.getElementById('read-filter').value;
+  if (readFilter === 'read' || readFilter === 'unread') {
+    applyFiltersAndSort(currentPage);
+  } else {
+    updateCardInPlace(videoId);
+  }
 };
 
 window.toggleBookmark = function(videoId) {
@@ -595,7 +612,12 @@ window.toggleBookmark = function(videoId) {
   }
   saveSet(COOKIE_BOOKMARK, bookmarkSet);
   {% if sync_url %}syncToggle('bookmark', videoId, bookmarkSet.has(videoId) ? 1 : 0);{% endif %}
-  applyFiltersAndSort(currentPage);
+  var bookmarkFilter = document.getElementById('bookmark-filter').value;
+  if (bookmarkFilter === 'bookmarked') {
+    applyFiltersAndSort(currentPage);
+  } else {
+    updateCardInPlace(videoId);
+  }
 };
 
 {% if sync_url %}
@@ -807,7 +829,7 @@ function doIngest() {
   })
   .then(function(res) {
     if (!res) return;
-    if (res.status === 200) {
+    if (res.status === 200 || res.status === 202) {
       updateSyncStatus(s.syncStatusIngested);
       document.getElementById('ingest-input').value = '';
     } else {
@@ -1030,9 +1052,13 @@ function stripHtml(html) {
 function buildCard(v) {
   var s = I18N[currentLang];
 
-  const thumb = v.thumbnail_url
+  {% if show_embed %}
+  const thumbContent = '<iframe class="video-embed" src="https://www.youtube.com/embed/' + escHtml(v.video_id) + '" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>';
+  {% else %}
+  const thumbContent = v.thumbnail_url
     ? '<img src="' + escHtml(v.thumbnail_url) + '" alt="' + escHtml(v.title) + '">'
     : '<div class="no-thumb">' + s.noThumb + '</div>';
+  {% endif %}
 
   let metaExtras = '';
   if (v.duration) metaExtras += ' &middot; ' + escHtml(v.duration);
@@ -1077,10 +1103,8 @@ function buildCard(v) {
   const readBtnClass = 'read-btn' + (isRead ? ' is-active' : '');
   const bookmarkBtnClass = 'bookmark-btn' + (isBookmarked ? ' is-active' : '');
 
-  const embed = '<iframe class="video-embed" src="https://www.youtube.com/embed/' + escHtml(v.video_id) + '" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>';
-
-  return '<article class="' + cardClass + '">'
-    + '<div class="video-thumb">' + thumb + embed + '</div>'
+  return '<article class="' + cardClass + '" data-video-id="' + escHtml(v.video_id) + '">'
+    + '<div class="video-thumb">' + thumbContent + '</div>'
     + '<div class="video-body">'
     + '<div class="video-actions">'
     + '<button class="' + readBtnClass + '" onclick="toggleRead(\'' + escHtml(v.video_id) + '\')">' + s.readBtn + '</button>'

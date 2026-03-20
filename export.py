@@ -60,6 +60,11 @@ def parse_args():
         help="URL of the sync server to embed in the export HTML. "
              "Enables cross-browser read/bookmark sync.",
     )
+    parser.add_argument(
+        "--thumbnail",
+        action="store_true",
+        help="Show static thumbnails instead of embedded YouTube preview players.",
+    )
     return parser.parse_args()
 
 
@@ -119,7 +124,12 @@ def main():
     ]
 
     print(f"Rendering {len(videos)} video(s) → {output_path}")
-    renderer.render_export_html(videos, output_path, lang=args.lang or "de", sync_url=args.sync_url)
+    renderer.render_export_html(
+        videos, output_path,
+        lang=args.lang or "de",
+        sync_url=args.sync_url,
+        show_embed=not args.thumbnail,
+    )
     print("Done.")
 
 

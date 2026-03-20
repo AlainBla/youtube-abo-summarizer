@@ -41,6 +41,13 @@ _proxy_url = os.getenv("WEBSHARE_PROXY_URL")
 _api = _make_api(_proxy_url)
 _fallback_api = _make_api(_country_proxy_url(_proxy_url, _FALLBACK_COUNTRY)) if _proxy_url else None
 
+if _proxy_url:
+    from urllib.parse import urlparse as _up
+    _p = _up(_proxy_url)
+    print(f"[transcripts] Proxy: {_p.scheme}://{_p.hostname}:{_p.port} (user={_p.username})", flush=True)
+else:
+    print("[transcripts] Kein Proxy konfiguriert — direkte Verbindung.", flush=True)
+
 
 def _fetch(api: YouTubeTranscriptApi, video_id: str, preferred_langs: list[str]) -> tuple[str | None, str | None]:
     """Single attempt to fetch a transcript using the given API instance."""
@@ -92,6 +99,10 @@ def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) 
     On country_blocked: retries once with a Germany-pinned Webshare proxy if available.
     """
     text, reason = _fetch(_api, video_id, preferred_langs)
+    if reason == "ip_blocked" and _fallback_api is not None:
+        # Direct connection blocked — retry via proxy.
+        print(f"    [RETRY] IP geblockt, versuche Proxy für video_id={video_id}.")
+        text, reason = _fetch(_fallback_api, video_id, preferred_langs)
     if reason == "country_blocked":
         if _fallback_api is not None:
             print(f"    [RETRY] Video geo-gesperrt, versuche {_FALLBACK_COUNTRY}-Proxy für video_id={video_id}.")

@@ -95,6 +95,7 @@ def render_export_html(
     output_path: str,
     lang: str = i18n_module.DEFAULT_LANG,
     sync_url: str | None = None,
+    show_embed: bool = True,
 ) -> None:
     """Render and write a self-contained export HTML file with embedded video data.
 
@@ -120,6 +121,7 @@ def render_export_html(
         total_videos=len(videos),
         default_lang=lang,
         sync_url=sync_url,
+        show_embed=show_embed,
     )
 
     with open(output_path, "w", encoding="utf-8") as f:

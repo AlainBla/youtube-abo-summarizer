@@ -72,7 +72,7 @@ Place your Google OAuth credentials in `client_secrets.json` (downloaded from th
 | `BASE_URL` | Yes | Public URL of the sync server, e.g. `https://sync.example.com` |
 | `ALLOWED_EMAILS` | No | Comma-separated allowlist for magic-link login (empty = any email) |
 | `INGEST_EMAILS` | No | Comma-separated emails allowed to trigger on-demand video ingest (empty = nobody) |
-| `COLLECT_SCRIPT` | No | Absolute path to `collect.py` on the server (required for ingest) |
+| `INGEST_QUEUE` | No | Absolute path to the ingest queue file (required for ingest), e.g. `/path/to/data/ingest_queue.txt` |
 | `PORT` | No | Port to listen on (default: `5000`) |
 
 ## Usage — two-phase pipeline (recommended)
@@ -169,18 +169,24 @@ State syncs automatically on page load and on each read/bookmark toggle.
 
 ### On-demand video ingest
 
-`POST /api/ingest` lets authorised users fetch and summarise a specific video on the server without waiting for the next scheduled collection run. This is useful when a video is not yet in the store and you want it available immediately.
+`POST /api/ingest` lets authorised users queue a video for fetching and summarisation without waiting for the next scheduled collection run. The endpoint appends the video ID to a queue file and returns 202 immediately; processing happens asynchronously via a cron job.
 
-Configure in `sync-server/.env`:
+Configure in `sync-server/.env` (or the systemd unit):
 
 | Variable | Description |
 |---|---|
 | `INGEST_EMAILS` | Comma-separated emails allowed to trigger ingest (empty = nobody) |
-| `COLLECT_SCRIPT` | Absolute path to `collect.py` on the server |
+| `INGEST_QUEUE` | Absolute path to the queue file, e.g. `/path/to/data/ingest_queue.txt` |
 
-`GET /api/whoami` returns `can_ingest: true` when the logged-in user is in `INGEST_EMAILS` and `COLLECT_SCRIPT` is set. The export page shows an "Ingest" button in the sync bar only when `can_ingest` is true.
+`GET /api/whoami` returns `can_ingest: true` when the logged-in user is in `INGEST_EMAILS` and `INGEST_QUEUE` is set. The export page shows an "Ingest" button in the sync bar only when `can_ingest` is true.
 
-The endpoint runs `collect.py --video <video_id>` as a subprocess (120 s timeout). The video must already be accessible via the configured YouTube credentials on the server.
+Schedule `ingest_worker.sh` to run every minute. Edit the `PYTHON` variable at the top of the script to point to the virtualenv interpreter that has the project dependencies:
+
+```
+* * * * * /path/to/youtube-abo-summarizer/ingest_worker.sh
+```
+
+The worker drains the queue by running `collect.py --video <id>` for each entry and logs output to `data/ingest_worker.log`.
 
 ### Production deployment
 
@@ -351,7 +357,8 @@ Each report script activates the virtual environment, renders the HTML, sends th
 | `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date/channel/tag/read/bookmark filters (each with a visible label), sort, pagination; channel name on each card is clickable and toggles the channel filter; in-page language selector with flag emoji (cookie `yt_lang`, browser fallback); full `de`/`en` string set in the embedded `I18N` object; sync bar shows "Ingest" button when `can_ingest` is true |
 | `state.py` | Reads/writes `last_run.json` (per-channel ISO timestamps) |
 | `send_mail.py` | SMTP email sender |
-| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth, per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` triggers `collect.py --video <id>` for users in `INGEST_EMAILS`; `/api/whoami` returns `can_ingest` flag |
+| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth (STARTTLS port 587 or SSL port 465), per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` appends video ID to `INGEST_QUEUE` and returns 202; `/api/whoami` returns `can_ingest` flag |
+| `ingest_worker.sh` | Cron script that drains `INGEST_QUEUE` by calling `collect.py --video <id>` for each entry; logs to `data/ingest_worker.log` |
 
 ## Limitations
 

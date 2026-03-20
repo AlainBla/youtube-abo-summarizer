@@ -26,7 +26,7 @@ ALLOWED_EMAILS = {
     for e in os.environ.get("ALLOWED_EMAILS", "").split(",")
     if e.strip()
 }
-COLLECT_SCRIPT = os.environ.get("COLLECT_SCRIPT", "")
+INGEST_QUEUE = os.environ.get("INGEST_QUEUE", "")  # path to queue file
 INGEST_EMAILS = {
     e.strip().lower()
     for e in os.environ.get("INGEST_EMAILS", "").split(",")
@@ -158,10 +158,15 @@ def _send_magic_link(email: str, link: str) -> None:
     msg["From"] = SMTP_FROM
     msg["To"] = email
     msg.set_content(f"Click to log in:\n\n{link}\n\nExpires in 15 minutes.")
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
-        smtp.starttls()
-        smtp.login(SMTP_USER, SMTP_PASS)
-        smtp.send_message(msg)
+    if SMTP_PORT == 465:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as smtp:
+            smtp.login(SMTP_USER, SMTP_PASS)
+            smtp.send_message(msg)
+    else:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+            smtp.starttls()
+            smtp.login(SMTP_USER, SMTP_PASS)
+            smtp.send_message(msg)
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────
@@ -177,6 +182,7 @@ def request_link():
     if not email or not redirect_uri:
         return jsonify({"error": "email and redirect_uri required"}), 400
     if not _valid_redirect_uri(redirect_uri):
+        print(f"[sync] invalid redirect_uri={redirect_uri!r} BASE_URL={BASE_URL!r}", file=sys.stderr)
         return jsonify({"error": "invalid redirect_uri"}), 400
 
     ip = request.remote_addr or "unknown"
@@ -242,7 +248,7 @@ def whoami():
         return jsonify({"error": "unauthorized"}), 401
     can_ingest = (
         user["email"] in INGEST_EMAILS
-        and bool(COLLECT_SCRIPT)
+        and bool(INGEST_QUEUE)
     )
     return jsonify({"email": user["email"], "can_ingest": can_ingest})
 
@@ -347,29 +353,18 @@ def ingest():
     video_id = str(data.get("video_id") or "")
     if not re.match(r"^[A-Za-z0-9_-]{11}$", video_id):
         return jsonify({"error": "invalid video_id"}), 400
-    if not COLLECT_SCRIPT or not os.path.isfile(COLLECT_SCRIPT):
+    if not INGEST_QUEUE:
         return jsonify({"error": "ingest not configured"}), 500
     try:
-        proc = subprocess.Popen(
-            [sys.executable, COLLECT_SCRIPT, "--video", video_id],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        try:
-            stdout, stderr = proc.communicate(timeout=120)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-            return jsonify({"error": "timeout"}), 500
+        with open(INGEST_QUEUE, "a") as f:
+            f.write(video_id + "\n")
     except OSError as exc:
+        print(f"[sync] ingest queue write failed: {exc}", file=sys.stderr)
         return jsonify({"error": str(exc)}), 500
-    if proc.returncode != 0:
-        msg = stderr.strip() or "collect.py exited with non-zero status"
-        return jsonify({"error": msg}), 500
-    return jsonify({"ok": True})
+    print(f"[sync] queued {video_id}", file=sys.stderr)
+    return jsonify({"queued": True}), 202
 
 
 if __name__ == "__main__":
     init_db()
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    app.run(host="127.0.0.1", port=PORT, debug=False)

@@ -90,6 +90,7 @@ python export.py --hours 48             # custom time window
 python export.py --all --output full_archive.html
 python export.py --show-model           # include LLM model badge on cards
 python export.py --lang en              # embedded default language (overridden by cookie/browser)
+python export.py --thumbnail            # show static thumbnails instead of embedded preview players
 ```
 
 `--hours` and `--all` are mutually exclusive. Default output filename: `export_YYYY-MM-DD_HH-MM.html`.
@@ -117,16 +118,24 @@ State syncs automatically on page load and on each read/bookmark toggle.
 
 ### On-demand video ingest
 
-`POST /api/ingest` lets authorised users trigger `collect.py --video <id>` on the server, so a specific video can be fetched and summarised without waiting for the next scheduled collect run.
+`POST /api/ingest` lets authorised users queue a video for fetching and summarisation without waiting for the next scheduled collect run. The endpoint appends the video ID to a queue file and returns 202 immediately; a separate cron job (`ingest_worker.sh`) processes the queue.
 
-Requires two env vars in `sync-server/.env`:
+Requires two env vars in `sync-server/.env` (or the systemd unit):
 
 | Variable | Description |
 |---|---|
 | `INGEST_EMAILS` | Comma-separated emails allowed to trigger ingest (empty = nobody) |
-| `COLLECT_SCRIPT` | Absolute path to `collect.py` on the server |
+| `INGEST_QUEUE` | Absolute path to the queue file, e.g. `/home/alain/repos/youtube-abo-summarizer/data/ingest_queue.txt` |
 
-`GET /api/whoami` returns `can_ingest: true` when the logged-in user is in `INGEST_EMAILS` and `COLLECT_SCRIPT` is configured. The export UI shows an "Ingest" button in the sync bar only when `can_ingest` is true.
+`GET /api/whoami` returns `can_ingest: true` when the logged-in user is in `INGEST_EMAILS` and `INGEST_QUEUE` is configured. The export UI shows an "Ingest" button in the sync bar only when `can_ingest` is true.
+
+Schedule `ingest_worker.sh` to run frequently (e.g. every minute). Edit the `PYTHON` variable at the top of the script to point to the virtualenv interpreter that has the project dependencies installed:
+
+```
+* * * * * /home/alain/repos/youtube-abo-summarizer/ingest_worker.sh
+```
+
+The worker processes each queued ID by running `collect.py --video <id>` and logs output to `data/ingest_worker.log`.
 
 ### Production deployment
 
@@ -176,7 +185,8 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date-filter/channel-filter/tag-filter/read-filter/bookmark-filter/sort/pagination; each filter and sort control has a visible label (`ctrl-label`); date filter accepts a "published after" date and filters client-side via ISO string comparison; tag chips on cards are clickable and toggle the tag filter; channel name in card meta is clickable and toggles the channel filter (`setChannelFilter()`); read/bookmark and language (`yt_lang`) state persisted in browser cookies; language selector in page header with flag emoji (🇩🇪/🇬🇧), priority: cookie → browser language → embedded default; sync bar shows "Ingest" button when `can_ingest` is true |
 | `state.py` | Reads/writes `last_run.json` (channel_id → last checked ISO timestamp) |
 | `send_mail.py` | Standalone script; sends an HTML file as an email via SMTP_SSL |
-| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth, per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` triggers `collect.py --video <id>` on the server for users in `INGEST_EMAILS`; `/api/whoami` returns `can_ingest` flag |
+| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth (supports STARTTLS port 587 and SSL port 465), per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` appends video ID to `INGEST_QUEUE` file and returns 202; `/api/whoami` returns `can_ingest` flag |
+| `ingest_worker.sh` | Cron script that drains `INGEST_QUEUE` by running `collect.py --video <id>` for each entry; logs to `data/ingest_worker.log`; schedule every minute |
 
 ## Credentials and Sensitive Files
 
