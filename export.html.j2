@@ -259,7 +259,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 1rem;
+      flex-wrap: wrap;
+      gap: 0.4rem;
     }
     .pagination button {
       background: #1a1a1a;
@@ -267,12 +268,26 @@
       border-radius: 6px;
       color: #ccc;
       font-size: 0.9rem;
-      padding: 0.4rem 1rem;
+      padding: 0.4rem 0.75rem;
       cursor: pointer;
+      min-width: 2.2rem;
     }
     .pagination button:hover:not(:disabled) { border-color: #555; color: #fff; }
     .pagination button:disabled { color: #444; cursor: default; }
-    .pagination .page-info { color: #777; font-size: 0.9rem; }
+    .pagination button.active { background: #2a2a2a; border-color: #666; color: #fff; font-weight: 600; }
+    .pagination .page-ellipsis { color: #555; padding: 0 0.2rem; font-size: 0.9rem; line-height: 2rem; }
+    .pagination .page-jump { display: flex; align-items: center; gap: 0.4rem; margin-left: 0.6rem; }
+    .pagination .page-jump input {
+      width: 3.5rem;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      color: #ccc;
+      font-size: 0.85rem;
+      padding: 0.4rem 0.4rem;
+      text-align: center;
+    }
+    .pagination .page-jump input:focus { outline: none; border-color: #555; color: #fff; }
 
     .video-card.focused {
       border-color: #ff4444;
@@ -468,9 +483,12 @@ const I18N = {
     transcriptUnavailable: 'Kein Transkript f\u00fcr dieses Video verf\u00fcgbar.',
     noVideos: 'Keine Videos gefunden.',
     results: function(n) { return n + ' Video' + (n !== 1 ? 's' : ''); },
-    prevPage: '\u2190 Zur\u00fcck',
-    pageInfo: function(cur, total) { return 'Seite ' + cur + ' von ' + total; },
-    nextPage: 'Weiter \u2192',
+    prevPage: '\u2190',
+    nextPage: '\u2192',
+    firstPage: '\u00ab',
+    lastPage: '\u00bb',
+    pageJumpPlaceholder: 'Seite',
+    pageJumpBtn: 'OK',
     syncEmailPlaceholder: 'E-Mail f\u00fcr Sync',
     syncSendLink: 'Link senden',
     syncLogout: 'Abmelden',
@@ -520,9 +538,12 @@ const I18N = {
     transcriptUnavailable: 'No transcript available for this video.',
     noVideos: 'No videos found.',
     results: function(n) { return n + ' video' + (n !== 1 ? 's' : ''); },
-    prevPage: '\u2190 Back',
-    pageInfo: function(cur, total) { return 'Page ' + cur + ' of ' + total; },
-    nextPage: 'Next \u2192',
+    prevPage: '\u2190',
+    nextPage: '\u2192',
+    firstPage: '\u00ab',
+    lastPage: '\u00bb',
+    pageJumpPlaceholder: 'Page',
+    pageJumpBtn: 'OK',
     syncEmailPlaceholder: 'Email for sync',
     syncSendLink: 'Send link',
     syncLogout: 'Log out',
@@ -1186,12 +1207,47 @@ function renderPage(page) {
   var pag = document.getElementById('pagination');
   if (pages <= 1) { pag.innerHTML = ''; return; }
 
+  var html = '';
   var prevDisabled = currentPage <= 1 ? ' disabled' : '';
   var nextDisabled = currentPage >= pages ? ' disabled' : '';
-  pag.innerHTML =
-    '<button onclick="renderPage(' + (currentPage - 1) + ')"' + prevDisabled + '>' + s.prevPage + '</button>'
-    + '<span class="page-info">' + s.pageInfo(currentPage, pages) + '</span>'
-    + '<button onclick="renderPage(' + (currentPage + 1) + ')"' + nextDisabled + '>' + s.nextPage + '</button>';
+
+  // First / Prev
+  html += '<button onclick="renderPage(1)"' + (currentPage <= 1 ? ' disabled' : '') + '>' + s.firstPage + '</button>';
+  html += '<button onclick="renderPage(' + (currentPage - 1) + ')"' + prevDisabled + '>' + s.prevPage + '</button>';
+
+  // Numbered page buttons with ellipsis
+  // Always show: 1, last, and the window [cur-2 … cur+2]
+  var pageNums = [];
+  for (var p = 1; p <= pages; p++) {
+    if (p === 1 || p === pages || (p >= currentPage - 2 && p <= currentPage + 2)) {
+      pageNums.push(p);
+    }
+  }
+  var lastEmitted = 0;
+  for (var i = 0; i < pageNums.length; i++) {
+    var pn = pageNums[i];
+    if (pn - lastEmitted > 1) {
+      html += '<span class="page-ellipsis">\u2026</span>';
+    }
+    var activeClass = pn === currentPage ? ' class="active"' : '';
+    html += '<button' + activeClass + ' onclick="renderPage(' + pn + ')">' + pn + '</button>';
+    lastEmitted = pn;
+  }
+
+  // Next / Last
+  html += '<button onclick="renderPage(' + (currentPage + 1) + ')"' + nextDisabled + '>' + s.nextPage + '</button>';
+  html += '<button onclick="renderPage(' + pages + ')"' + (currentPage >= pages ? ' disabled' : '') + '>' + s.lastPage + '</button>';
+
+  // Jump-to-page input (only when there are enough pages to be useful)
+  if (pages > 6) {
+    html += '<span class="page-jump">'
+      + '<input type="number" id="page-jump-input" min="1" max="' + pages + '" placeholder="' + escHtml(s.pageJumpPlaceholder) + '"'
+      + ' onkeydown="if(event.key===\'Enter\'){var v=parseInt(this.value);if(v>=1&&v<=' + pages + ')renderPage(v);}">'
+      + '<button onclick="var v=parseInt(document.getElementById(\'page-jump-input\').value);if(v>=1&&v<=' + pages + ')renderPage(v);">' + escHtml(s.pageJumpBtn) + '</button>'
+      + '</span>';
+  }
+
+  pag.innerHTML = html;
 }
 
 function toggleSummary(btn) {
