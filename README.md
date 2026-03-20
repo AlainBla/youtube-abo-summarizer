@@ -142,6 +142,12 @@ python export.py --show-model
 
 # Embed English as the fallback language (overridden by cookie/browser)
 python export.py --lang en
+
+# Static thumbnails instead of embedded YouTube players
+python export.py --thumbnail
+
+# Embed sync server URL (enables cross-browser read/bookmark sync)
+python export.py --all --sync-url https://sync.example.com --output archive.html
 ```
 
 `--hours` and `--all` are mutually exclusive. The default output filename is `export_YYYY-MM-DD_HH-MM.html`.
@@ -346,10 +352,11 @@ Each report script activates the virtual environment, renders the HTML, sends th
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
 | `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel/tag/read/bookmark filters, sort, and pagination |
 | `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries (also re-generates tags with `--force-summarize`) |
+| `recover_from_export.py` | Restores store entries from a previously exported HTML file; inserts missing DB rows and summary files; leaves existing entries untouched; supports `--dry-run` |
 | `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
-| `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling; `requests.exceptions.ProxyError` / `ConnectionError` caught and mapped to `unavailable` |
+| `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling; on `ip_blocked` retries via proxy; on `country_blocked` retries with country-pinned proxy; `requests.exceptions.ProxyError` / `ConnectionError` caught and mapped to `unavailable`; logs proxy config on startup |
 | `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns `(summary_html, tags)` tuple — structured HTML with chronological sections, proportional depth, and timestamp links, plus 3–7 English topic tags extracted from a `<!-- tags: ... -->` comment appended by the model; `max_tokens=16384` |
 | `renderer.py` | Jinja2 renderer; writes the final HTML report; accepts `lang=` kwarg; sanitizes summaries at render time to strip any trailing incomplete HTML tag (guards against LLM output truncated mid-tag) |
 | `i18n.py` | UI string dicts for `de` (default) and `en`; `get_strings()` and `resolve_lang()` helpers used by the renderer |

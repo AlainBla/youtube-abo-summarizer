@@ -9,23 +9,25 @@ Two-phase pipeline: `collect.py` fetches new YouTube videos, transcripts, and LL
 ## Directory layout
 
 ```
-collect.py          # collect-phase CLI
-report.py           # report-phase CLI
-export.py           # export-archive CLI
-repair.py           # gap-repair CLI
-summarize.py        # legacy all-in-one CLI (no store)
-store.py            # SQLite + file store (data/)
-transcripts.py      # youtube-transcript-api wrapper
-openrouter.py       # LLM client (OpenRouter / Ollama)
-renderer.py         # Jinja2 HTML renderer
-i18n.py             # de/en UI string dicts
-state.py            # last_run.json helpers
-send_mail.py        # standalone SMTP sender
-youtube_client.py   # YouTube Data API v3 wrapper
-template.html.j2    # report template
-export.html.j2      # export archive template
+collect.py              # collect-phase CLI
+report.py               # report-phase CLI
+export.py               # export-archive CLI
+repair.py               # gap-repair CLI
+recover_from_export.py  # restore store entries from an exported HTML file
+summarize.py            # legacy all-in-one CLI (no store)
+store.py                # SQLite + file store (data/)
+transcripts.py          # youtube-transcript-api wrapper
+openrouter.py           # LLM client (OpenRouter / Ollama)
+renderer.py             # Jinja2 HTML renderer
+i18n.py                 # de/en UI string dicts
+state.py                # last_run.json helpers
+send_mail.py            # standalone SMTP sender
+youtube_client.py       # YouTube Data API v3 wrapper
+template.html.j2        # report template
+export.html.j2          # export archive template
+ingest_worker.sh        # cron script: drains INGEST_QUEUE via collect.py
 sync-server/
-  sync_server.py    # Flask sync service
+  sync_server.py        # Flask sync service
   .env.example
 ```
 
@@ -49,12 +51,14 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 - Status values: `None` (success), `"ip_blocked"`, `"rate_limited"`, `"country_blocked"`, `"unavailable"`
 - `country_blocked` only when the `VideoUnplayable` reason mentions "country"/"region"; other `VideoUnplayable` causes → `unavailable`
 - `requests.exceptions.ProxyError` / `ConnectionError` → `unavailable`
-- Proxy retry: on `country_blocked`, retries once with a country-pinned Webshare proxy if `WEBSHARE_PROXY_URL` is set
+- Proxy retry: on `ip_blocked`, retries once via the configured proxy (if set); on `country_blocked`, retries once with a country-pinned Webshare proxy if `WEBSHARE_PROXY_URL` is set
 
 ### Renderer / templates
-- `renderer.render_html()` and `render_export_html()` accept `lang="de"|"en"`
+- `renderer.render_html()` accepts `lang="de"|"en"`
+- `renderer.render_export_html()` accepts `lang=`, `sync_url=`, and `show_embed=` (default `True`; pass `False` for `--thumbnail` mode which renders static `<img>` instead of YouTube `<iframe>`)
 - `_sanitize_summary()` strips trailing incomplete HTML tags (guards against LLM truncation)
 - `export.html.j2`: tag chips and channel names on cards are both clickable — they call `setTagFilter()` / `setChannelFilter()` to toggle the corresponding filter
+- `export.html.j2`: toggling read/bookmark only re-renders the affected card (via `updateCardInPlace()`) unless the current read/bookmark filter would exclude it, in which case `applyFiltersAndSort()` is called instead
 
 ### Sync server (`sync-server/sync_server.py`)
 | Endpoint | Method | Description |
@@ -64,13 +68,13 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 | `/api/whoami` | GET | Returns `{email, can_ingest}` |
 | `/api/state` | GET / POST | Read or merge video read/bookmark state (last-write-wins) |
 | `/api/session` | DELETE | Log out (delete session token) |
-| `/api/ingest` | POST | Trigger `collect.py --video <id>` on the server |
+| `/api/ingest` | POST | Append video ID to `INGEST_QUEUE` file; returns 202 |
 
 `POST /api/ingest` requires:
 - Bearer token belonging to a user whose email is in `INGEST_EMAILS`
-- `COLLECT_SCRIPT` env var pointing to an executable `collect.py`
+- `INGEST_QUEUE` env var set to an absolute path for the queue file
 - Body: `{"video_id": "<11-char YouTube ID>"}`
-- Runs as subprocess with 120 s timeout; returns `{"ok": true}` or `{"error": "..."}`.
+- Appends the ID to the queue file and returns `{"queued": true}` with HTTP 202. Processing is async via `ingest_worker.sh`.
 
 `can_ingest` in `/api/whoami` is `true` only when both conditions above are configured.
 
@@ -99,7 +103,7 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 | `BASE_URL` | Required; public server URL |
 | `ALLOWED_EMAILS` | Login allowlist (empty = any email) |
 | `INGEST_EMAILS` | Who may call `POST /api/ingest` (empty = nobody) |
-| `COLLECT_SCRIPT` | Absolute path to `collect.py` (required for ingest) |
+| `INGEST_QUEUE` | Absolute path to the queue file (required for ingest) |
 | `PORT` | Default: `5000` |
 | `SMTP_*` | Same as above |
 
