@@ -28,10 +28,16 @@ def send(subject: str, to: str, html_file: str) -> None:
     msg.set_content("This email requires an HTML-capable mail client.")
     msg.add_alternative(html, subtype="html")
 
-    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as smtp:
-        smtp.login(SMTP_USER, SMTP_PASS)
-        smtp.send_message(msg)
-        print(f"Mail sent to {to} via {SMTP_HOST}:{SMTP_PORT}")
+    if SMTP_PORT == 465:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as smtp:
+            smtp.login(SMTP_USER, SMTP_PASS)
+            smtp.send_message(msg)
+    else:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+            smtp.starttls()
+            smtp.login(SMTP_USER, SMTP_PASS)
+            smtp.send_message(msg)
+    print(f"Mail sent to {to} via {SMTP_HOST}:{SMTP_PORT}")
 
 
 if __name__ == "__main__":
