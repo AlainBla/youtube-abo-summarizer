@@ -33,9 +33,10 @@ CREATE TABLE IF NOT EXISTS videos (
 """
 
 _MIGRATIONS = [
-    ("duration",      "ALTER TABLE videos ADD COLUMN duration TEXT"),
-    ("summary_model", "ALTER TABLE videos ADD COLUMN summary_model TEXT"),
-    ("tags",          "ALTER TABLE videos ADD COLUMN tags TEXT"),
+    ("duration",         "ALTER TABLE videos ADD COLUMN duration TEXT"),
+    ("summary_model",    "ALTER TABLE videos ADD COLUMN summary_model TEXT"),
+    ("tags",             "ALTER TABLE videos ADD COLUMN tags TEXT"),
+    ("transcript_lang",  "ALTER TABLE videos ADD COLUMN transcript_lang TEXT"),
 ]
 
 
@@ -54,6 +55,37 @@ def _conn() -> sqlite3.Connection:
     return c
 
 
+def _resolve_transcript_path(video_id: str, transcript_lang: str | None) -> Path | None:
+    """Return the path to the original-language transcript file, or None if not found.
+
+    Checks <id>.<lang>.txt first, then falls back to legacy <id>.txt.
+    """
+    if transcript_lang:
+        p = TRANSCRIPTS_DIR / f"{video_id}.{transcript_lang}.txt"
+        if p.exists():
+            return p
+    legacy = TRANSCRIPTS_DIR / f"{video_id}.txt"
+    return legacy if legacy.exists() else None
+
+
+def get_llm_transcript_path(video_id: str) -> Path | None:
+    """Return the best transcript path for LLM input.
+
+    Priority: <id>.de.txt → <id>.en.txt → <id>.<transcript_lang>.txt → <id>.txt.
+    Returns None if no transcript file exists.
+    """
+    row = _conn().execute(
+        "SELECT transcript_lang FROM videos WHERE video_id = ?", (video_id,)
+    ).fetchone()
+    transcript_lang = row["transcript_lang"] if row else None
+
+    for lang in ["de", "en"]:
+        p = TRANSCRIPTS_DIR / f"{video_id}.{lang}.txt"
+        if p.exists():
+            return p
+    return _resolve_transcript_path(video_id, transcript_lang)
+
+
 def get_video(video_id: str) -> dict | None:
     """Return stored video metadata with has_transcript and has_summary flags, or None if not found."""
     row = _conn().execute(
@@ -62,7 +94,12 @@ def get_video(video_id: str) -> dict | None:
     if row is None:
         return None
     d = dict(row)
-    d["has_transcript"] = (TRANSCRIPTS_DIR / f"{video_id}.txt").exists()
+    t_path = _resolve_transcript_path(video_id, d.get("transcript_lang"))
+    d["has_transcript"] = t_path is not None
+    d["has_manual_transcript"] = any(
+        (TRANSCRIPTS_DIR / f"{video_id}.{lang}.txt").exists()
+        for lang in ["de", "en"]
+    )
     d["has_summary"] = (SUMMARIES_DIR / f"{video_id}.html").exists()
     d["tags"] = json.loads(d["tags"]) if d.get("tags") else []
     return d
@@ -84,22 +121,24 @@ def add_video(entry: dict) -> bool:
             c.execute(
                 """INSERT INTO videos
                    (video_id, channel_id, channel_title, title, published_at,
-                    thumbnail_url, duration, summary_model, transcript_error, tags, collected_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    thumbnail_url, duration, summary_model, transcript_error, tags,
+                    transcript_lang, collected_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry["video_id"], entry["channel_id"], entry["channel_title"],
                     entry["title"], entry["published_at"], entry["thumbnail_url"],
                     entry.get("duration"), entry.get("summary_model"),
-                    entry.get("transcript_error"), tags_json, entry["collected_at"],
+                    entry.get("transcript_error"), tags_json,
+                    entry.get("transcript_lang"), entry["collected_at"],
                 ),
             )
         except sqlite3.IntegrityError:
             return False  # duplicate video_id
 
     if entry.get("transcript"):
-        (TRANSCRIPTS_DIR / f"{entry['video_id']}.txt").write_text(
-            entry["transcript"], encoding="utf-8"
-        )
+        lang = entry.get("transcript_lang")
+        fname = f"{entry['video_id']}.{lang}.txt" if lang else f"{entry['video_id']}.txt"
+        (TRANSCRIPTS_DIR / fname).write_text(entry["transcript"], encoding="utf-8")
     if entry.get("summary"):
         (SUMMARIES_DIR / f"{entry['video_id']}.html").write_text(
             entry["summary"], encoding="utf-8"
@@ -114,16 +153,22 @@ def update_video_with_summary(
     transcript_error: str | None,
     summary_model: str | None = None,
     tags: list[str] | None = None,
+    transcript_lang: str | None = None,
 ) -> None:
-    """Update transcript_error, summary_model, and tags in DB; write transcript/summary files if provided."""
+    """Update transcript_error, summary_model, tags, and transcript_lang in DB; write transcript/summary files if provided."""
     tags_json = json.dumps(tags) if tags else None
     with _conn() as c:
         c.execute(
-            "UPDATE videos SET transcript_error = ?, summary_model = ?, tags = ? WHERE video_id = ?",
-            (transcript_error, summary_model, tags_json, video_id),
+            """UPDATE videos
+               SET transcript_error = ?, summary_model = ?, tags = ?,
+                   transcript_lang = COALESCE(?, transcript_lang)
+               WHERE video_id = ?""",
+            (transcript_error, summary_model, tags_json, transcript_lang, video_id),
         )
     if transcript is not None:
-        (TRANSCRIPTS_DIR / f"{video_id}.txt").write_text(transcript, encoding="utf-8")
+        lang = transcript_lang
+        fname = f"{video_id}.{lang}.txt" if lang else f"{video_id}.txt"
+        (TRANSCRIPTS_DIR / fname).write_text(transcript, encoding="utf-8")
     if summary is not None:
         (SUMMARIES_DIR / f"{video_id}.html").write_text(summary, encoding="utf-8")
 
@@ -141,9 +186,9 @@ def get_videos_since(since: datetime) -> list[dict]:
     result = []
     for row in rows:
         d = dict(row)
-        t_path = TRANSCRIPTS_DIR / f"{d['video_id']}.txt"
+        t_path = _resolve_transcript_path(d["video_id"], d.get("transcript_lang"))
         s_path = SUMMARIES_DIR / f"{d['video_id']}.html"
-        d["transcript"] = t_path.read_text(encoding="utf-8") if t_path.exists() else None
+        d["transcript"] = t_path.read_text(encoding="utf-8") if t_path else None
         d["summary"] = s_path.read_text(encoding="utf-8") if s_path.exists() else None
         d["tags"] = json.loads(d["tags"]) if d.get("tags") else []
         result.append(d)
@@ -162,9 +207,9 @@ def get_all_videos() -> list[dict]:
     result = []
     for row in rows:
         d = dict(row)
-        t_path = TRANSCRIPTS_DIR / f"{d['video_id']}.txt"
+        t_path = _resolve_transcript_path(d["video_id"], d.get("transcript_lang"))
         s_path = SUMMARIES_DIR / f"{d['video_id']}.html"
-        d["transcript"] = t_path.read_text(encoding="utf-8") if t_path.exists() else None
+        d["transcript"] = t_path.read_text(encoding="utf-8") if t_path else None
         d["summary"] = s_path.read_text(encoding="utf-8") if s_path.exists() else None
         d["tags"] = json.loads(d["tags"]) if d.get("tags") else []
         result.append(d)
@@ -183,8 +228,9 @@ def prune_older_than(days: int = 7) -> int:
         ).fetchall()
         video_ids = [r["video_id"] for r in rows]
         for vid_id in video_ids:
-            for path in (TRANSCRIPTS_DIR / f"{vid_id}.txt", SUMMARIES_DIR / f"{vid_id}.html"):
-                if path.exists():
-                    path.unlink()
+            for p in TRANSCRIPTS_DIR.glob(f"{vid_id}.*.txt"):
+                p.unlink(missing_ok=True)
+            (TRANSCRIPTS_DIR / f"{vid_id}.txt").unlink(missing_ok=True)
+            (SUMMARIES_DIR / f"{vid_id}.html").unlink(missing_ok=True)
         c.execute("DELETE FROM videos WHERE published_at < ?", (cutoff,))
     return len(video_ids)
