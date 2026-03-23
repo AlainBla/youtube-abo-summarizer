@@ -108,7 +108,7 @@ def _retry_missing_transcripts(entries: list[dict], model: str) -> None:
         vid_id = entry["video_id"]
         vid_title = entry["title"]
         print(f"  Retrying transcript for: {vid_title}")
-        transcript, transcript_error = tr.get_transcript(vid_id)
+        transcript, _lang, transcript_error = tr.get_transcript(vid_id)
         time.sleep(2)
 
         summary = None
