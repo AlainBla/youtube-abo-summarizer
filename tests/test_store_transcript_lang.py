@@ -140,3 +140,26 @@ class TestGetAllVideos:
         (store_env / "transcripts" / "vid1.txt").write_text("legacy text", encoding="utf-8")
         videos = store.get_all_videos()
         assert videos[0]["transcript"] == "legacy text"
+
+
+class TestGetVideosSince:
+    def test_reads_lang_suffixed_transcript(self, store_env):
+        import store
+        from datetime import datetime, timezone
+        store.add_video(_base_entry("vid1", "ja"))
+        since = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        videos = store.get_videos_since(since)
+        assert len(videos) == 1
+        assert videos[0]["transcript"] == "Hello world"
+
+    def test_reads_legacy_txt_transcript(self, store_env):
+        import store
+        from datetime import datetime, timezone
+        entry = _base_entry("vid1", "ja")
+        entry["transcript_lang"] = None
+        entry["transcript"] = None
+        store.add_video(entry)
+        (store_env / "transcripts" / "vid1.txt").write_text("legacy text", encoding="utf-8")
+        since = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        videos = store.get_videos_since(since)
+        assert videos[0]["transcript"] == "legacy text"
