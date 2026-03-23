@@ -3,7 +3,10 @@
 Layout:
   data/
     videos.db               — SQLite: video metadata and status
-    transcripts/<id>.txt    — raw transcript text (one file per video)
+    transcripts/<id>.<lang>.txt  — raw transcript (original language)
+    transcripts/<id>.de.txt      — manual German transcript (when available)
+    transcripts/<id>.en.txt      — manual English transcript (when available)
+    transcripts/<id>.txt         — legacy format (still recognised)
     summaries/<id>.html     — HTML-fragment summary (one file per video)
 """
 
@@ -155,7 +158,12 @@ def update_video_with_summary(
     tags: list[str] | None = None,
     transcript_lang: str | None = None,
 ) -> None:
-    """Update transcript_error, summary_model, tags, and transcript_lang in DB; write transcript/summary files if provided."""
+    """Update transcript_error, summary_model, tags, and transcript_lang in DB; write transcript/summary files if provided.
+
+    When transcript_lang is None, the transcript is written to the legacy <id>.txt path.
+    Callers that have a lang_code should always pass transcript_lang= to ensure the
+    lang-suffixed file is written and _resolve_transcript_path returns fresh content.
+    """
     tags_json = json.dumps(tags) if tags else None
     with _conn() as c:
         c.execute(

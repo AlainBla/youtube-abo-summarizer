@@ -142,6 +142,28 @@ class TestGetAllVideos:
         assert videos[0]["transcript"] == "legacy text"
 
 
+class TestUpdateVideoWithSummary:
+    def test_writes_lang_suffixed_transcript(self, store_env):
+        import store
+        store.add_video(_base_entry("vid1", "ja"))
+        store.update_video_with_summary(
+            "vid1", transcript="updated content", summary=None,
+            transcript_error=None, transcript_lang="ja"
+        )
+        assert (store_env / "transcripts" / "vid1.ja.txt").read_text() == "updated content"
+
+    def test_coalesce_preserves_existing_lang_when_none_passed(self, store_env):
+        import store
+        store.add_video(_base_entry("vid1", "ja"))
+        # Pass transcript_lang=None — should NOT overwrite "ja" in DB
+        store.update_video_with_summary(
+            "vid1", transcript=None, summary=None,
+            transcript_error=None, transcript_lang=None
+        )
+        v = store.get_video("vid1")
+        assert v["transcript_lang"] == "ja"
+
+
 class TestGetVideosSince:
     def test_reads_lang_suffixed_transcript(self, store_env):
         import store
