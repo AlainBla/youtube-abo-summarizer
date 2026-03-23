@@ -189,16 +189,19 @@ def _fetch_original(api: YouTubeTranscriptApi, video_id: str) -> tuple[str | Non
     try:
         transcript_list = api.list(video_id)
 
+        # Convert to list once so we can iterate multiple times safely.
+        all_transcripts = list(transcript_list)
+
         # Find original language via the first auto-generated transcript
         orig_lang = None
-        for t in transcript_list:
+        for t in all_transcripts:
             if t.is_generated:
                 orig_lang = t.language_code
                 break
 
         if orig_lang is None:
             # No auto-generated transcript found — take first available
-            t = next(iter(transcript_list))
+            t = all_transcripts[0]
             return _to_text(t.fetch()), t.language_code, None
 
         # Prefer manually created transcript in original language (higher quality)
@@ -518,7 +521,10 @@ t_path = _resolve_transcript_path(d["video_id"], d.get("transcript_lang"))
 d["transcript"] = t_path.read_text(encoding="utf-8") if t_path else None
 ```
 
-**Update `add_video()`** — add `transcript_lang` to INSERT and change file write:
+**Update `add_video()`** — add `transcript_lang` to INSERT and change file write.
+
+> **Important:** The existing `add_video()` wraps the INSERT in `try/except sqlite3.IntegrityError: return False`. Preserve that guard — the snippet below shows only the changed parts.
+
 ```python
 # In INSERT: add transcript_lang column and value
 c.execute(
@@ -535,6 +541,7 @@ c.execute(
         entry.get("transcript_lang"), entry["collected_at"],
     ),
 )
+# ... keep existing except sqlite3.IntegrityError: return False block ...
 
 # File write: use lang-suffixed name if lang known, else legacy
 if entry.get("transcript"):
@@ -597,7 +604,38 @@ python -m pytest tests/ -v
 
 Expected: all tests PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Add test for `get_all_videos()` reading lang-suffixed transcript**
+
+Add to `tests/test_store_transcript_lang.py`:
+
+```python
+class TestGetAllVideos:
+    def test_reads_lang_suffixed_transcript(self, store_env):
+        import store
+        store.add_video(_base_entry("vid1", "ja"))
+        videos = store.get_all_videos()
+        assert len(videos) == 1
+        assert videos[0]["transcript"] == "Hello world"
+
+    def test_reads_legacy_txt_transcript(self, store_env):
+        import store
+        entry = _base_entry("vid1", "ja")
+        entry["transcript_lang"] = None
+        entry["transcript"] = None
+        store.add_video(entry)
+        (store_env / "transcripts" / "vid1.txt").write_text("legacy text", encoding="utf-8")
+        videos = store.get_all_videos()
+        assert videos[0]["transcript"] == "legacy text"
+```
+
+Run:
+```bash
+python -m pytest tests/test_store_transcript_lang.py -v
+```
+
+Expected: all tests PASS.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add store.py tests/test_store_transcript_lang.py
@@ -622,11 +660,15 @@ Both need the same three changes:
 - **New-transcript branch**: unpack 3-tuple from `tr.get_transcript()`; write to `<id>.<lang>.txt`; call `tr.get_manual_transcript()` if `lang not in ["de", "en"]`.
 - **Store calls**: pass `transcript_lang=lang` to `update_video_with_summary()` and `transcript_lang` key to `add_video()`.
 
-Note: `collect.py` does not currently write transcript files directly (it passes the text to `store.add_video()` or `store.update_video_with_summary()` which do the writing). After Task 2, those store functions write the lang-suffixed file. So `collect.py` only needs to:
-1. Unpack the 3-tuple.
-2. Call `get_manual_transcript()` and write the manual file itself (store doesn't know about it).
+**Who writes what:** `collect.py` does NOT write the original transcript file directly — it passes `transcript=` and `transcript_lang=` to `store.add_video()` / `store.update_video_with_summary()`, and those functions write `<id>.<lang>.txt`. The spec's `collect.py` pseudocode shows an explicit file write; that is illustrative and is superseded by the store-side write implemented in Task 2. Do NOT add an explicit `path.write_text()` call for the original transcript in `collect.py`.
+
+`collect.py` IS responsible for writing the **manual** transcript file directly (since store has no concept of a second transcript). So `collect.py` only needs to:
+1. Unpack the 3-tuple from `get_transcript()`.
+2. Call `get_manual_transcript()` and write the manual file itself.
 3. Use `store.get_llm_transcript_path()` for the LLM input.
-4. Pass `transcript_lang=lang` through.
+4. Pass `transcript_lang=lang` through to store calls.
+
+**Variable naming convention:** `transcript` holds the raw original-language text (used for the `if transcript` guard and passed to `store`). `llm_input` holds the text actually sent to the LLM (from `get_llm_transcript_path()`, which may be the manual file). These are always read from `get_llm_transcript_path()` immediately before the summarize call — do not pass `transcript` directly to `summarize_video()`.
 
 - [ ] **Step 1: Update `_process_single_video()`**
 
@@ -718,7 +760,9 @@ git commit -m "feat(collect): use original-language transcript, fetch manual DE/
 
 ### `repair.py` changes
 
-The transcript-fetch block (roughly lines 121–133) unpacks a 2-tuple. Update to 3-tuple, write lang-suffixed file, pass `transcript_lang` to store:
+The transcript-fetch block (roughly lines 121–133) unpacks a 2-tuple. Update to 3-tuple and pass `transcript_lang` to store.
+
+> **Important:** `store.update_video_with_summary()` (updated in Task 2) already writes the transcript file internally when `transcript=` is provided and `transcript_lang=` is set. Do NOT add a separate explicit `path.write_text()` call in `repair.py` — it would write the file twice (harmless but redundant, and inconsistent with collect.py). The store call is the single source of truth for writing transcript files.
 
 ```python
 transcript, lang, t_error = tr.get_transcript(vid_id)
