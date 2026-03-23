@@ -49,68 +49,102 @@ else:
     print("[transcripts] Kein Proxy konfiguriert — direkte Verbindung.", flush=True)
 
 
-def _fetch(api: YouTubeTranscriptApi, video_id: str, preferred_langs: list[str]) -> tuple[str | None, str | None]:
-    """Single attempt to fetch a transcript using the given API instance."""
+def _fetch_original(api: YouTubeTranscriptApi, video_id: str) -> tuple[str | None, str | None, str | None]:
+    """Fetch transcript in the video's original language. Returns (text, lang_code, error)."""
     try:
         transcript_list = api.list(video_id)
+        # Convert to list once so we can iterate multiple times safely
+        all_transcripts = list(transcript_list)
 
-        for lang in preferred_langs:
-            for generated in (False, True):
-                try:
-                    if generated:
-                        t = transcript_list.find_generated_transcript([lang])
-                    else:
-                        t = transcript_list.find_manually_created_transcript([lang])
-                    return _to_text(t.fetch()), None
-                except NoTranscriptFound:
-                    continue
+        # Find original language via the first auto-generated transcript
+        orig_lang = None
+        for t in all_transcripts:
+            if t.is_generated:
+                orig_lang = t.language_code
+                break
 
-        t = next(iter(transcript_list))
-        return _to_text(t.fetch()), None
+        if orig_lang is None:
+            # No auto-generated transcript — take first available
+            t = all_transcripts[0]
+            return _to_text(t.fetch()), t.language_code, None
+
+        # Prefer manually created transcript in original language (higher quality)
+        try:
+            t = transcript_list.find_manually_created_transcript([orig_lang])
+            return _to_text(t.fetch()), t.language_code, None
+        except NoTranscriptFound:
+            pass
+
+        # Fall back to auto-generated
+        t = transcript_list.find_generated_transcript([orig_lang])
+        return _to_text(t.fetch()), t.language_code, None
 
     except IpBlocked:
         print(f"    [BLOCKED] YouTube blockiert diese IP für Transkript-Anfragen (video_id={video_id}).")
-        return None, "ip_blocked"
+        return None, None, "ip_blocked"
     except RequestBlocked:
         print(f"    [BLOCKED] Anfrage von YouTube abgelehnt (Rate Limit?) für video_id={video_id}.")
-        return None, "rate_limited"
+        return None, None, "rate_limited"
     except (NoTranscriptFound, TranscriptsDisabled):
-        return None, "unavailable"
+        return None, None, "unavailable"
     except VideoUnplayable as e:
         reason_lower = (e.reason or "").lower()
         if any(kw in reason_lower for kw in ("country", "region")):
-            return None, "country_blocked"
+            return None, None, "country_blocked"
         print(f"    [INFO] Video nicht abspielbar für video_id={video_id}: {e}")
-        return None, "unavailable"
+        return None, None, "unavailable"
     except CouldNotRetrieveTranscript as e:
         print(f"    [ERROR] {type(e).__name__} für video_id={video_id}: {e}")
-        return None, "unavailable"
+        return None, None, "unavailable"
     except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError) as e:
         print(f"    [ERROR] Proxy/Netzwerkfehler für video_id={video_id}: {e}")
-        return None, "unavailable"
+        return None, None, "unavailable"
 
 
-def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) -> tuple[str | None, str | None]:
-    """Return (transcript_text, error_reason).
+def _fetch_manual(api: YouTubeTranscriptApi, video_id: str, preferred_langs: list[str]) -> tuple[str | None, str | None]:
+    """Fetch the best available manually created transcript in preferred_langs.
+    Returns (text, lang_code) or (None, None) if none found.
+    Errors treated as not found.
+    """
+    try:
+        transcript_list = api.list(video_id)
+        for lang in preferred_langs:
+            try:
+                t = transcript_list.find_manually_created_transcript([lang])
+                return _to_text(t.fetch()), t.language_code
+            except NoTranscriptFound:
+                continue
+    except Exception:
+        pass
+    return None, None
 
+
+def get_transcript(video_id: str) -> tuple[str | None, str | None, str | None]:
+    """Return (transcript_text, lang_code, error_reason).
+
+    Always returns the transcript in the video's original language.
     error_reason is None on success, otherwise one of:
       "ip_blocked", "rate_limited", "unavailable", "country_blocked"
-
-    On country_blocked: retries once with a Germany-pinned Webshare proxy if available.
     """
-    text, reason = _fetch(_api, video_id, preferred_langs)
+    text, lang, reason = _fetch_original(_api, video_id)
     if reason == "ip_blocked" and _fallback_api is not None:
-        # Direct connection blocked — retry via proxy.
         print(f"    [RETRY] IP geblockt, versuche Proxy für video_id={video_id}.")
-        text, reason = _fetch(_fallback_api, video_id, preferred_langs)
+        text, lang, reason = _fetch_original(_fallback_api, video_id)
     if reason == "country_blocked":
         if _fallback_api is not None:
             print(f"    [RETRY] Video geo-gesperrt, versuche {_FALLBACK_COUNTRY}-Proxy für video_id={video_id}.")
-            text, reason = _fetch(_fallback_api, video_id, preferred_langs)
+            text, lang, reason = _fetch_original(_fallback_api, video_id)
             if reason != "country_blocked":
-                return text, reason
+                return text, lang, reason
         print(f"    [BLOCKED] Video in dieser Region gesperrt (country_blocked) für video_id={video_id}.")
-    return text, reason
+    return text, lang, reason
+
+
+def get_manual_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) -> tuple[str | None, str | None]:
+    """Return (transcript_text, lang_code) for the best manually created DE/EN transcript.
+    Returns (None, None) if no manual transcript is available in preferred_langs.
+    """
+    return _fetch_manual(_api, video_id, preferred_langs)
 
 
 def _to_text(entries) -> str:
