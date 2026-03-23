@@ -7,7 +7,6 @@ import sys
 import time
 import uuid
 import smtplib
-from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from email.message import EmailMessage
 from urllib.parse import urlparse, quote as urlquote
@@ -42,8 +41,6 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sync.db")
 
 serializer = URLSafeTimedSerializer(SECRET_KEY)
 
-# In-memory rate limiter: key → list of hit timestamps
-_rate_limits: dict[str, list[float]] = defaultdict(list)
 RATE_LIMIT_MAX = 3
 RATE_LIMIT_WINDOW = 600  # seconds
 
@@ -74,6 +71,12 @@ def init_db(path: str = DB_PATH) -> None:
             updated_at TEXT NOT NULL,
             PRIMARY KEY (user_id, video_id, type)
         );
+        CREATE TABLE IF NOT EXISTS rate_limit_hits (
+            key        TEXT NOT NULL,
+            hit_at     REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_rate_limit_key_time
+            ON rate_limit_hits (key, hit_at);
     """)
     db.commit()
     db.close()
@@ -102,9 +105,13 @@ init_db()
 
 @app.after_request
 def add_cors(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+    origin = request.headers.get("Origin", "")
+    base_origin = BASE_URL  # e.g. "http://testserver" — already rstripped of "/"
+    if origin == base_origin or origin == "null":
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+    response.headers["Vary"] = "Origin"
     return response
 
 
@@ -127,13 +134,28 @@ def _valid_redirect_uri(uri: str) -> bool:
 
 
 def _rate_check(key: str) -> bool:
-    """Return True if request is within limit, False if exceeded."""
+    """Return True if request is within limit, False if exceeded.
+
+    State is persisted in the rate_limit_hits SQLite table so it survives
+    across worker processes and restarts.
+    """
     now = time.time()
     cutoff = now - RATE_LIMIT_WINDOW
-    _rate_limits[key] = [t for t in _rate_limits[key] if t > cutoff]
-    if len(_rate_limits[key]) >= RATE_LIMIT_MAX:
+    db = get_db()
+    # Purge expired hits for this key
+    db.execute(
+        "DELETE FROM rate_limit_hits WHERE key = ? AND hit_at <= ?", (key, cutoff)
+    )
+    count = db.execute(
+        "SELECT COUNT(*) FROM rate_limit_hits WHERE key = ?", (key,)
+    ).fetchone()[0]
+    if count >= RATE_LIMIT_MAX:
+        db.commit()
         return False
-    _rate_limits[key].append(now)
+    db.execute(
+        "INSERT INTO rate_limit_hits (key, hit_at) VALUES (?, ?)", (key, now)
+    )
+    db.commit()
     return True
 
 

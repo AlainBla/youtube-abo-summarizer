@@ -21,9 +21,9 @@ import sync_server
 
 @pytest.fixture(autouse=True)
 def reset_rate_limits():
-    sync_server._rate_limits.clear()
+    # Rate limit state lives in the per-test SQLite DB (tmp_path via app fixture).
+    # No manual cleanup needed — each test gets a fresh DB automatically.
     yield
-    sync_server._rate_limits.clear()
 
 
 @pytest.fixture
