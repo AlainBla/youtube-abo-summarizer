@@ -65,6 +65,8 @@ def _fetch_original(api: YouTubeTranscriptApi, video_id: str) -> tuple[str | Non
 
         if orig_lang is None:
             # No auto-generated transcript — take first available
+            if not all_transcripts:
+                return None, None, "unavailable"
             t = all_transcripts[0]
             return _to_text(t.fetch()), t.language_code, None
 
@@ -114,6 +116,10 @@ def _fetch_manual(api: YouTubeTranscriptApi, video_id: str, preferred_langs: lis
                 return _to_text(t.fetch()), t.language_code
             except NoTranscriptFound:
                 continue
+    except IpBlocked:
+        print(f"    [WARN] IP geblockt beim Abrufen manueller Transkripte für video_id={video_id}.")
+    except RequestBlocked:
+        print(f"    [WARN] Rate limit beim Abrufen manueller Transkripte für video_id={video_id}.")
     except Exception:
         pass
     return None, None

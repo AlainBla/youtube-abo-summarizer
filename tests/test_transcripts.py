@@ -77,6 +77,19 @@ class TestGetTranscriptOriginalLanguage:
         assert lang == "en"
         assert text is not None
 
+    def test_returns_unavailable_when_transcript_list_empty(self):
+        from youtube_transcript_api import NoTranscriptFound
+        tl = MagicMock()
+        tl.__iter__ = MagicMock(side_effect=lambda: iter([]))
+        tl.find_generated_transcript = MagicMock(side_effect=NoTranscriptFound("", [], []))
+        tl.find_manually_created_transcript = MagicMock(side_effect=NoTranscriptFound("", [], []))
+        import transcripts as tr
+        with patch.object(tr._api, "list", return_value=tl):
+            text, lang, err = tr.get_transcript("vid123")
+        assert text is None
+        assert lang is None
+        assert err == "unavailable"
+
 
 class TestGetManualTranscript:
     def _call(self, transcript_list, preferred=None):
