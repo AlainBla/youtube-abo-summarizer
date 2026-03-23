@@ -5,6 +5,9 @@ token.pickle
 last_run.json
 data/
 summary_*.html
+export_*.html
+full_archive*.html
+*.o.html
 __pycache__/
 *.pyc
 cron.log
