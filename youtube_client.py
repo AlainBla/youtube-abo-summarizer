@@ -29,6 +29,7 @@ def build_service():
             creds = flow.run_local_server(port=0)
         with open(TOKEN_FILE, "wb") as f:
             pickle.dump(creds, f)
+        os.chmod(TOKEN_FILE, 0o600)
 
     return build("youtube", "v3", credentials=creds)
 

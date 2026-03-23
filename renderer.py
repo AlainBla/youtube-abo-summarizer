@@ -5,7 +5,10 @@ import os
 import re
 from datetime import date
 
+import nh3
+
 from jinja2 import Environment, FileSystemLoader
+from markupsafe import Markup
 
 import i18n as i18n_module
 
@@ -14,20 +17,32 @@ TEMPLATE_NAME = "template.html.j2"
 EXPORT_TEMPLATE_NAME = "export.html.j2"
 
 
+_ALLOWED_TAGS: frozenset[str] = frozenset({"h3", "p", "ul", "ol", "li", "a", "strong", "em"})
+_ALLOWED_ATTRS: dict[str, set[str]] = {"a": {"href", "class"}}
+_ALLOWED_URL_SCHEMES: frozenset[str] = frozenset({"https"})
+
+
 def _sanitize_summary(html: str | None) -> str | None:
-    """Strip any trailing incomplete HTML tag from a summary fragment.
+    """Strip malicious HTML from a summary fragment.
 
-    LLM output can be cut off mid-tag (e.g. ending with '<a href="' due to a
-    token limit).  When such a fragment is injected into the DOM via innerHTML
-    or output verbatim by a Jinja2 template, the unclosed attribute quote causes
-    the browser to consume all subsequent HTML as the attribute value, making
-    the next card appear nested inside the broken one.
-
-    This strips any trailing '<...' that has no closing '>'.
+    Two-stage sanitization:
+    1. nh3.clean() — allowlist-based HTML sanitizer; removes all tags/attributes
+       not on the allowlist, strips javascript: URIs, and cleans event handlers.
+    2. Trailing-tag fix — removes any trailing '<...' left by LLM truncation so
+       the browser cannot consume subsequent HTML as an attribute value.
     """
     if not html:
         return html
-    cleaned = re.sub(r"<[^>]*$", "", html).rstrip()
+    # Stage 1: allowlist-based XSS sanitization
+    cleaned = nh3.clean(
+        html,
+        tags=_ALLOWED_TAGS,
+        attributes=_ALLOWED_ATTRS,
+        url_schemes=_ALLOWED_URL_SCHEMES,
+        link_rel=None,  # preserve existing rel/class; do not override
+    )
+    # Stage 2: strip trailing incomplete tag from LLM truncation
+    cleaned = re.sub(r"<[^>]*$", "", cleaned).rstrip()
     return cleaned if cleaned else None
 
 
@@ -66,16 +81,17 @@ def render_html(
     ]
     """
     lang = i18n_module.resolve_lang(lang)
-    env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=False)
+    env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
     template = env.get_template(TEMPLATE_NAME)
 
     total_videos = sum(len(ch["videos"]) for ch in channels_data)
     generated_date = date.today().strftime("%B %d, %Y")
 
-    # Sanitize summaries to prevent truncated LLM output from breaking HTML structure
+    # Sanitize summaries, then mark as Markup so autoescape does not re-escape them
     for ch in channels_data:
         for v in ch["videos"]:
-            v["summary"] = _sanitize_summary(v.get("summary"))
+            sanitized = _sanitize_summary(v.get("summary"))
+            v["summary"] = Markup(sanitized) if sanitized is not None else None
 
     html = template.render(
         channels=channels_data,
@@ -107,20 +123,24 @@ def render_export_html(
         transcript_error (str|None)
     """
     lang = i18n_module.resolve_lang(lang)
-    env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=False)
+    env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
     template = env.get_template(EXPORT_TEMPLATE_NAME)
 
-    # Sanitize summaries to prevent truncated LLM output from breaking HTML structure,
-    # then escape </script> to prevent the JSON blob from breaking the script tag.
+    # Sanitize summaries, then escape </script> to prevent JSON blob from breaking the
+    # script tag. Wrap in Markup so autoescape does not double-escape the JSON.
     sanitized = [{**v, "summary": _sanitize_summary(v.get("summary"))} for v in videos]
-    videos_json = json.dumps(sanitized, ensure_ascii=False).replace("</", "<\\/")
+    videos_json = Markup(
+        json.dumps(sanitized, ensure_ascii=False).replace("</", "<\\/")
+    )
+    # sync_url is operator-configured (not user content); wrap so autoescape preserves it
+    safe_sync_url = Markup(sync_url) if sync_url else None
 
     html = template.render(
         videos_json=videos_json,
         generated_date=date.today().strftime("%B %d, %Y"),
         total_videos=len(videos),
         default_lang=lang,
-        sync_url=sync_url,
+        sync_url=safe_sync_url,
         show_embed=show_embed,
     )
 
