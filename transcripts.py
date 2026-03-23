@@ -114,8 +114,25 @@ def get_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_LANGS) 
 
 
 def _to_text(entries) -> str:
-    """Format transcript with one [MM:SS] timestamp marker every ~30 seconds."""
-    INTERVAL = 30
+    """Format transcript with [MM:SS] timestamp markers.
+
+    The marker interval scales with video length to keep token count manageable:
+      < 30 min  → every 30 s
+      30–120 min → every 60 s
+      > 120 min  → every 120 s
+    """
+    entries = list(entries)
+    if not entries:
+        return ""
+
+    total_seconds = entries[-1].start
+    if total_seconds < 1800:
+        INTERVAL = 30
+    elif total_seconds < 7200:
+        INTERVAL = 60
+    else:
+        INTERVAL = 120
+
     result = []
     current_start = None
     current_texts = []

@@ -225,7 +225,7 @@ OPENROUTER_MODEL=openai/gpt-oss-120b   # any OpenRouter model ID
 # LLM_* variables take precedence over OPENROUTER_* when both are set.
 # LLM_API_KEY is optional; Ollama needs no key (a dummy is used automatically).
 # LLM_BASE_URL=http://localhost:11434/v1
-# LLM_MODEL=gemma3:27b
+# LLM_MODEL=llama3.2:latest
 
 # ── Optional: summary output language ────────────────────────────────────────
 # Any natural language name the model understands (default: German).

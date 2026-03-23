@@ -96,10 +96,46 @@ def _parse_tags(content: str) -> tuple[str, list[str]]:
     return html, tags
 
 
+def _transcript_duration(transcript: str) -> int | None:
+    """Return total seconds from the last [MM:SS] marker in the transcript, or None."""
+    matches = re.findall(r'\[(\d+):(\d{2})\]', transcript)
+    if not matches:
+        return None
+    minutes, seconds = matches[-1]
+    return int(minutes) * 60 + int(seconds)
+
+
+def _format_duration(seconds: int) -> str:
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+def _build_user_message(video_id: str, title: str, transcript: str) -> str:
+    """Build the user message for the LLM, wrapping untrusted inputs in delimiters.
+
+    Title and transcript come from YouTube and are potentially attacker-controlled.
+    XML-style delimiters make the boundary between instructions and data explicit,
+    reducing the effectiveness of prompt injection via crafted video metadata.
+    """
+    duration = _transcript_duration(transcript)
+    duration_line = f"Video duration: {_format_duration(duration)}\n" if duration else ""
+    return (
+        f"Video ID: {video_id}\n"
+        f"{duration_line}"
+        f"Video title: <title>{title}</title>\n\n"
+        f"Transcript (with timestamps):\n"
+        f"<transcript>\n{transcript}\n</transcript>"
+    )
+
+
 def summarize_video(video_id: str, title: str, transcript: str, model: str) -> tuple[str, list[str]]:
     """Return an (HTML-fragment summary, tags list) tuple for the video."""
     client = build_client()
-    user_message = f"Video ID: {video_id}\nVideo title: {title}\n\nTranscript (with timestamps):\n{transcript}"
+    user_message = _build_user_message(video_id, title, transcript)
     response = client.chat.completions.create(
         model=model,
         messages=[
@@ -113,7 +149,7 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> t
         finish_reason = getattr(choice, "finish_reason", "unknown")
         raise ValueError(f"Model returned no content (finish_reason={finish_reason!r})")
     content = choice.message.content.strip()
-    # Some models (e.g. Gemma3) wrap the HTML in a markdown code fence; strip it.
+    # Some models wrap the HTML in a markdown code fence; strip it.
     content = re.sub(r"^```[a-zA-Z]*\s*\n?(.*?)\n?```$", r"\1", content, flags=re.DOTALL).strip()
     html, tags = _parse_tags(content)
     return _dedup_timestamps(html), tags
