@@ -91,6 +91,8 @@ python export.py --all --output full_archive.html
 python export.py --show-model           # include LLM model badge on cards
 python export.py --lang en              # embedded default language (overridden by cookie/browser)
 python export.py --thumbnail            # show static thumbnails instead of embedded preview players
+python export.py --channel UC123abc     # restrict to a single channel
+python export.py --videos abc,def,ghi   # comma-separated list of video IDs
 ```
 
 `--hours` and `--all` are mutually exclusive. Default output filename: `export_YYYY-MM-DD_HH-MM.html`.

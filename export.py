@@ -6,7 +6,7 @@ summary), sort (date/channel/title), and pagination (20 items per page).
 Intended for browsing a larger archive in a browser; works fully offline.
 
 Usage:
-  python export.py [--hours N | --all] [--output export.html]
+  python export.py [--hours N | --all] [--channel CHANNEL_ID] [--videos ID,...] [--output export.html]
 """
 
 import argparse
@@ -65,6 +65,18 @@ def parse_args():
         action="store_true",
         help="Show static thumbnails instead of embedded YouTube preview players.",
     )
+    parser.add_argument(
+        "--channel",
+        metavar="CHANNEL_ID",
+        default=None,
+        help="Restrict export to a single channel (channel ID).",
+    )
+    parser.add_argument(
+        "--videos",
+        metavar="ID[,ID,...]",
+        default=None,
+        help="Comma-separated list of video IDs to include (overrides time filter).",
+    )
     return parser.parse_args()
 
 
@@ -93,13 +105,23 @@ def main():
     args = parse_args()
     output_path = args.output or f"export_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.html"
 
-    if args.all:
+    if args.videos:
+        video_ids = [v.strip() for v in args.videos.split(",") if v.strip()]
+        all_entries = store.get_all_videos()
+        id_set = set(video_ids)
+        entries = [e for e in all_entries if e["video_id"] in id_set]
+        label = f"{len(video_ids)} video ID(s)"
+    elif args.all:
         entries = store.get_all_videos()
         label = "all videos"
     else:
         since = datetime.now(tz=timezone.utc) - timedelta(hours=args.hours)
         entries = store.get_videos_since(since)
         label = f"last {args.hours} hour(s)"
+
+    if args.channel:
+        entries = [e for e in entries if e["channel_id"] == args.channel]
+        label += f", channel {args.channel}"
 
     if not entries:
         print(f"No videos in store ({label}).")
