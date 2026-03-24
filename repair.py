@@ -121,11 +121,12 @@ def main():
         # ── Step 1: fetch transcript if missing ──────────────────────────────
         if needs_transcript:
             print(f"    Fetching transcript...")
-            transcript, t_error = tr.get_transcript(vid_id)
+            transcript, lang, t_error = tr.get_transcript(vid_id)
             time.sleep(2)
             if transcript:
                 n_transcript_ok += 1
-                store.update_video_with_summary(vid_id, transcript, None, t_error)
+                store.update_video_with_summary(vid_id, transcript, None, t_error,
+                                                transcript_lang=lang)
             else:
                 print(f"    Still unavailable: {t_error or 'unavailable'}")
                 store.update_video_with_summary(vid_id, None, None, t_error)
@@ -140,7 +141,9 @@ def main():
 
         if needs_summary or needs_transcript:
             print(f"    Summarizing via {model}...")
-            summary, tags = openrouter.summarize_video(vid_id, vid_title, transcript, model)
+            llm_path = store.get_llm_transcript_path(vid_id)
+            llm_input = llm_path.read_text(encoding="utf-8") if llm_path else transcript
+            summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
             store.update_video_with_summary(
                 vid_id, None, summary, t_error, summary_model=model, tags=tags
             )

@@ -160,7 +160,7 @@ def main():
             vid_title = video["title"]
             print(f"  → {vid_title}")
 
-            transcript, transcript_error = tr.get_transcript(vid_id)
+            transcript, _lang, transcript_error = tr.get_transcript(vid_id)
             time.sleep(5)
             if transcript:
                 print(f"    Summarizing via {model}...")
