@@ -122,11 +122,21 @@ def _process_single_video(service, video_id: str, model: str, now: datetime) -> 
         return False
 
     # Fetch transcript only if not already stored
+    lang = None
     if existing and existing["has_transcript"]:
-        transcript = (store.TRANSCRIPTS_DIR / f"{vid_id}.txt").read_text(encoding="utf-8")
+        llm_path = store.get_llm_transcript_path(vid_id)
+        transcript = llm_path.read_text(encoding="utf-8") if llm_path else None
+        lang = existing.get("transcript_lang")
         transcript_error = existing.get("transcript_error")
     else:
-        transcript, transcript_error = tr.get_transcript(vid_id)
+        transcript, lang, transcript_error = tr.get_transcript(vid_id)
+        if transcript and lang not in ["de", "en"]:
+            # Fetch manual DE/EN transcript as second file
+            manual, manual_lang = tr.get_manual_transcript(vid_id)
+            if manual:
+                (store.TRANSCRIPTS_DIR / f"{vid_id}.{manual_lang}.txt").write_text(
+                    manual, encoding="utf-8"
+                )
         if not transcript:
             if not transcript_error or transcript_error == "unavailable":
                 print("    No transcript available.")
@@ -138,7 +148,9 @@ def _process_single_video(service, video_id: str, model: str, now: datetime) -> 
     tags = None
     if transcript and (not existing or not existing["has_summary"]):
         print(f"    Summarizing via {model}...")
-        summary, tags = openrouter.summarize_video(vid_id, vid_title, transcript, model)
+        llm_path = store.get_llm_transcript_path(vid_id)
+        llm_input = llm_path.read_text(encoding="utf-8") if llm_path else transcript
+        summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
 
     if existing:
         store.update_video_with_summary(
@@ -148,6 +160,7 @@ def _process_single_video(service, video_id: str, model: str, now: datetime) -> 
             transcript_error,
             model if summary else existing.get("summary_model"),
             tags=tags,
+            transcript_lang=lang,
         )
         return False
     else:
@@ -161,6 +174,7 @@ def _process_single_video(service, video_id: str, model: str, now: datetime) -> 
             "duration": video.get("duration"),
             "summary_model": model if summary else None,
             "transcript": transcript,
+            "transcript_lang": lang,
             "summary": summary,
             "transcript_error": transcript_error,
             "tags": tags,
@@ -253,11 +267,21 @@ def main():
                 continue
 
             # Fetch transcript only if not already stored
+            lang = None
             if existing and existing["has_transcript"]:
-                transcript = (store.TRANSCRIPTS_DIR / f"{vid_id}.txt").read_text(encoding="utf-8")
+                llm_path = store.get_llm_transcript_path(vid_id)
+                transcript = llm_path.read_text(encoding="utf-8") if llm_path else None
+                lang = existing.get("transcript_lang")
                 transcript_error = existing.get("transcript_error")
             else:
-                transcript, transcript_error = tr.get_transcript(vid_id)
+                transcript, lang, transcript_error = tr.get_transcript(vid_id)
+                if transcript and lang not in ["de", "en"]:
+                    # Fetch manual DE/EN transcript as second file
+                    manual, manual_lang = tr.get_manual_transcript(vid_id)
+                    if manual:
+                        (store.TRANSCRIPTS_DIR / f"{vid_id}.{manual_lang}.txt").write_text(
+                            manual, encoding="utf-8"
+                        )
                 time.sleep(5)
                 if not transcript:
                     if not transcript_error or transcript_error == "unavailable":
@@ -268,7 +292,9 @@ def main():
             # Summarize only if we have a transcript and no summary yet
             if transcript and (not existing or not existing["has_summary"]):
                 print(f"    Summarizing via {model}...")
-                summary, tags = openrouter.summarize_video(vid_id, vid_title, transcript, model)
+                llm_path = store.get_llm_transcript_path(vid_id)
+                llm_input = llm_path.read_text(encoding="utf-8") if llm_path else transcript
+                summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
             else:
                 summary = None
                 tags = None
@@ -281,6 +307,7 @@ def main():
                     transcript_error,
                     model if summary else existing.get("summary_model"),
                     tags=tags,
+                    transcript_lang=lang,
                 )
             else:
                 added = store.add_video({
@@ -293,6 +320,7 @@ def main():
                     "duration": video.get("duration"),
                     "summary_model": model if summary else None,
                     "transcript": transcript,
+                    "transcript_lang": lang,
                     "summary": summary,
                     "transcript_error": transcript_error,
                     "tags": tags,
