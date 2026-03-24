@@ -123,6 +123,7 @@ def _process_single_video(service, video_id: str, model: str, now: datetime) -> 
 
     # Fetch transcript only if not already stored
     lang = None
+    manual = None
     if existing and existing["has_transcript"]:
         llm_path = store.get_llm_transcript_path(vid_id)
         transcript = llm_path.read_text(encoding="utf-8") if llm_path else None
@@ -147,9 +148,14 @@ def _process_single_video(service, video_id: str, model: str, now: datetime) -> 
     summary = None
     tags = None
     if transcript and (not existing or not existing["has_summary"]):
+        if existing:
+            # DB row exists — path lookup works
+            llm_path = store.get_llm_transcript_path(vid_id)
+            llm_input = llm_path.read_text(encoding="utf-8") if llm_path else transcript
+        else:
+            # New video — DB row not created yet, use manual from memory if available
+            llm_input = manual if manual else transcript
         print(f"    Summarizing via {model}...")
-        llm_path = store.get_llm_transcript_path(vid_id)
-        llm_input = llm_path.read_text(encoding="utf-8") if llm_path else transcript
         summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
 
     if existing:
@@ -268,6 +274,7 @@ def main():
 
             # Fetch transcript only if not already stored
             lang = None
+            manual = None
             if existing and existing["has_transcript"]:
                 llm_path = store.get_llm_transcript_path(vid_id)
                 transcript = llm_path.read_text(encoding="utf-8") if llm_path else None
@@ -291,9 +298,14 @@ def main():
 
             # Summarize only if we have a transcript and no summary yet
             if transcript and (not existing or not existing["has_summary"]):
+                if existing:
+                    # DB row exists — path lookup works
+                    llm_path = store.get_llm_transcript_path(vid_id)
+                    llm_input = llm_path.read_text(encoding="utf-8") if llm_path else transcript
+                else:
+                    # New video — DB row not created yet, use manual from memory if available
+                    llm_input = manual if manual else transcript
                 print(f"    Summarizing via {model}...")
-                llm_path = store.get_llm_transcript_path(vid_id)
-                llm_input = llm_path.read_text(encoding="utf-8") if llm_path else transcript
                 summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
             else:
                 summary = None
