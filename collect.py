@@ -24,6 +24,7 @@ Usage:
 
 import argparse
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -38,6 +39,28 @@ import openrouter
 from youtube_client import build_service, get_subscribed_channels, get_new_videos, get_video_durations, resolve_channel_id, get_video_by_id
 
 load_dotenv()
+
+
+def _should_filter_title(title: str) -> tuple[bool, str]:
+    """Check if title matches any VIDEO_TITLE_FILTERS pattern.
+
+    Returns (should_filter, matched_pattern) tuple.
+    """
+    patterns = os.environ.get("VIDEO_TITLE_FILTERS", "")
+    if not patterns:
+        return False, ""
+
+    for pattern in patterns.split(","):
+        pattern = pattern.strip()
+        if not pattern:
+            continue
+        try:
+            if re.search(pattern, title, re.IGNORECASE):
+                return True, pattern
+        except re.error as e:
+            print(f"Invalid regex in VIDEO_TITLE_FILTERS: {e}", file=sys.stderr)
+            sys.exit(1)
+    return False, ""
 
 
 def parse_args():
@@ -112,6 +135,11 @@ def _process_single_video(service, video_id: str, model: str, now: datetime) -> 
     vid_title = video["title"]
     channel_id = video["channel_id"]
     channel_title = video["channel_title"]
+
+    should_filter, matched_pattern = _should_filter_title(vid_title)
+    if should_filter:
+        print(f"    → Titel ignoriert (Filter match: '{matched_pattern}')")
+        return False
 
     print(f"  → {vid_title}")
 
@@ -264,6 +292,12 @@ def main():
         for video in videos:
             vid_id = video["video_id"]
             vid_title = video["title"]
+
+            should_filter, matched_pattern = _should_filter_title(vid_title)
+            if should_filter:
+                print(f"    → Titel ignoriert (Filter match: '{matched_pattern}')")
+                continue
+
             print(f"  → {vid_title}")
 
             existing = store.get_video(vid_id)
