@@ -41,6 +41,35 @@ from youtube_client import build_service, get_subscribed_channels, get_new_video
 load_dotenv()
 
 
+_SHORTS_DEFAULT_MAX_SECONDS = 180
+
+
+def _parse_duration_seconds(duration: str | None) -> int | None:
+    """Parse ISO 8601 duration string (e.g. PT1H2M3S) to total seconds.
+
+    Returns None if the string is missing or unparseable.
+    """
+    if not duration:
+        return None
+    m = re.fullmatch(r"P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", duration)
+    if not m:
+        return None
+    days, hours, minutes, seconds = (int(x) if x else 0 for x in m.groups())
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds
+
+
+def _is_short(duration: str | None) -> bool:
+    """Return True if video duration is ≤ SHORTS_MAX_SECONDS (default 180 s).
+
+    Threshold is read from the SHORTS_MAX_SECONDS env var (default: 180).
+    """
+    secs = _parse_duration_seconds(duration)
+    if secs is None:
+        return False
+    threshold = int(os.environ.get("SHORTS_MAX_SECONDS", _SHORTS_DEFAULT_MAX_SECONDS))
+    return secs <= threshold
+
+
 def _should_filter_title(title: str) -> tuple[bool, str]:
     """Check if title matches any VIDEO_TITLE_FILTERS pattern.
 
@@ -103,6 +132,14 @@ def parse_args():
         metavar="N",
         help="Remove store entries older than N days after collecting. Omit to keep all entries.",
     )
+    parser.add_argument(
+        "--include-shorts",
+        action="store_true",
+        help=(
+            "Include short videos (≤ SHORTS_MAX_SECONDS, default 180 s). "
+            "By default short videos are skipped."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -123,7 +160,7 @@ def _load_identifiers_from_file(path: str) -> list[str]:
         return [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
 
-def _process_single_video(service, video_id: str, model: str, now: datetime) -> bool:
+def _process_single_video(service, video_id: str, model: str, now: datetime, skip_shorts: bool = True) -> bool:
     """Fetch and process a single video. Returns True if added to store."""
     print(f"Fetching video {video_id}...")
     video = get_video_by_id(service, video_id)
@@ -135,6 +172,10 @@ def _process_single_video(service, video_id: str, model: str, now: datetime) -> 
     vid_title = video["title"]
     channel_id = video["channel_id"]
     channel_title = video["channel_title"]
+
+    if skip_shorts and _is_short(video.get("duration")):
+        print(f"  → {vid_title} [Short, skipped]")
+        return False
 
     should_filter, matched_pattern = _should_filter_title(vid_title)
     if should_filter:
@@ -227,7 +268,7 @@ def main():
         now = datetime.now(tz=timezone.utc)
         added_count = 0
         for vid in video_ids:
-            if _process_single_video(service, vid, model, now):
+            if _process_single_video(service, vid, model, now, skip_shorts=not args.include_shorts):
                 added_count += 1
         print(f"\nDone. {added_count} video(s) added to store.")
         return
@@ -292,6 +333,10 @@ def main():
         for video in videos:
             vid_id = video["video_id"]
             vid_title = video["title"]
+
+            if not args.include_shorts and _is_short(video.get("duration")):
+                print(f"  → {vid_title} [Short, skipped]")
+                continue
 
             should_filter, matched_pattern = _should_filter_title(vid_title)
             if should_filter:

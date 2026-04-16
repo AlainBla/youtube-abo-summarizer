@@ -33,6 +33,7 @@ python collect.py --file channels.txt [--hours N]
 - Without `--hours`, uses each channel's last-run timestamp from `last_run.json`; defaults to 24 h on first run.
 - `--hours N` overrides last-run state and does **not** update it.
 - `--prune-days N` removes store entries older than N days. Omitted by default (no pruning).
+- Short videos (duration ≤ `SHORTS_MAX_SECONDS`, default 180 s) are **skipped by default**. Pass `--include-shorts` to collect them. Threshold is configurable via `SHORTS_MAX_SECONDS` in `.env`.
 
 ### Report phase — run on digest schedule (e.g. every 6 h or daily)
 
