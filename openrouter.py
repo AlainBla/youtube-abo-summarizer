@@ -114,6 +114,22 @@ def _format_duration(seconds: int) -> str:
     return f"{m}:{s:02d}"
 
 
+_CONTEXT_LIMIT = 131_072   # model's hard context-window limit (tokens)
+_MAX_OUTPUT    = 16_384    # max_tokens we request for the final summary
+_CHUNK_OUTPUT  = 2_048     # max_tokens per intermediate chunk summary
+_OVERHEAD      = 1_500     # tokens reserved for system prompt + message wrapper
+# Chars budget per chunk (4 chars ≈ 1 token; conservative).
+_CHUNK_MAX_CHARS = (_CONTEXT_LIMIT - _CHUNK_OUTPUT - _OVERHEAD) * 4  # ≈ 510 k
+
+_CHUNK_SYSTEM_PROMPT = (
+    "You are summarizing one segment of a YouTube video transcript as an intermediate step.\n"
+    "Extract the key points, facts, arguments, and events from this segment.\n"
+    "Write concise bullet points or short paragraphs in plain text — no HTML.\n"
+    "Preserve [MM:SS] timestamp markers for every major point so they can be used later.\n"
+    "This partial summary will be combined with summaries of other segments."
+)
+
+
 def _build_user_message(video_id: str, title: str, transcript: str) -> str:
     """Build the user message for the LLM, wrapping untrusted inputs in delimiters.
 
@@ -132,17 +148,106 @@ def _build_user_message(video_id: str, title: str, transcript: str) -> str:
     )
 
 
+def _split_transcript_chunks(transcript: str) -> list[str]:
+    """Split a long transcript into chunks that each fit within _CHUNK_MAX_CHARS.
+
+    Splits at line boundaries so segment markers are never broken.
+    Returns a single-element list when the transcript is short enough.
+    """
+    if len(transcript) <= _CHUNK_MAX_CHARS:
+        return [transcript]
+    lines = transcript.splitlines(keepends=True)
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        if current_len + len(line) > _CHUNK_MAX_CHARS and current:
+            chunks.append("".join(current))
+            current = []
+            current_len = 0
+        current.append(line)
+        current_len += len(line)
+    if current:
+        chunks.append("".join(current))
+    return chunks
+
+
+def _summarize_chunk(
+    client: OpenAI,
+    model: str,
+    video_id: str,
+    title: str,
+    chunk: str,
+    chunk_index: int,
+    total_chunks: int,
+) -> str:
+    """Return a plain-text key-point summary of one transcript chunk."""
+    user_msg = (
+        f"Video ID: {video_id}\n"
+        f"Video title: <title>{title}</title>\n"
+        f"Transcript segment {chunk_index + 1} of {total_chunks}:\n"
+        f"<transcript>\n{chunk}\n</transcript>"
+    )
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _CHUNK_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ],
+        max_tokens=_CHUNK_OUTPUT,
+    )
+    choice = response.choices[0]
+    if choice.message.content is None:
+        raise ValueError(f"Chunk {chunk_index + 1}/{total_chunks}: model returned no content")
+    return choice.message.content.strip()
+
+
+def _build_synthesis_message(
+    video_id: str, title: str, transcript: str, chunk_summaries: list[str]
+) -> str:
+    """Build the synthesis user message from ordered chunk summaries."""
+    duration = _transcript_duration(transcript)
+    duration_line = f"Video duration: {_format_duration(duration)}\n" if duration else ""
+    parts = [
+        f"Video ID: {video_id}\n",
+        f"{duration_line}",
+        f"Video title: <title>{title}</title>\n\n",
+        "The transcript was too long for a single pass. "
+        "The following are key-point summaries of consecutive transcript segments, in order. "
+        "Each preserves [MM:SS] timestamps that you should use for timestamp links.\n\n",
+    ]
+    for i, summary in enumerate(chunk_summaries, 1):
+        parts.append(f'<segment_summary index="{i}">\n{summary}\n</segment_summary>\n\n')
+    return "".join(parts)
+
+
 def summarize_video(video_id: str, title: str, transcript: str, model: str) -> tuple[str, list[str]]:
-    """Return an (HTML-fragment summary, tags list) tuple for the video."""
+    """Return an (HTML-fragment summary, tags list) tuple for the video.
+
+    When the transcript exceeds the model's context window the function
+    automatically falls back to a two-pass map-reduce strategy:
+      1. Map  — summarise each chunk into plain-text key points.
+      2. Reduce — synthesise those partial summaries into the final HTML.
+    """
     client = build_client()
-    user_message = _build_user_message(video_id, title, transcript)
+    chunks = _split_transcript_chunks(transcript)
+
+    if len(chunks) == 1:
+        user_message = _build_user_message(video_id, title, transcript)
+    else:
+        chunk_summaries = [
+            _summarize_chunk(client, model, video_id, title, chunk, i, len(chunks))
+            for i, chunk in enumerate(chunks)
+        ]
+        user_message = _build_synthesis_message(video_id, title, transcript, chunk_summaries)
+
     response = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
         ],
-        max_tokens=16384,
+        max_tokens=_MAX_OUTPUT,
     )
     choice = response.choices[0]
     if choice.message.content is None:

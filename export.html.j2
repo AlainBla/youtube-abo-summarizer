@@ -1182,10 +1182,11 @@ function applyFiltersAndSort(page) {
   renderPage(typeof page === 'number' ? page : 1);
 }
 
-function renderPage(page) {
+function renderPage(page, skipScroll) {
   var s = I18N[currentLang];
   var total = filtered.length;
   var pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  var prevPage = currentPage;
   currentPage = Math.min(Math.max(1, page), pages);
 
   var start = (currentPage - 1) * PAGE_SIZE;
@@ -1203,6 +1204,11 @@ function renderPage(page) {
   }
 
   document.getElementById('results-count').textContent = s.results(total);
+
+  if (!skipScroll && currentPage !== prevPage) {
+    var grid = document.getElementById('grid');
+    if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   var pag = document.getElementById('pagination');
   if (pages <= 1) { pag.innerHTML = ''; return; }
