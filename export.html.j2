@@ -594,6 +594,12 @@ function saveSet(name, set) {
   setCookie(name, Array.from(set).join(','));
 }
 
+function setsEqual(a, b) {
+  if (a.size !== b.size) return false;
+  for (var v of a) if (!b.has(v)) return false;
+  return true;
+}
+
 let readSet = getSet(COOKIE_READ);
 let bookmarkSet = getSet(COOKIE_BOOKMARK);
 
@@ -810,6 +816,34 @@ function initSync() {
     .catch(function() {
       updateSyncStatus(I18N[currentLang || 'de'].syncStatusFailed);
     });
+}
+
+function pullServerState() {
+  var token = getSyncToken();
+  if (!token) return;
+  fetch(SYNC_URL + '/api/state', {headers: {'Authorization': 'Bearer ' + token}})
+    .then(function(r) {
+      if (r.status === 401) {
+        localStorage.removeItem('yt_sync_token');
+        showSyncLoggedOut();
+        return null;
+      }
+      return r.json();
+    })
+    .then(function(serverData) {
+      if (!serverData) return;
+      var prevRead = new Set(readSet);
+      var prevBookmark = new Set(bookmarkSet);
+      applyServerState(serverData);
+      if (!setsEqual(prevRead, readSet) || !setsEqual(prevBookmark, bookmarkSet)) {
+        applyFiltersAndSort(currentPage);
+      }
+      updateSyncStatus(
+        I18N[currentLang || 'de'].syncStatusSynced +
+        ' — ' + new Date().toLocaleTimeString()
+      );
+    })
+    .catch(function() {});  // silent on background poll
 }
 
 function extractVideoId(raw) {
@@ -1182,6 +1216,35 @@ function applyFiltersAndSort(page) {
   renderPage(typeof page === 'number' ? page : 1);
 }
 
+// Update the grid in place when the target slice is a subsequence of the cards
+// currently rendered (same relative order, only removals). Removing sibling nodes
+// does not reparent the survivors, so their <iframe> embeds keep playing. Returns
+// false when a full rebuild is required (reorder, new cards, or page change).
+function renderPageInPlace(slice) {
+  var grid = document.getElementById('grid');
+  var cards = Array.prototype.slice.call(grid.querySelectorAll('.video-card'));
+  if (!cards.length) return false;
+
+  var domIds = cards.map(function(c) { return c.getAttribute('data-video-id'); });
+  var sliceIds = slice.map(function(v) { return v.video_id; });
+
+  // Walk both ordered lists: slice must appear within domIds in the same order.
+  var i = 0;
+  for (var j = 0; j < domIds.length && i < sliceIds.length; j++) {
+    if (domIds[j] === sliceIds[i]) i++;
+  }
+  if (i !== sliceIds.length) return false;  // reorder or new cards — needs rebuild
+
+  var keep = {};
+  sliceIds.forEach(function(id) { keep[id] = true; });
+  cards.forEach(function(c) {
+    if (!keep[c.getAttribute('data-video-id')]) c.remove();
+  });
+  // Refresh mutable read/bookmark visuals on the survivors.
+  sliceIds.forEach(updateCardInPlace);
+  return true;
+}
+
 function renderPage(page, skipScroll) {
   var s = I18N[currentLang];
   var total = filtered.length;
@@ -1192,9 +1255,16 @@ function renderPage(page, skipScroll) {
   var start = (currentPage - 1) * PAGE_SIZE;
   var slice = filtered.slice(start, start + PAGE_SIZE);
 
-  document.getElementById('grid').innerHTML = slice.length
-    ? slice.map(buildCard).join('')
-    : '<p class="no-videos">' + s.noVideos + '</p>';
+  // Prefer an in-place update that preserves existing card DOM nodes (and any
+  // playing <iframe> embed) over a full innerHTML rebuild, which would tear down
+  // and reload every embed. Status toggles (read/bookmark) only ever *remove*
+  // visible cards, so when the new slice is a pure subsequence of what is already
+  // rendered we just delete the departed nodes and leave the survivors playing.
+  if (!slice.length || !renderPageInPlace(slice)) {
+    document.getElementById('grid').innerHTML = slice.length
+      ? slice.map(buildCard).join('')
+      : '<p class="no-videos">' + s.noVideos + '</p>';
+  }
 
   // Restore focused highlight after re-render
   if (focusedIndex >= 0) {
@@ -1313,6 +1383,14 @@ document.getElementById('lang-select').addEventListener('change', function() {
 applyLang(detectLang());
 {% if sync_url %}
 initSync();
+window.addEventListener('online', function() {
+  if (getSyncToken()) initSync();
+});
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'visible') pullServerState();
+});
+window.addEventListener('focus', pullServerState);
+setInterval(pullServerState, 5 * 60 * 1000);
 {% endif %}
 </script>
 
