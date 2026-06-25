@@ -1,5 +1,7 @@
 """Render the summary data to an HTML file using Jinja2."""
 
+import base64
+import gzip
 import json
 import os
 import re
@@ -44,6 +46,18 @@ def _sanitize_summary(html: str | None) -> str | None:
     # Stage 2: strip trailing incomplete tag from LLM truncation
     cleaned = re.sub(r"<[^>]*$", "", cleaned).rstrip()
     return cleaned if cleaned else None
+
+
+def _strip_html_to_text(html: str | None) -> str:
+    """Reduce an HTML fragment to plain whitespace-normalised text.
+
+    Used to precompute a lightweight, lowercased full-text search field so the
+    browser never has to strip the (heavy) summary HTML on every keystroke.
+    """
+    if not html:
+        return ""
+    text = re.sub(r"<[^>]+>", " ", html)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _report_meta(lang: str, generated_date: str, total_videos: int, num_channels: int) -> str:
@@ -112,8 +126,17 @@ def render_export_html(
     lang: str = i18n_module.DEFAULT_LANG,
     sync_url: str | None = None,
     show_embed: bool = True,
+    compress: bool = True,
 ) -> None:
     """Render and write a self-contained export HTML file with embedded video data.
+
+    The data is embedded as two parts: a lightweight ``index`` (everything except
+    the heavy summary HTML, plus a precomputed lowercased ``search_text``) that
+    drives filtering/sorting/search, and a ``summaries`` map (video_id -> HTML)
+    consulted only when a card is rendered. The combined ``{index, summaries}``
+    JSON is gzip+base64 embedded (``compress=True``, decompressed in-browser via
+    ``DecompressionStream``); ``compress=False`` embeds it as a plain JSON string
+    parsed with ``JSON.parse`` for browsers without ``DecompressionStream``.
 
     videos: list of dicts with keys:
         video_id, channel_id, channel_title, title,
@@ -126,17 +149,37 @@ def render_export_html(
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
     template = env.get_template(EXPORT_TEMPLATE_NAME)
 
-    # Sanitize summaries, then escape </script> to prevent JSON blob from breaking the
-    # script tag. Wrap in Markup so autoescape does not double-escape the JSON.
-    sanitized = [{**v, "summary": _sanitize_summary(v.get("summary"))} for v in videos]
-    videos_json = Markup(
-        json.dumps(sanitized, ensure_ascii=False).replace("</", "<\\/")
-    )
+    index: list[dict] = []
+    summaries: dict[str, str] = {}
+    for v in videos:
+        summary = _sanitize_summary(v.get("summary"))
+        vid = v["video_id"]
+        if summary:
+            summaries[vid] = summary
+        entry = {k: val for k, val in v.items() if k != "summary"}
+        entry["search_text"] = (
+            f"{v.get('title') or ''} {_strip_html_to_text(summary)}".lower()
+        )
+        index.append(entry)
+
+    raw = json.dumps({"index": index, "summaries": summaries}, ensure_ascii=False)
+
+    data_b64 = None
+    data_obj = None
+    if compress:
+        data_b64 = base64.b64encode(gzip.compress(raw.encode("utf-8"))).decode("ascii")
+    else:
+        # Embed the JSON directly as a JS object literal; escape </ so it cannot
+        # break out of the <script> tag. Markup avoids double-escaping.
+        data_obj = Markup(raw.replace("</", "<\\/"))
+
     # sync_url is operator-configured (not user content); wrap so autoescape preserves it
     safe_sync_url = Markup(sync_url) if sync_url else None
 
     html = template.render(
-        videos_json=videos_json,
+        compressed=compress,
+        data_b64=data_b64,
+        data_obj=data_obj,
         generated_date=date.today().strftime("%B %d, %Y"),
         total_videos=len(videos),
         default_lang=lang,

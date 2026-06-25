@@ -66,6 +66,12 @@ def parse_args():
         help="Show static thumbnails instead of embedded YouTube preview players.",
     )
     parser.add_argument(
+        "--no-compress",
+        action="store_true",
+        help="Embed data uncompressed (JSON.parse) instead of gzip+base64. "
+             "Use for browsers without DecompressionStream support.",
+    )
+    parser.add_argument(
         "--channel",
         metavar="CHANNEL_ID",
         default=None,
@@ -151,6 +157,7 @@ def main():
         lang=args.lang or "de",
         sync_url=args.sync_url,
         show_embed=not args.thumbnail,
+        compress=not args.no_compress,
     )
     print("Done.")
 

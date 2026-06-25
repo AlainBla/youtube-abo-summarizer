@@ -11,6 +11,8 @@ Usage:
 """
 
 import argparse
+import base64
+import gzip
 import json
 import re
 import sys
@@ -19,11 +21,39 @@ from datetime import datetime, timezone
 import store
 
 
+def _merge_index_summaries(payload: dict) -> list[dict]:
+    """Merge the split {index, summaries} export payload back into flat dicts.
+
+    Newer exports embed a lightweight ``index`` (no summary HTML) plus a
+    ``summaries`` map; recover needs each video's ``summary`` field restored.
+    """
+    summaries = payload.get("summaries") or {}
+    videos = []
+    for entry in payload.get("index") or []:
+        v = {k: val for k, val in entry.items() if k != "search_text"}
+        v["summary"] = summaries.get(entry["video_id"])
+        videos.append(v)
+    return videos
+
+
 def extract_videos(html: str) -> list[dict]:
+    # New gzip+base64 format: const DATA_B64 = "...";
+    m = re.search(r'const DATA_B64 = "([^"]*)";', html)
+    if m:
+        raw = gzip.decompress(base64.b64decode(m.group(1))).decode("utf-8")
+        return _merge_index_summaries(json.loads(raw))
+
+    # New uncompressed format: const DATA_OBJ = {...};
+    m = re.search(r"const DATA_OBJ = (\{.*\});\s*\nlet VIDEOS = \[\];", html, re.DOTALL)
+    if m:
+        return _merge_index_summaries(json.loads(m.group(1).replace("<\\/", "</")))
+
+    # Legacy format: const VIDEOS = [...];
     m = re.search(r"const VIDEOS = (\[.*?\]);\s*\n", html, re.DOTALL)
-    if not m:
-        sys.exit("Error: could not find 'const VIDEOS = [...]' in the file.")
-    return json.loads(m.group(1).replace("<\\/", "</"))
+    if m:
+        return json.loads(m.group(1).replace("<\\/", "</"))
+
+    sys.exit("Error: could not find embedded video data in the file.")
 
 
 def main():

@@ -146,12 +146,21 @@ python export.py --lang en
 # Static thumbnails instead of embedded YouTube players
 python export.py --thumbnail
 
+# Embed data uncompressed (for browsers without DecompressionStream)
+python export.py --no-compress
+
 # Embed sync server URL (enables cross-browser read/bookmark sync)
 python export.py --all --sync-url https://sync.example.com --output archive.html
 ```
 
 `--hours` and `--all` are mutually exclusive. The default output filename is `export_YYYY-MM-DD_HH-MM.html`.
 The LLM model badge is hidden by default; use `--show-model` to display it.
+
+The embedded video data is split into a lightweight search index and a separate summaries map, then
+gzip-compressed and base64-embedded; the browser decompresses it via the native `DecompressionStream`
+API (Chrome 80+, Firefox 113+, Safari 16.4+). This keeps the single-file export small and fast to load
+while preserving full-text search across the whole archive. For older browsers, `--no-compress` embeds
+the data as a plain JavaScript object instead (larger file, no `DecompressionStream` required).
 
 ## Sync server (optional)
 
