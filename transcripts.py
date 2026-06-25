@@ -41,12 +41,14 @@ _proxy_url = os.getenv("WEBSHARE_PROXY_URL")
 _api = _make_api(_proxy_url)
 _fallback_api = _make_api(_country_proxy_url(_proxy_url, _FALLBACK_COUNTRY)) if _proxy_url else None
 
-if _proxy_url:
-    from urllib.parse import urlparse as _up
-    _p = _up(_proxy_url)
-    print(f"[transcripts] Proxy: {_p.scheme}://{_p.hostname}:{_p.port} (user={_p.username})", flush=True)
-else:
-    print("[transcripts] Kein Proxy konfiguriert — direkte Verbindung.", flush=True)
+def log_proxy_config(no_proxy: bool = False) -> None:
+    if _proxy_url:
+        from urllib.parse import urlparse as _up
+        _p = _up(_proxy_url)
+        suffix = " (IGNORED)" if no_proxy else ""
+        print(f"[transcripts] Proxy: {_p.scheme}://{_p.hostname}:{_p.port} (user={_p.username}){suffix}", flush=True)
+    else:
+        print("[transcripts] Kein Proxy konfiguriert — direkte Verbindung.", flush=True)
 
 
 def _fetch_original(api: YouTubeTranscriptApi, video_id: str) -> tuple[str | None, str | None, str | None]:
@@ -123,6 +125,12 @@ def _fetch_manual(api: YouTubeTranscriptApi, video_id: str, preferred_langs: lis
     except Exception:
         pass
     return None, None
+
+
+def get_transcript_no_proxy(video_id: str) -> tuple[str | None, str | None, str | None]:
+    """Like get_transcript() but always uses a direct connection, ignoring any configured proxy."""
+    direct_api = _make_api(None)
+    return _fetch_original(direct_api, video_id)
 
 
 def get_transcript(video_id: str) -> tuple[str | None, str | None, str | None]:

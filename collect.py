@@ -259,6 +259,7 @@ def _process_single_video(service, video_id: str, model: str, now: datetime, ski
 
 def main():
     args = parse_args()
+    tr.log_proxy_config()
     model = os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
 
     # --- Handle single video(s) ---

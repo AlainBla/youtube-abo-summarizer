@@ -55,6 +55,11 @@ def parse_args():
         help="Re-summarize even if a summary file already exists.",
     )
     parser.add_argument(
+        "--no-proxy",
+        action="store_true",
+        help="Ignore WEBSHARE_PROXY_URL and fetch transcripts via direct connection.",
+    )
+    parser.add_argument(
         "--model",
         metavar="MODEL_ID",
         default=None,
@@ -65,6 +70,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    tr.log_proxy_config(no_proxy=args.no_proxy)
     model = args.model or os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
     video_filter = {v.strip() for v in args.video.split(",") if v.strip()} if args.video else None
 
@@ -121,7 +127,8 @@ def main():
         # ── Step 1: fetch transcript if missing ──────────────────────────────
         if needs_transcript:
             print(f"    Fetching transcript...")
-            transcript, lang, t_error = tr.get_transcript(vid_id)
+            fetch_fn = tr.get_transcript_no_proxy if args.no_proxy else tr.get_transcript
+            transcript, lang, t_error = fetch_fn(vid_id)
             time.sleep(2)
             if transcript:
                 n_transcript_ok += 1
