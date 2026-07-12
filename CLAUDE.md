@@ -28,6 +28,8 @@ python collect.py UC123abc UC456def [--hours N]
 python collect.py --file channels.txt [--hours N]
 ```
 
+- `--no-proxy` ignores `WEBSHARE_PROXY_URL` and fetches transcripts via a direct connection.
+
 - Fetches new videos, transcripts, and summaries; persists results to `data/`.
 - Videos already in the store are handled incrementally: skipped entirely if both transcript and summary exist; otherwise only the missing piece is fetched or generated.
 - Without `--hours`, uses each channel's last-run timestamp from `last_run.json`; defaults to 24 h on first run.

@@ -140,6 +140,11 @@ def parse_args():
             "By default short videos are skipped."
         ),
     )
+    parser.add_argument(
+        "--no-proxy",
+        action="store_true",
+        help="Ignore WEBSHARE_PROXY_URL and fetch transcripts via direct connection.",
+    )
     return parser.parse_args()
 
 
@@ -160,7 +165,7 @@ def _load_identifiers_from_file(path: str) -> list[str]:
         return [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
 
-def _process_single_video(service, video_id: str, model: str, now: datetime, skip_shorts: bool = True) -> bool:
+def _process_single_video(service, video_id: str, model: str, now: datetime, skip_shorts: bool = True, no_proxy: bool = False) -> bool:
     """Fetch and process a single video. Returns True if added to store."""
     print(f"Fetching video {video_id}...")
     video = get_video_by_id(service, video_id)
@@ -199,7 +204,8 @@ def _process_single_video(service, video_id: str, model: str, now: datetime, ski
         lang = existing.get("transcript_lang")
         transcript_error = existing.get("transcript_error")
     else:
-        transcript, lang, transcript_error = tr.get_transcript(vid_id)
+        fetch_fn = tr.get_transcript_no_proxy if no_proxy else tr.get_transcript
+        transcript, lang, transcript_error = fetch_fn(vid_id)
         if transcript and lang not in ["de", "en"]:
             # Fetch manual DE/EN transcript as second file
             manual, manual_lang = tr.get_manual_transcript(vid_id)
@@ -259,7 +265,7 @@ def _process_single_video(service, video_id: str, model: str, now: datetime, ski
 
 def main():
     args = parse_args()
-    tr.log_proxy_config()
+    tr.log_proxy_config(no_proxy=args.no_proxy)
     model = os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
 
     # --- Handle single video(s) ---
@@ -269,7 +275,7 @@ def main():
         now = datetime.now(tz=timezone.utc)
         added_count = 0
         for vid in video_ids:
-            if _process_single_video(service, vid, model, now, skip_shorts=not args.include_shorts):
+            if _process_single_video(service, vid, model, now, skip_shorts=not args.include_shorts, no_proxy=args.no_proxy):
                 added_count += 1
         print(f"\nDone. {added_count} video(s) added to store.")
         return
@@ -361,7 +367,8 @@ def main():
                 lang = existing.get("transcript_lang")
                 transcript_error = existing.get("transcript_error")
             else:
-                transcript, lang, transcript_error = tr.get_transcript(vid_id)
+                fetch_fn = tr.get_transcript_no_proxy if args.no_proxy else tr.get_transcript
+                transcript, lang, transcript_error = fetch_fn(vid_id)
                 if transcript and lang not in ["de", "en"]:
                     # Fetch manual DE/EN transcript as second file
                     manual, manual_lang = tr.get_manual_transcript(vid_id)
