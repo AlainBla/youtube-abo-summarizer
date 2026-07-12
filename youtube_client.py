@@ -18,8 +18,13 @@ TOKEN_FILE = os.path.join(os.path.dirname(__file__), "token.pickle")
 def build_service():
     creds = None
     if os.path.exists(TOKEN_FILE):
-        with open(TOKEN_FILE, "rb") as f:
-            creds = pickle.load(f)
+        try:
+            # trusted local file: written only by this app's own pickle.dump() below
+            with open(TOKEN_FILE, "rb") as f:
+                creds = pickle.load(f)
+        except (EOFError, pickle.UnpicklingError):
+            print(f"[youtube_client] {TOKEN_FILE} is corrupt (likely a truncated write); re-authenticating")
+            creds = None
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -27,9 +32,11 @@ def build_service():
         else:
             flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
             creds = flow.run_local_server(port=0)
-        with open(TOKEN_FILE, "wb") as f:
+        tmp_file = TOKEN_FILE + ".tmp"
+        with open(tmp_file, "wb") as f:
             pickle.dump(creds, f)
-        os.chmod(TOKEN_FILE, 0o600)
+        os.chmod(tmp_file, 0o600)
+        os.replace(tmp_file, TOKEN_FILE)
 
     return build("youtube", "v3", credentials=creds)
 
