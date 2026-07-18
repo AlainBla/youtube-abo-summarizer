@@ -23,27 +23,58 @@ _ALLOWED_TAGS: frozenset[str] = frozenset({"h3", "p", "ul", "ol", "li", "a", "st
 _ALLOWED_ATTRS: dict[str, set[str]] = {"a": {"href", "class"}}
 _ALLOWED_URL_SCHEMES: frozenset[str] = frozenset({"https"})
 
+# Matches timestamp anchors the LLM emitted with the M:SS (or H:MM:SS) value
+# baked into the href and no closing quote or link text before </a>, e.g.
+# <a href="https://www.youtube.com/watch?v=VID&t=1:04</a>. The unclosed href
+# attribute would otherwise consume all following markup up to the next '"',
+# hiding entire paragraphs. Also tolerates the ampersand already being encoded
+# as &amp; in case nh3.clean has already touched the input.
+_BROKEN_TS_LINK_RE = re.compile(
+    r'<a\s+href="(https?://[^"<>\s]*?t=)(\d+(?::\d{2}){1,2})</a>',
+    re.IGNORECASE,
+)
+
+
+def _colon_time_to_seconds(t: str) -> int:
+    seconds = 0
+    for part in t.split(":"):
+        seconds = seconds * 60 + int(part)
+    return seconds
+
+
+def _repair_broken_ts_links(html: str) -> str:
+    """Rebuild timestamp anchors truncated to `<a href="...t=M:SS</a>`."""
+    def repair(m: re.Match) -> str:
+        url_prefix = m.group(1)
+        display = m.group(2)
+        return f'<a href="{url_prefix}{_colon_time_to_seconds(display)}" class="ts-link">{display}</a>'
+    return _BROKEN_TS_LINK_RE.sub(repair, html)
+
 
 def _sanitize_summary(html: str | None) -> str | None:
     """Strip malicious HTML from a summary fragment.
 
-    Two-stage sanitization:
-    1. nh3.clean() — allowlist-based HTML sanitizer; removes all tags/attributes
+    Three-stage sanitization:
+    1. Broken-timestamp-anchor repair — rebuilds <a href="...t=M:SS</a> tags
+       that the LLM emitted without the closing quote and link text.
+    2. nh3.clean() — allowlist-based HTML sanitizer; removes all tags/attributes
        not on the allowlist, strips javascript: URIs, and cleans event handlers.
-    2. Trailing-tag fix — removes any trailing '<...' left by LLM truncation so
+    3. Trailing-tag fix — removes any trailing '<...' left by LLM truncation so
        the browser cannot consume subsequent HTML as an attribute value.
     """
     if not html:
         return html
-    # Stage 1: allowlist-based XSS sanitization
+    # Stage 1: repair LLM-truncated timestamp anchors
+    repaired = _repair_broken_ts_links(html)
+    # Stage 2: allowlist-based XSS sanitization
     cleaned = nh3.clean(
-        html,
+        repaired,
         tags=_ALLOWED_TAGS,
         attributes=_ALLOWED_ATTRS,
         url_schemes=_ALLOWED_URL_SCHEMES,
         link_rel=None,  # preserve existing rel/class; do not override
     )
-    # Stage 2: strip trailing incomplete tag from LLM truncation
+    # Stage 3: strip trailing incomplete tag from LLM truncation
     cleaned = re.sub(r"<[^>]*$", "", cleaned).rstrip()
     return cleaned if cleaned else None
 
