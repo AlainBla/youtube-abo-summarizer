@@ -618,12 +618,25 @@ function getCookie(name) {
 }
 
 function getSet(name) {
-  const val = getCookie(name);
-  return val ? new Set(val.split(',').filter(Boolean)) : new Set();
+  // Read/bookmark sets live in localStorage (MB-scale limit) rather than a
+  // cookie (4096 bytes — silently stops persisting after a few hundred IDs).
+  // On first run for a given browser, migrate whatever the old cookie still
+  // holds, then retire the cookie so it stops accumulating.
+  try {
+    const raw = localStorage.getItem(name);
+    if (raw !== null) return new Set(JSON.parse(raw).filter(Boolean));
+  } catch (e) { /* localStorage unavailable — fall through to migration/empty */ }
+  const legacy = getCookie(name);
+  const migrated = legacy ? new Set(legacy.split(',').filter(Boolean)) : new Set();
+  saveSet(name, migrated);
+  document.cookie = name + '=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';
+  return migrated;
 }
 
 function saveSet(name, set) {
-  setCookie(name, Array.from(set).join(','));
+  try {
+    localStorage.setItem(name, JSON.stringify(Array.from(set)));
+  } catch (e) { /* storage full/unavailable — state won't persist this session */ }
 }
 
 function setsEqual(a, b) {
