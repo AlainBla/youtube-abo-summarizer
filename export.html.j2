@@ -1226,6 +1226,14 @@ function loadEmbed(el, id) {
     + 'clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>';
 }
 
+function getSearchText(v) {
+  if (v.search_text !== undefined) return v.search_text;
+  const html = SUMMARIES[v.video_id] || '';
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  v.search_text = ((v.title || '') + ' ' + text).toLowerCase();
+  return v.search_text;
+}
+
 function applyFiltersAndSort(page) {
   const q = document.getElementById('search').value.trim().toLowerCase();
   const sort = document.getElementById('sort').value;
@@ -1243,7 +1251,7 @@ function applyFiltersAndSort(page) {
     if (bookmarkFilter === 'bookmarked' && !bookmarkSet.has(v.video_id)) return false;
     if (dateFrom && v.published_at.slice(0, 10) < dateFrom) return false;
     if (q) {
-      if ((v.search_text || '').indexOf(q) === -1) return false;
+      if (getSearchText(v).indexOf(q) === -1) return false;
     }
     return true;
   });

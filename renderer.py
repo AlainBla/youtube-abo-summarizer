@@ -79,18 +79,6 @@ def _sanitize_summary(html: str | None) -> str | None:
     return cleaned if cleaned else None
 
 
-def _strip_html_to_text(html: str | None) -> str:
-    """Reduce an HTML fragment to plain whitespace-normalised text.
-
-    Used to precompute a lightweight, lowercased full-text search field so the
-    browser never has to strip the (heavy) summary HTML on every keystroke.
-    """
-    if not html:
-        return ""
-    text = re.sub(r"<[^>]+>", " ", html)
-    return re.sub(r"\s+", " ", text).strip()
-
-
 def _report_meta(lang: str, generated_date: str, total_videos: int, num_channels: int) -> str:
     if lang == "de":
         vids = f"{total_videos} Video{'s' if total_videos != 1 else ''}"
@@ -162,10 +150,10 @@ def render_export_html(
     """Render and write a self-contained export HTML file with embedded video data.
 
     The data is embedded as two parts: a lightweight ``index`` (everything except
-    the heavy summary HTML, plus a precomputed lowercased ``search_text``) that
-    drives filtering/sorting/search, and a ``summaries`` map (video_id -> HTML)
-    consulted only when a card is rendered. The combined ``{index, summaries}``
-    JSON is gzip+base64 embedded (``compress=True``, decompressed in-browser via
+    the heavy summary HTML) that drives filtering/sorting/search, and a
+    ``summaries`` map (video_id -> HTML) consulted when a card is rendered or a
+    text search is issued. The combined ``{index, summaries}`` JSON is gzip+base64
+    embedded (``compress=True``, decompressed in-browser via
     ``DecompressionStream``); ``compress=False`` embeds it as a plain JSON string
     parsed with ``JSON.parse`` for browsers without ``DecompressionStream``.
 
@@ -188,9 +176,6 @@ def render_export_html(
         if summary:
             summaries[vid] = summary
         entry = {k: val for k, val in v.items() if k != "summary"}
-        entry["search_text"] = (
-            f"{v.get('title') or ''} {_strip_html_to_text(summary)}".lower()
-        )
         index.append(entry)
 
     raw = json.dumps({"index": index, "summaries": summaries}, ensure_ascii=False)
