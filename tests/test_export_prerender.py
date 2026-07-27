@@ -244,3 +244,81 @@ console.log(JSON.stringify(CARDS.map(function (c) {
     assert "is-read" not in by_id["v2"]["classes"]
     assert "is-active" in by_id["v2"]["bookmarkActive"]
     assert "is-active" not in by_id["v2"]["readActive"]
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_control_interaction_during_decode_window_does_not_wipe_prerendered_grid():
+    """Coordinator finding 1: every filter/sort/search/lang control wires its
+    'change'/'input' listener at script-parse time -- well before bootstrap()
+    decodes the index and flips dataReady. Without a dataReady guard inside
+    applyFiltersAndSort(), an interaction in that window (e.g. changing the
+    sort dropdown) runs VIDEOS.filter(...)/.sort(...) against an empty VIDEOS
+    and replaces the pre-rendered first page with "no videos found" -- the
+    exact flicker this branch exists to remove, worst on the large archives
+    it targets.
+
+    Pins two things: (1) the interaction during the window must leave the
+    pre-rendered grid alone, and (2) once bootstrap() resolves, the *user's*
+    control value -- not the default -- is what gets rendered, proving the
+    input was deferred rather than silently dropped."""
+    videos = [
+        video("v1", "2026-01-01T00:00:00Z", title="Charlie"),
+        video("v2", "2026-01-02T00:00:00Z", title="Alpha"),
+        video("v3", "2026-01-03T00:00:00Z", title="Bravo"),
+    ]
+    html = render_export(videos)
+    real_script = extract_script(html)
+
+    # Prevent the script's own requestAnimationFrame(bootstrap) tail call so
+    # this test controls exactly when bootstrap() runs.
+    setup = "globalThis.requestAnimationFrame = function () {};\n"
+    script = setup + real_script
+
+    snippet = """
+    // Simulate the pre-rendered first page already sitting in the DOM.
+    var grid = document.getElementById('grid');
+    grid.innerHTML = 'PRERENDERED-MARKER';
+
+    // The user changes the sort control and its 'change' listener fires --
+    // strictly before bootstrap() has ever run. VIDEOS is still [],
+    // dataReady is still false.
+    document.getElementById('sort').value = 'title';
+    applyFiltersAndSort();
+    var gridAfterInteraction = grid.innerHTML;
+    var dataReadyAfterInteraction = dataReady;
+
+    bootstrap().then(function () {
+      console.log(JSON.stringify({
+        gridAfterInteraction: gridAfterInteraction,
+        dataReadyAfterInteraction: dataReadyAfterInteraction,
+        gridAfterBootstrap: grid.innerHTML,
+        dataReadyAfterBootstrap: dataReady,
+        sortValue: document.getElementById('sort').value,
+      }));
+      process.exit(0);
+    });
+    """
+
+    out = run_node(script, snippet)
+    data = json.loads(out.strip().splitlines()[-1])
+
+    assert data["dataReadyAfterInteraction"] is False
+    assert data["gridAfterInteraction"] == "PRERENDERED-MARKER", (
+        "a control interaction before bootstrap() must not wipe the "
+        "pre-rendered grid"
+    )
+
+    assert data["dataReadyAfterBootstrap"] is True
+    assert data["sortValue"] == "title", "the user's control value must survive"
+
+    final = data["gridAfterBootstrap"]
+    assert final != "PRERENDERED-MARKER"
+    # title-ascending order is Alpha (v2), Bravo (v3), Charlie (v1) -- not the
+    # date-desc default order (v3, v2, v1). This proves the eventual render
+    # reflects the sort the user chose during the decode window, not the
+    # control's default value.
+    assert (
+        final.index('data-video-id="v2"')
+        < final.index('data-video-id="v3"')
+        < final.index('data-video-id="v1"')
+    ), "final render must reflect the sort the user chose during the decode window"

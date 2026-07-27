@@ -390,7 +390,7 @@ Each report script activates the virtual environment, renders the HTML, sends th
 | `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns `(summary_html, tags)` tuple — structured HTML with chronological sections, proportional depth, and timestamp links, plus 3–7 English topic tags extracted from a `<!-- tags: ... -->` comment appended by the model; `max_tokens=16384` |
 | `renderer.py` | Jinja2 renderer; writes the final HTML report; accepts `lang=` kwarg; sanitizes summaries at render time to strip any trailing incomplete HTML tag (guards against LLM output truncated mid-tag) |
 | `i18n.py` | UI string dicts for `de` (default) and `en`; `get_strings()` and `resolve_lang()` helpers used by the renderer |
-| `template.html.j2` | Self-contained dark-theme HTML report template; read/bookmark buttons with cookie-based state; all UI strings sourced from `i18n.py` via `{{ t.xxx }}` |
+| `template.html.j2` | Self-contained dark-theme HTML report template; read/bookmark buttons with state persisted in browser `localStorage`; all UI strings sourced from `i18n.py` via `{{ t.xxx }}` |
 | `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date/channel/tag/read/bookmark filters (each with a visible label), sort, pagination; channel name on each card is clickable and toggles the channel filter; in-page language selector with flag emoji (cookie `yt_lang`, browser fallback); full `de`/`en` string set in the embedded `I18N` object; sync bar shows "Ingest" button when `can_ingest` is true |
 | `state.py` | Reads/writes `last_run.json` (per-channel ISO timestamps) |
 | `send_mail.py` | SMTP email sender |

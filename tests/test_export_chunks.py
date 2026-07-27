@@ -252,6 +252,129 @@ def test_search_before_prefetch_runs_still_finds_late_chunk_match_and_stays_stab
 
 
 @pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_chunk_decode_failure_clears_the_promise_cache_for_retry():
+    """Coordinator finding 2: ensureChunk() caches the in-flight promise in
+    CHUNK_PROMISES so concurrent callers share one decode. If a decode
+    rejects (corrupted/truncated base64, a transient browser hiccup, etc.)
+    and that rejected promise stays cached, every later caller -- a retried
+    page render, another filter change -- would replay the same rejection
+    forever, even after the underlying data would decode fine. The catch in
+    ensureChunk() must clear CHUNK_PROMISES[k] before rethrowing so a
+    subsequent call starts a fresh decode instead."""
+    videos = [video("v%03d" % i, "2026-01-01T00:%03d:00Z" % i) for i in range(60)]
+    html = render_export(videos)
+    script = extract_script(html)
+    out = run_node(script, """
+      bootstrap().then(function () {
+        var goodB64 = SUM_B64[1];
+        // Valid base64 that decodes to plain text, not a gzip stream --
+        // DecompressionStream rejects on it.
+        SUM_B64[1] = 'bm90LWEtdmFsaWQtZ3ppcA==';
+        return ensureChunk(1).then(function () {
+          throw new Error('expected the corrupted chunk to reject');
+        }, function (firstErr) {
+          // Simulate the data becoming available again (e.g. a retried
+          // fetch) and confirm the retry is not poisoned by the cached
+          // rejection.
+          SUM_B64[1] = goodB64;
+          return ensureChunk(1);
+        });
+      }).then(function (map) {
+        console.log(JSON.stringify({retried: true, hasChunk: !!map, count: Object.keys(map).length}));
+      }).catch(function (err) {
+        console.log(JSON.stringify({retried: false, error: String(err)}));
+      });
+    """)
+    data = json.loads(out.strip().splitlines()[-1])
+    assert data["retried"] is True, (
+        "retrying ensureChunk() after a failed decode must not replay the "
+        "cached rejection: " + str(data)
+    )
+    assert data["hasChunk"] is True
+    assert data["count"] == 10  # chunk 1 covers videos 50-59
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_render_page_surfaces_chunk_decode_failure_instead_of_hanging():
+    """Coordinator finding 2: renderPage's ensureChunks(pending).then(...)
+    had no rejection handler. A chunk that fails to decode after a
+    successful index decode used to leave "results-count" stuck on the
+    loading text forever, with no visible sign anything went wrong. The
+    added .catch() must surface the failure there instead."""
+    videos = [video("v%03d" % i, "2026-01-01T00:%03d:00Z" % i) for i in range(60)]
+    html = render_export(videos)
+    script = extract_script(html)
+    out = run_node(script, """
+      bootstrap().then(function () {
+        // Corrupt the chunk that page 3 (indices 40-59) needs beyond
+        // chunk 0 -- page 1/2 are chunk 0 only (indices 0-39), page 3
+        // reaches into chunk 1 (40-49 still chunk 0, 50-59 chunk 1)... use
+        // page 3 with PAGE_SIZE 20: slice is [40,59], spanning both chunks.
+        SUM_B64[1] = 'bm90LWEtdmFsaWQtZ3ppcA==';
+        renderPage(3);
+        var immediateText = document.getElementById('results-count').textContent;
+        return new Promise(function (resolve) {
+          setTimeout(function () {
+            resolve({
+              immediateText: immediateText,
+              settledText: document.getElementById('results-count').textContent,
+            });
+          }, 20);
+        });
+      }).then(function (result) {
+        console.log(JSON.stringify(result));
+      });
+    """)
+    data = json.loads(out.strip().splitlines()[-1])
+    # dom_stub.js sets navigator.languages = ['de'], so detectLang() resolves
+    # to German regardless of the archive's embedded default language.
+    loading_text = "Daten werden geladen…"
+    assert data["immediateText"] == loading_text
+    # Pin the exact showChunkLoadError() text, not just "changed" -- a
+    # successful render would also change this text away from the loading
+    # message, so a mere inequality would not actually prove the .catch() ran.
+    assert data["settledText"] == "Error loading video data."
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_search_surfaces_chunk_decode_failure_instead_of_hanging():
+    """Coordinator finding 2, search path: a full-text search waits for every
+    chunk via ensureAllChunks() (search demands complete coverage, since a
+    partial set could silently drop hits) and that call also had no rejection
+    handler. This is the call site most likely to actually hit a bad chunk,
+    since it is the one that always needs *all* of them, not just the page
+    currently on screen."""
+    videos = [video("v%03d" % i, "2026-01-01T00:%03d:00Z" % i) for i in range(60)]
+    html = render_export(videos)
+    script = extract_script(html)
+    out = run_node(script, """
+      bootstrap().then(function () {
+        // Corrupt a chunk beyond the one already decoded for page 1, before
+        // prefetchChunks()'s idle callback (a setTimeout macrotask) gets a
+        // chance to decode it first.
+        SUM_B64[1] = 'bm90LWEtdmFsaWQtZ3ppcA==';
+        document.getElementById('search').value = 'needle';
+        applyFiltersAndSort();
+        var immediateText = document.getElementById('results-count').textContent;
+        return new Promise(function (resolve) {
+          setTimeout(function () {
+            resolve({
+              immediateText: immediateText,
+              settledText: document.getElementById('results-count').textContent,
+            });
+          }, 20);
+        });
+      }).then(function (result) {
+        console.log(JSON.stringify(result));
+      });
+    """)
+    data = json.loads(out.strip().splitlines()[-1])
+    loading_text = "Daten werden geladen…"
+    assert data["immediateText"] == loading_text
+    assert data["settledText"] == "Error loading video data."
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
 def test_bootstrap_resolves_on_empty_archive_without_throwing():
     # With zero videos, chunks == [] so SUM_B64 == []. The chunk-0 decode
     # must be skipped (there is nothing to decode), not attempted against a
