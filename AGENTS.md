@@ -58,6 +58,7 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 - `renderer.render_export_html()` accepts `lang=`, `sync_url=`, and `show_embed=` (default `True`; pass `False` for `--thumbnail` mode which renders static `<img>` instead of YouTube `<iframe>`)
 - `_sanitize_summary()` strips trailing incomplete HTML tags (guards against LLM truncation)
 - `export.html.j2`: tag chips and channel names on cards are both clickable — they call `setTagFilter()` / `setChannelFilter()` to toggle the corresponding filter
+- `export.html.j2`: with `sync_url` set, `warnIfInsecure()` shows one localized `alert()` on load when `loginRedirectAccepted()` is false. That check mirrors the server's `_valid_redirect_uri()`: any `file://` URI passes, otherwise `window.location.origin` must equal the `SYNC_URL` origin. `loginRedirectUri()` is the single source of the redirect URI — `syncRequestLink()` sends exactly what the check evaluates, so keep them together
 - `export.html.j2`: toggling read/bookmark only re-renders the affected card (via `updateCardInPlace()`) unless the current read/bookmark filter would exclude it, in which case `applyFiltersAndSort()` is called instead
 
 ### Sync server (`sync-server/sync_server.py`)

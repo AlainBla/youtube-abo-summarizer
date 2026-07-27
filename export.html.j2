@@ -535,6 +535,14 @@ const I18N = {
     syncStatusIngesting: 'Wird hinzugef\u00fcgt\u2026',
     syncStatusIngested: 'Video hinzugef\u00fcgt',
     syncStatusIngestFailed: 'Hinzuf\u00fcgen fehlgeschlagen',
+    insecureWarning: 'Diese Seite wurde ohne HTTPS geladen (unverschl\u00fcsselte Verbindung).\n\n'
+      + 'Der Sync-Server lehnt Anmeldungen von unverschl\u00fcsselten Seiten ab \u2014 '
+      + 'Login und Synchronisierung funktionieren hier nicht.',
+    originWarning: function(origin) {
+      return 'Diese Seite wurde nicht vom Sync-Server ausgeliefert.\n\n'
+        + 'Der Login funktioniert nur, wenn die Seite \u00fcber ' + origin
+        + ' ge\u00f6ffnet wird (oder lokal als file://-Datei).';
+    },
   },
   en: {
     pageTitle: 'YouTube Export',
@@ -590,6 +598,14 @@ const I18N = {
     syncStatusIngesting: 'Adding video\u2026',
     syncStatusIngested: 'Video added',
     syncStatusIngestFailed: 'Failed to add video',
+    insecureWarning: 'This page was loaded without HTTPS (unencrypted connection).\n\n'
+      + 'The sync server rejects logins coming from unencrypted pages - '
+      + 'login and syncing do not work here.',
+    originWarning: function(origin) {
+      return 'This page was not served by the sync server.\n\n'
+        + 'Login only works when the page is opened via ' + origin
+        + ' (or locally as a file:// document).';
+    },
   }
 };
 
@@ -694,6 +710,44 @@ window.toggleBookmark = function(videoId) {
 
 {% if sync_url %}
 // ── Sync helpers ────────────────────────────────────────────────────────────
+
+// The redirect URI handed to /auth/request-link — must stay identical to what
+// syncRequestLink() sends, since that is what the server validates.
+function loginRedirectUri() {
+  return window.location.origin + window.location.pathname + window.location.search;
+}
+
+function syncOrigin() {
+  try {
+    return new URL(SYNC_URL, window.location.href).origin;
+  } catch (e) {
+    return '';
+  }
+}
+
+// Mirror of the server's _valid_redirect_uri(): any file:// URI is accepted,
+// otherwise scheme *and* host must match the sync server's own origin. An
+// http:// page talking to an https:// server, a copy served from an unrelated
+// host, and file:// in Firefox (where location.origin serializes to "null")
+// all fail this check — and magic-link login fails with them.
+function loginRedirectAccepted() {
+  var uri = loginRedirectUri();
+  if (uri.indexOf('file://') === 0) return true;
+  var origin = syncOrigin();
+  return origin !== '' && window.location.origin === origin;
+}
+
+// One alert per page load when login cannot work from this page.
+function warnIfInsecure() {
+  if (loginRedirectAccepted()) return;
+  var s = I18N[detectLang()] || I18N.de;
+  var origin = syncOrigin();
+  alert(
+    window.location.protocol === 'http:' && origin.indexOf('https:') === 0
+      ? s.insecureWarning
+      : s.originWarning(origin || SYNC_URL)
+  );
+}
 
 function updateSyncStatus(msg) {
   var el = document.getElementById('sync-status');
@@ -950,7 +1004,7 @@ function syncRequestLink() {
   fetch(SYNC_URL + '/auth/request-link', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({email: email, redirect_uri: window.location.origin + window.location.pathname + window.location.search})
+    body: JSON.stringify({email: email, redirect_uri: loginRedirectUri()})
   })
   .then(function() { updateSyncStatus(s.syncStatusSent); })
   .catch(function() { updateSyncStatus(s.syncStatusFailed); });
@@ -1476,6 +1530,8 @@ async function bootstrap() {
 
 bootstrap();
 {% if sync_url %}
+// Deferred out of the parse path so the rest of the script runs first.
+setTimeout(warnIfInsecure, 0);
 initSync();
 window.addEventListener('online', function() {
   if (getSyncToken()) initSync();

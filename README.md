@@ -182,6 +182,21 @@ python export.py --all --sync-url https://sync.example.com --output archive.html
 Users log in via magic link (email → click link → session stored in browser localStorage).
 State syncs automatically on page load and on each read/bookmark toggle.
 
+The server only accepts magic-link redirect URIs whose origin matches its own
+`BASE_URL`, or any `file://` URI. The export page mirrors that rule client-side
+and shows a single `alert()` on load when login cannot work from where the page
+is being viewed:
+
+| Page opened from | Warning |
+|---|---|
+| Same origin as `--sync-url` | none |
+| `file://` (Chrome/Safari — `location.origin` is `file://`) | none |
+| Plain `http://` while the sync server is `https://` | "no HTTPS" warning |
+| Any other origin, incl. `file://` in Firefox (`location.origin` is `null`) | "not served by the sync server" warning, naming the expected origin |
+
+This assumes `--sync-url` and the server's `BASE_URL` point at the same origin;
+if they differ, the page warns based on `--sync-url`.
+
 ### On-demand video ingest
 
 `POST /api/ingest` lets authorised users queue a video for fetching and summarisation without waiting for the next scheduled collection run. The endpoint appends the video ID to a queue file and returns 202 immediately; processing happens asynchronously via a cron job.
