@@ -139,6 +139,66 @@ def render_html(
         f.write(html)
 
 
+EXPORT_CHUNK_SIZE = 50
+EXPORT_FIRST_PAGE = 20
+
+
+def _esc_html(s) -> str:
+    """Escape exactly like escHtml() in export.html.j2 (& < > " and nothing else).
+
+    Kept byte-compatible with the JS implementation so the pre-rendered first
+    page and the JS-built cards produce identical markup.
+    """
+    if s is None:
+        return ""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _summary_preview(html: str) -> tuple[str, str]:
+    """Split a summary into the first paragraph and the remainder.
+
+    Mirrors the split in buildCard(): cut after the first '</p>', the rest is
+    trimmed and hidden behind the "more" toggle.
+    """
+    cut = html.find("</p>")
+    if cut == -1:
+        return html, ""
+    return html[: cut + 4], html[cut + 4 :].strip()
+
+
+def _split_export_data(
+    videos: list[dict], chunk_size: int = EXPORT_CHUNK_SIZE
+) -> tuple[list[dict], list[dict[str, str]]]:
+    """Sort newest-first, then split into a summary-free index and summary chunks.
+
+    Chunk k holds the sanitized summaries of index positions
+    [k*chunk_size, (k+1)*chunk_size), so the browser can decode only the chunks
+    a rendered page actually needs. Videos without a summary occupy an index
+    slot but no chunk entry.
+    """
+    ordered = sorted(
+        videos,
+        key=lambda v: ((v.get("published_at") or ""), v.get("video_id") or ""),
+        reverse=True,
+    )
+    index: list[dict] = []
+    chunks: list[dict[str, str]] = []
+    for pos, v in enumerate(ordered):
+        if pos % chunk_size == 0:
+            chunks.append({})
+        summary = _sanitize_summary(v.get("summary"))
+        if summary:
+            chunks[-1][v["video_id"]] = summary
+        index.append({k: val for k, val in v.items() if k != "summary"})
+    return index, chunks
+
+
 def render_export_html(
     videos: list[dict],
     output_path: str,
