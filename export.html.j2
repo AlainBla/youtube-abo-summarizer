@@ -1399,6 +1399,13 @@ function getSearchText(v) {
 
 function applyFiltersAndSort(page) {
   const q = document.getElementById('search').value.trim().toLowerCase();
+  // A text search reads summary text, which lives in the chunks. Matching on a
+  // partial set would silently drop hits, so wait for all of them instead.
+  if (q && !allChunksReady()) {
+    document.getElementById('results-count').textContent = I18N[currentLang].loadingData;
+    ensureAllChunks().then(function () { applyFiltersAndSort(page); });
+    return;
+  }
   const sort = document.getElementById('sort').value;
   const channelId = document.getElementById('channel-filter').value;
   const tagFilter = document.getElementById('tag-filter').value;
@@ -1649,6 +1656,30 @@ function ensureChunks(list) {
   return Promise.all(Object.keys(wanted).map(function (k) { return ensureChunk(+k); }));
 }
 
+function allChunksReady() {
+  for (var k = 0; k < SUM_B64.length; k++) if (!CHUNKS[k]) return false;
+  return true;
+}
+
+function ensureAllChunks() {
+  var all = [];
+  for (var k = 0; k < SUM_B64.length; k++) all.push(ensureChunk(k));
+  return Promise.all(all);
+}
+
+// Pull the remaining chunks in while the browser is idle, so a search later on
+// usually finds everything already decoded.
+function prefetchChunks() {
+  var idle = window.requestIdleCallback || function (cb) { return setTimeout(cb, 50); };
+  var next = 0;
+  function step() {
+    while (next < SUM_B64.length && CHUNKS[next]) next++;
+    if (next >= SUM_B64.length) return;
+    ensureChunk(next).then(function () { idle(step); });
+  }
+  idle(step);
+}
+
 // Summary HTML lives in the chunk that covers this video's index position.
 function getSummary(v) {
   var map = CHUNKS[v._c];
@@ -1691,6 +1722,7 @@ async function bootstrap() {
 {% if sync_url %}
   initSync();
 {% endif %}
+  prefetchChunks();
 }
 
 {% if sync_url %}

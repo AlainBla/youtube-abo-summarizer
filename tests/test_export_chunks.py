@@ -176,6 +176,82 @@ def test_browser_decodes_index_and_only_the_needed_chunk():
 
 
 @pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_search_waits_for_every_chunk_then_matches_summary_text():
+    videos = [_video("v%03d" % i, "2026-01-01T00:%02d:00Z" % i) for i in range(120)]
+    videos[0]["summary"] = "<p>needle in the oldest video</p>"
+    html = render_export(videos)
+    script = extract_script(html)
+    out = run_node(script, """
+      bootstrap().then(function () {
+        document.getElementById('search').value = 'needle';
+        applyFiltersAndSort();
+        return ensureAllChunks().then(function () {
+          applyFiltersAndSort();
+          console.log(JSON.stringify({
+            decoded: CHUNKS.filter(Boolean).length,
+            hits: filtered.map(function (v) { return v.video_id; }),
+          }));
+        });
+      });
+    """)
+    data = json.loads(out.strip().splitlines()[-1])
+    assert data["decoded"] == 3       # every chunk decoded for the search
+    assert data["hits"] == ["v000"]
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_search_before_prefetch_runs_still_finds_late_chunk_match_and_stays_stable():
+    # Pins the regression parked during Task 2: getSearchText() caches
+    # v.search_text on first call. A search issued before every chunk was
+    # decoded used to see an empty summary for videos whose chunk wasn't
+    # loaded yet, bake that into search_text as title-only text, and never
+    # re-derive it -- so the match was lost forever even once the chunk
+    # loaded. The applyFiltersAndSort() gate added in this task must make
+    # that path unreachable by deferring the whole search until every chunk
+    # is ready, so getSearchText() only ever runs once summary text is
+    # actually available.
+    #
+    # Use export_harness.video() (not the local _video()) for the same
+    # %03d-width reasoning as test_browser_decodes_index_and_only_the_needed_chunk
+    # above -- lexical order of published_at must match numeric order.
+    videos = [video("v%03d" % i, "2026-01-01T00:%03d:00Z" % i) for i in range(120)]
+    videos[0]["summary"] = "<p>zzzneedlezzz appears only in the oldest video</p>"
+    html = render_export(videos)
+    script = extract_script(html)
+    out = run_node(script, """
+      function waitUntil(pred) {
+        return new Promise(function (resolve) {
+          (function poll() {
+            if (pred()) return resolve();
+            setTimeout(poll, 5);
+          })();
+        });
+      }
+      bootstrap().then(function () {
+        // Issue the search immediately: only chunk 0 is decoded so far, and
+        // prefetchChunks()'s idle callback (a setTimeout macrotask) has not
+        // fired yet. This exercises the app's own recovery path, not a
+        // test-forced ensureAllChunks() call.
+        document.getElementById('search').value = 'zzzneedlezzz';
+        applyFiltersAndSort();
+        return waitUntil(allChunksReady).then(function () {
+          applyFiltersAndSort();
+          var firstHits = filtered.map(function (v) { return v.video_id; });
+          // Repeat the identical search. If getSearchText() had poisoned its
+          // cache during the earlier partial-load attempt, this would now
+          // return stale (title-only) search text and lose the match.
+          applyFiltersAndSort();
+          var secondHits = filtered.map(function (v) { return v.video_id; });
+          console.log(JSON.stringify({firstHits: firstHits, secondHits: secondHits}));
+        });
+      });
+    """)
+    data = json.loads(out.strip().splitlines()[-1])
+    assert data["firstHits"] == ["v000"]
+    assert data["secondHits"] == ["v000"]
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
 def test_bootstrap_resolves_on_empty_archive_without_throwing():
     # With zero videos, chunks == [] so SUM_B64 == []. The chunk-0 decode
     # must be skipped (there is nothing to decode), not attempted against a
