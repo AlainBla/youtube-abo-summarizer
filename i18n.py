@@ -9,6 +9,7 @@ STRINGS: dict[str, dict] = {
         "no_thumb": "Kein Thumbnail",
         "read_btn": "\u2713 Gelesen",
         "bookmark_btn": "\u2605 Merken",
+        "show_more": "\u25bc mehr",
         "skip": "\u00fcberspringen \u2193",
         "no_videos": "Keine neuen Videos im gew\u00e4hlten Zeitraum.",
         "transcript_ip_blocked": (
@@ -33,6 +34,7 @@ STRINGS: dict[str, dict] = {
         "no_thumb": "No thumbnail",
         "read_btn": "\u2713 Read",
         "bookmark_btn": "\u2605 Save",
+        "show_more": "\u25bc more",
         "skip": "skip \u2193",
         "no_videos": "No new videos in the selected time range.",
         "transcript_ip_blocked": (

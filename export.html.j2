@@ -381,6 +381,41 @@
   </style>
 </head>
 <body>
+{%- macro card(v) -%}
+<article class="video-card" data-video-id="{{ v.video_id|esch }}">
+<div class="video-thumb">
+{%- if show_embed -%}
+<div class="video-embed-facade" onclick="loadEmbed(this, '{{ v.video_id|esch }}')">
+{%- if v.thumbnail_url %}<img loading="lazy" src="{{ v.thumbnail_url|esch }}" alt="{{ v.title|esch }}">{% endif -%}
+<button class="facade-play" aria-label="Play">&#9654;</button></div>
+{%- else -%}
+{%- if v.thumbnail_url %}<img src="{{ v.thumbnail_url|esch }}" alt="{{ v.title|esch }}">{% else %}<div class="no-thumb">{{ t.no_thumb }}</div>{% endif -%}
+{%- endif -%}
+</div>
+<div class="video-body">
+<div class="video-actions">
+<button class="read-btn" onclick="toggleRead('{{ v.video_id|esch }}')">{{ t.read_btn }}</button>
+<button class="bookmark-btn" onclick="toggleBookmark('{{ v.video_id|esch }}')">{{ t.bookmark_btn }}</button>
+</div>
+<a class="video-title" href="https://www.youtube.com/watch?v={{ v.video_id|esch }}" target="_blank" rel="noopener">{{ v.title|esch }}</a>
+<div class="video-meta"><span class="channel-link" onclick="setChannelFilter('{{ v.channel_id|esch }}')">{{ v.channel_title|esch }}</span> &middot; {{ v.published_at_display|esch }}{% if v.duration %} &middot; {{ v.duration|esch }}{% endif %}{% if v.summary_model %}<span class="model-badge">{{ v.summary_model|esch }}</span>{% endif %}</div>
+{%- if v.tags %}<div class="video-tags">{% for tag in v.tags %}<span class="tag-chip" onclick="setTagFilter('{{ tag|esch }}')">{{ tag|esch }}</span>{% endfor %}</div>{% endif -%}
+<div class="video-summary">
+{%- if v.summary_preview -%}
+{{ v.summary_preview }}{% if v.summary_rest %}<button class="summary-toggle" onclick="toggleSummary(this)">{{ t.show_more }}</button><div class="summary-details" hidden>{{ v.summary_rest }}</div>{% endif %}
+{%- elif v.transcript_error == 'ip_blocked' -%}
+<p class="no-transcript ip-blocked">{{ t.transcript_ip_blocked }}</p>
+{%- elif v.transcript_error == 'rate_limited' -%}
+<p class="no-transcript rate-limited">{{ t.transcript_rate_limited }}</p>
+{%- elif v.transcript_error == 'country_blocked' -%}
+<p class="no-transcript country-blocked">{{ t.transcript_country_blocked }}</p>
+{%- else -%}
+<p class="no-transcript unavailable">{{ t.transcript_unavailable }}</p>
+{%- endif -%}
+</div>
+</div>
+</article>
+{%- endmacro -%}
 
 <header class="page-header">
   <div class="header-row">
@@ -417,23 +452,23 @@
   <input type="search" id="search" placeholder="Suchen&hellip;" autocomplete="off">
   <div class="control-group">
     <label class="ctrl-label" for="date-filter" id="label-date">Ab</label>
-    <input type="date" id="date-filter">
+    <input type="date" id="date-filter" autocomplete="off">
   </div>
   <div class="control-group">
     <label class="ctrl-label" for="channel-filter" id="label-channel">Kanal</label>
-    <select id="channel-filter">
+    <select id="channel-filter" autocomplete="off">
       <option value="">Alle</option>
     </select>
   </div>
   <div class="control-group">
     <label class="ctrl-label" for="tag-filter" id="label-tag">Tag</label>
-    <select id="tag-filter">
+    <select id="tag-filter" autocomplete="off">
       <option value="">Alle</option>
     </select>
   </div>
   <div class="control-group">
     <label class="ctrl-label" for="read-filter" id="label-read">Gelesen</label>
-    <select id="read-filter">
+    <select id="read-filter" autocomplete="off">
       <option value="">Alle</option>
       <option value="unread">Nur ungelesen</option>
       <option value="read">Nur gelesen</option>
@@ -441,14 +476,14 @@
   </div>
   <div class="control-group">
     <label class="ctrl-label" for="bookmark-filter" id="label-bookmark">Merken</label>
-    <select id="bookmark-filter">
+    <select id="bookmark-filter" autocomplete="off">
       <option value="">Alle</option>
       <option value="bookmarked">Nur gemerkt</option>
     </select>
   </div>
   <div class="control-group">
     <label class="ctrl-label" for="sort" id="label-sort">Sortierung</label>
-    <select id="sort">
+    <select id="sort" autocomplete="off">
       <option value="date-desc">Neueste zuerst</option>
       <option value="date-asc">&Auml;lteste zuerst</option>
       <option value="channel">Kanal A&ndash;Z</option>
@@ -459,7 +494,8 @@
   <span class="results-count" id="key-hint" style="color:#444">j/k &mdash; vor/zur&uuml;ck</span>
 </div>
 
-<div id="grid"></div>
+<div id="grid">{% for v in first_page %}{{ card(v) }}{% endfor %}</div>
+<!-- /grid -->
 
 <div class="pagination" id="pagination"></div>
 
@@ -472,7 +508,7 @@ const CHUNK_SIZE = {{ chunk_size }};
 const CHUNKS = [];
 const CHUNK_PROMISES = [];
 let VIDEOS = [];
-const PAGE_SIZE = 20;
+const PAGE_SIZE = {{ first_page_size }};
 const TOTAL_VIDEOS = {{ total_videos }};
 const GENERATED_DATE = '{{ generated_date }}';
 const EMBEDDED_DEFAULT = '{{ default_lang }}';
@@ -1569,7 +1605,11 @@ async function bootstrap() {
 {% endif %}
   populateChannelFilter();
   populateTagFilter();
-  applyLang(detectLang());
+  // The pre-rendered cards carry the export's default language. If the visitor
+  // resolves to a different one, drop them so applyLang() rebuilds from scratch.
+  var lang = detectLang();
+  if (lang !== EMBEDDED_DEFAULT) document.getElementById('grid').innerHTML = '';
+  applyLang(lang);
 }
 
 {% if sync_url %}

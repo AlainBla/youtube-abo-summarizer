@@ -232,9 +232,22 @@ def render_export_html(
     """
     lang = i18n_module.resolve_lang(lang)
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
+    env.filters["esch"] = lambda s: Markup(_esc_html(s))
     template = env.get_template(EXPORT_TEMPLATE_NAME)
 
     index, chunks = _split_export_data(videos)
+
+    # Pre-render the first page so the browser can paint before any blob is
+    # decoded. Chunk 0 covers it because EXPORT_CHUNK_SIZE >= EXPORT_FIRST_PAGE.
+    first_chunk = chunks[0] if chunks else {}
+    first_page = []
+    for entry in index[:EXPORT_FIRST_PAGE]:
+        summary = first_chunk.get(entry["video_id"], "")
+        preview, rest = _summary_preview(summary) if summary else ("", "")
+        item = dict(entry)
+        item["summary_preview"] = Markup(preview)
+        item["summary_rest"] = Markup(rest)
+        first_page.append(item)
 
     index_b64 = None
     chunks_b64: list[str] = []
@@ -263,6 +276,9 @@ def render_export_html(
         default_lang=lang,
         sync_url=safe_sync_url,
         show_embed=show_embed,
+        first_page=first_page,
+        first_page_size=EXPORT_FIRST_PAGE,
+        t=i18n_module.get_strings(lang),
     )
 
     with open(output_path, "w", encoding="utf-8") as f:
