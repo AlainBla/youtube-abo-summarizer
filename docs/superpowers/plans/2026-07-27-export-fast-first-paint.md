@@ -431,6 +431,13 @@ def test_compressed_export_embeds_index_and_chunk_blobs():
     assert "const DATA_B64" not in html
 
 
+def test_ui_code_is_parsed_before_the_data_blob():
+    # Otherwise the pre-rendered cards are clickable before their onclick
+    # handlers exist, and every click is a ReferenceError.
+    html = render_export([_video("v1", "2026-01-01T00:00:00Z")])
+    assert html.index("function buildCard") < html.index("const INDEX_B64")
+
+
 @pytest.mark.skipif(not node_available(), reason="node not installed")
 def test_browser_decodes_index_and_only_the_needed_chunk():
     videos = [_video("v%03d" % i, "2026-01-01T00:%02d:00Z" % i) for i in range(120)]
@@ -500,17 +507,37 @@ Und im `template.render(...)`-Aufruf `data_b64=data_b64` ersetzen durch:
         chunk_size=EXPORT_CHUNK_SIZE,
 ```
 
-**3b — `export.html.j2` Datenzeile (`:471`) ersetzen:**
+**3b — `export.html.j2` Datenzeile (`:471`) ersetzen.** Die eigentliche Datenlast wandert
+dabei in ein **eigenes `<script>` ganz am Ende des `<body>`**, hinter den UI-Code. Sonst
+muss der Browser erst mehrere MB base64 tokenisieren, bevor `toggleRead`, `setTagFilter`,
+`loadEmbed` usw. definiert sind — die vorgerenderten Karten wären sichtbar, aber jeder
+Klick liefe in einen `ReferenceError`.
+
+Im Hauptscript (an Stelle der alten Zeile 471) bleiben nur die leeren Container:
 
 ```jinja
-{% if compressed %}const INDEX_B64 = "{{ index_b64 }}";
-const SUM_B64 = [{% for c in chunks_b64 %}"{{ c }}"{% if not loop.last %},{% endif %}{% endfor %}];
-{% else %}const DATA_OBJ = {{ data_obj }};
-const SUM_B64 = [];{% endif %}
 const CHUNK_SIZE = {{ chunk_size }};
 const CHUNKS = [];
 const CHUNK_PROMISES = [];
 ```
+
+Und **nach** dem schließenden `</script>` des UI-Codes, als letztes Element vor `</body>`:
+
+```jinja
+<script>
+{% if compressed %}const INDEX_B64 = "{{ index_b64 }}";
+const SUM_B64 = [{% for c in chunks_b64 %}"{{ c }}"{% if not loop.last %},{% endif %}{% endfor %}];
+{% else %}const DATA_OBJ = {{ data_obj }};
+const SUM_B64 = [];{% endif %}
+// Kick off the boot only once the blobs exist — bootstrap() reads them, and a
+// requestAnimationFrame scheduled from the UI script could fire while the
+// parser is still working through this script (temporal dead zone).
+requestAnimationFrame(function () { bootstrap(); });
+</script>
+```
+
+Alle Zugriffe auf `INDEX_B64`/`SUM_B64` stehen ausschließlich in Funktionskörpern, deshalb
+ist diese Reihenfolge unproblematisch.
 
 **3c — `loadData()`/`bootstrap()` (`:1497-1531`) ersetzen durch:**
 
@@ -576,11 +603,11 @@ async function bootstrap() {
   applyLang(detectLang());
 }
 
-// Let the pre-rendered first page paint before touching the data blobs.
-requestAnimationFrame(function () { bootstrap(); });
 ```
 
-Die alte Zeile `bootstrap();` (`:1531`) entfällt — der `requestAnimationFrame`-Aufruf ersetzt sie.
+Die alte Zeile `bootstrap();` (`:1531`) entfällt — der `requestAnimationFrame`-Aufruf im
+Daten-Script (Step 3b) ersetzt sie und stellt sicher, dass die erste Seite vor dem
+Dekodieren gemalt wird.
 
 **3d — Summary-Zugriffe umstellen:**
 
@@ -699,6 +726,23 @@ def test_pre_rendered_card_shows_summary_preview_and_toggle():
     html = render_export([video("v1", "2026-01-01T00:00:00Z")])
     assert "Summary of v1" in html
     assert "summary-details" in html
+
+
+def test_page_size_is_rendered_from_the_pre_render_count():
+    import renderer
+    html = render_export([video("v1", "2026-01-01T00:00:00Z")])
+    assert "const PAGE_SIZE = %d;" % renderer.EXPORT_FIRST_PAGE in html
+
+
+def test_filter_controls_do_not_restore_stale_values_on_reload():
+    # A restored <select> value would contradict the static grid until
+    # bootstrap() runs, and a toggle in that window blanks the grid.
+    html = render_export([video("v1", "2026-01-01T00:00:00Z")])
+    for control in ('id="channel-filter"', 'id="tag-filter"', 'id="read-filter"',
+                    'id="bookmark-filter"', 'id="sort"', 'id="date-filter"'):
+        tag_start = html.index(control)
+        tag = html[html.rindex("<", 0, tag_start):html.index(">", tag_start)]
+        assert 'autocomplete="off"' in tag, control
 
 
 @pytest.mark.skipif(not node_available(), reason="node not installed")
@@ -823,6 +867,22 @@ Hinweis für den Implementierer: Das Makro muss zeichengleiches Markup zu `build
 <div id="grid">{% for v in first_page %}{{ card(v) }}{% endfor %}</div>
 <!-- /grid -->
 ```
+
+**3d2 — `PAGE_SIZE` aus dem Renderer speisen**, damit die vorgerenderte Seitenlänge nicht
+von der Pagination abweichen kann. In `renderer.render_export_html()` den Kontext um
+`first_page_size=EXPORT_FIRST_PAGE` ergänzen und in `export.html.j2:474`:
+
+```jinja
+const PAGE_SIZE = {{ first_page_size }};
+```
+
+**3d3 — `autocomplete="off"` auf allen Filter-Controls** (`export.html.j2:420-457`:
+`#date-filter`, `#channel-filter`, `#tag-filter`, `#read-filter`, `#bookmark-filter`,
+`#sort`). Browser stellen `<select>`-Werte beim Reload wieder her; die statische erste
+Seite kennt diese Werte nicht. Ohne das Attribut zeigt die Seite nach F5 z.B. „Nur
+ungelesen" im Dropdown, aber die 20 neuesten Videos im Grid — und ein Read-Toggle in
+diesem Fenster ruft `applyFiltersAndSort()` mit noch leerem `VIDEOS` auf und leert das
+Grid, bis `bootstrap()` es repariert.
 
 **3e — `bootstrap()` um den Sprachfall ergänzen** (vor `applyLang(detectLang())`):
 
@@ -1368,3 +1428,9 @@ git commit -m "docs(export): describe the chunked loading and pre-rendered first
 - Die vorgerenderte Seite trägt die Export-Default-Sprache; abweichende Browsersprachen sehen kurz die Default-Sprache, bis `applyLang()` neu baut.
 - Das Jinja-Makro und `buildCard()` sind zwei Implementierungen desselben Markups. `tests/test_export_prerender.py` hält sie zusammen — bei Änderungen an einer Seite immer beide anfassen.
 - Chunking gilt nur im komprimierten Pfad; `--no-compress` lädt weiterhin alles auf einmal.
+- `_esc_html()` bildet `escHtml()` exakt nach und escaped deshalb **kein** `'`, obwohl
+  beide Seiten in `onclick="setTagFilter('…')"` interpolieren (Tags kommen vom LLM). Das
+  ist Bestandsverhalten aus `buildCard()` und nicht Teil dieser Änderung. Wer es später
+  repariert, muss beide Seiten anfassen — sonst schlägt
+  `test_pre_rendered_markup_matches_buildCard_output` fehl, und dieser Fehlschlag ist der
+  Test bei der Arbeit, nicht ein kaputter Test.
