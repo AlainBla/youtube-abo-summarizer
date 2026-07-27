@@ -497,6 +497,34 @@
 <div id="grid">{% for v in first_page %}{{ card(v) }}{% endfor %}</div>
 <!-- /grid -->
 
+<script>
+// Paint the pre-rendered cards with the stored read/bookmark state right away;
+// waiting for the main script would show every card as unread for a moment.
+(function () {
+  function ids(key) {
+    try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')); }
+    catch (e) { return new Set(); }
+  }
+  var read = ids('yt_read');
+  var marked = ids('yt_bookmark');
+  if (!read.size && !marked.size) return;
+  var cards = document.querySelectorAll('#grid .video-card');
+  for (var i = 0; i < cards.length; i++) {
+    var id = cards[i].getAttribute('data-video-id');
+    if (read.has(id)) {
+      cards[i].classList.add('is-read');
+      var rb = cards[i].querySelector('.read-btn');
+      if (rb) rb.classList.add('is-active');
+    }
+    if (marked.has(id)) {
+      cards[i].classList.add('is-bookmarked');
+      var bb = cards[i].querySelector('.bookmark-btn');
+      if (bb) bb.classList.add('is-active');
+    }
+  }
+})();
+</script>
+
 <div class="pagination" id="pagination"></div>
 
 <footer class="page-footer">

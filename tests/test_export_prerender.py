@@ -108,3 +108,13 @@ def test_pre_rendered_markup_matches_buildCard_output():
 
     for pre, js in zip(pre_rendered, built):
         assert _normalize(pre) == _normalize(js)
+
+
+def test_hydration_script_runs_before_the_data_blob():
+    html = render_export([video("v1", "2026-01-01T00:00:00Z")])
+    hydrate = html.index("yt_read")
+    blob = html.index("const INDEX_B64")
+    assert hydrate < blob, "read/bookmark hydration must run before the data blob"
+    assert "is-read" in html
+
+
