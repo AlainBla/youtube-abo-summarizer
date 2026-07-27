@@ -120,7 +120,9 @@ No YouTube API calls or LLM calls happen here — it reads only from `data/`.
 
 ## Usage — export archive
 
-`export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, a "published after" date filter, channel/tag/read/bookmark filter dropdowns (each with a descriptive label), sorting by date/channel/title, and pagination (20 items per page). Tag chips on each video card are clickable and set the tag filter directly. Read and bookmark state is tracked via browser cookies and persists across sessions. No server required.
+`export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, a "published after" date filter, channel/tag/read/bookmark filter dropdowns (each with a descriptive label), sorting by date/channel/title, and pagination (20 items per page). Tag chips on each video card are clickable and set the tag filter directly. Read and bookmark state is tracked in browser `localStorage` and persists across sessions. No server required.
+
+The first page of cards (20, matching the page size) is pre-rendered as static HTML directly in the file, so it paints immediately — before any embedded data is decoded. The rest of the UI (search, filters, sorting, later pages) becomes interactive once the page's own script has decoded the lightweight metadata index in the background.
 
 A language selector in the page header lets you switch between German and English at any time. The choice is stored in a cookie (`yt_lang`) and automatically applied when you open any export file. If no cookie is set, the browser's preferred language is used; if that language is not supported, the embedded default (set via `--lang`) is used.
 
@@ -156,11 +158,15 @@ python export.py --all --sync-url https://sync.example.com --output archive.html
 `--hours` and `--all` are mutually exclusive. The default output filename is `export_YYYY-MM-DD_HH-MM.html`.
 The LLM model badge is hidden by default; use `--show-model` to display it.
 
-The embedded video data is split into a lightweight search index and a separate summaries map, then
-gzip-compressed and base64-embedded; the browser decompresses it via the native `DecompressionStream`
-API (Chrome 80+, Firefox 113+, Safari 16.4+). This keeps the single-file export small and fast to load
-while preserving full-text search across the whole archive. For older browsers, `--no-compress` embeds
-the data as a plain JavaScript object instead (larger file, no `DecompressionStream` required).
+The embedded video data is split into a lightweight metadata index (everything needed for filtering,
+sorting, and dropdowns) and a series of summary "chunks" — each covering 50 videos in the sorted (newest
+first) order. The index and every chunk are gzip-compressed and base64-embedded separately; the browser
+decompresses the index immediately via the native `DecompressionStream` API (Chrome 80+, Firefox 113+,
+Safari 16.4+), then decodes only the chunk(s) a rendered page actually needs, fetching further chunks
+in the background as you page through the archive. A full-text search waits for every chunk to be
+decoded first, so a search never misses a match hiding in a page that hasn't loaded yet. For older
+browsers, `--no-compress` embeds one plain `{index, summaries}` JavaScript object instead — no chunking,
+no `DecompressionStream` required, but the whole archive loads up front.
 
 ## Sync server (optional)
 
