@@ -468,9 +468,10 @@
 </footer>
 
 <script>
-{% if compressed %}const DATA_B64 = "{{ data_b64 }}";{% else %}const DATA_OBJ = {{ data_obj }};{% endif %}
+const CHUNK_SIZE = {{ chunk_size }};
+const CHUNKS = [];
+const CHUNK_PROMISES = [];
 let VIDEOS = [];
-let SUMMARIES = {};
 const PAGE_SIZE = 20;
 const TOTAL_VIDEOS = {{ total_videos }};
 const GENERATED_DATE = '{{ generated_date }}';
@@ -514,6 +515,7 @@ const I18N = {
     transcriptCountryBlocked: '\ud83c\udf10 Kein Transkript \u2014 Video ist nur in bestimmten Regionen verf\u00fcgbar (Geoblocking).',
     transcriptUnavailable: 'Kein Transkript f\u00fcr dieses Video verf\u00fcgbar.',
     noVideos: 'Keine Videos gefunden.',
+    loadingData: 'Daten werden geladen…',
     results: function(n) { return n + ' Video' + (n !== 1 ? 's' : ''); },
     prevPage: '\u2190',
     nextPage: '\u2192',
@@ -577,6 +579,7 @@ const I18N = {
     transcriptCountryBlocked: '\ud83c\udf10 No transcript \u2014 Video is only available in certain regions (geo-blocking).',
     transcriptUnavailable: 'No transcript available for this video.',
     noVideos: 'No videos found.',
+    loadingData: 'Loading data…',
     results: function(n) { return n + ' video' + (n !== 1 ? 's' : ''); },
     prevPage: '\u2190',
     nextPage: '\u2192',
@@ -1216,7 +1219,7 @@ function buildCard(v) {
   if (v.duration) metaExtras += ' &middot; ' + escHtml(v.duration);
   if (v.summary_model) metaExtras += '<span class="model-badge">' + escHtml(v.summary_model) + '</span>';
 
-  const summary = SUMMARIES[v.video_id];
+  const summary = getSummary(v);
   let summaryHtml;
   if (summary) {
     const cut = summary.indexOf('</p>');
@@ -1282,7 +1285,7 @@ function loadEmbed(el, id) {
 
 function getSearchText(v) {
   if (v.search_text !== undefined) return v.search_text;
-  const html = SUMMARIES[v.video_id] || '';
+  const html = getSummary(v) || '';
   const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   v.search_text = ((v.title || '') + ' ' + text).toLowerCase();
   return v.search_text;
@@ -1361,6 +1364,19 @@ function renderPageInPlace(slice) {
 
 function renderPage(page, skipScroll) {
   var s = I18N[currentLang];
+  // Never render a card whose summary chunk is missing — it would look like a
+  // video without a transcript. Keep the current DOM and re-render when ready.
+  var wantedPage = Math.min(
+    Math.max(1, page),
+    Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  );
+  var pendingStart = (wantedPage - 1) * PAGE_SIZE;
+  var pending = filtered.slice(pendingStart, pendingStart + PAGE_SIZE);
+  if (pending.length && !chunksReady(pending)) {
+    document.getElementById('results-count').textContent = s.loadingData;
+    ensureChunks(pending).then(function () { renderPage(page, skipScroll); });
+    return;
+  }
   var total = filtered.length;
   var pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   var prevPage = currentPage;
@@ -1494,41 +1510,67 @@ document.getElementById('lang-select').addEventListener('change', function() {
   applyLang(this.value);
 });
 
-// ── Data loading (decompress embedded blob, then bootstrap the UI) ─────────────
-async function loadData() {
-{% if compressed %}
-  var bin = atob(DATA_B64);
+// ── Data loading (index first, summary chunks on demand) ──────────────────────
+async function gunzipB64(b64) {
+  var bin = atob(b64);
   var bytes = new Uint8Array(bin.length);
   for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   if (typeof DecompressionStream === 'undefined') {
     throw new Error('DecompressionStream unsupported');
   }
   var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-  var text = await new Response(stream).text();
-  return JSON.parse(text);
-{% else %}
-  return DATA_OBJ;
-{% endif %}
+  return JSON.parse(await new Response(stream).text());
+}
+
+function ensureChunk(k) {
+  if (CHUNKS[k]) return Promise.resolve(CHUNKS[k]);
+  if (!CHUNK_PROMISES[k]) {
+    CHUNK_PROMISES[k] = gunzipB64(SUM_B64[k]).then(function (map) {
+      CHUNKS[k] = map;
+      return map;
+    });
+  }
+  return CHUNK_PROMISES[k];
+}
+
+function chunksReady(list) {
+  return list.every(function (v) { return !!CHUNKS[v._c]; });
+}
+
+function ensureChunks(list) {
+  var wanted = {};
+  list.forEach(function (v) { wanted[v._c] = true; });
+  return Promise.all(Object.keys(wanted).map(function (k) { return ensureChunk(+k); }));
+}
+
+// Summary HTML lives in the chunk that covers this video's index position.
+function getSummary(v) {
+  var map = CHUNKS[v._c];
+  return map ? map[v.video_id] : undefined;
 }
 
 async function bootstrap() {
-  var data;
+{% if compressed %}
   try {
-    data = await loadData();
+    VIDEOS = await gunzipB64(INDEX_B64);
   } catch (e) {
     document.getElementById('grid').innerHTML =
       '<p class="no-videos">This archive needs a modern browser '
       + '(DecompressionStream support). Re-export with --no-compress for older browsers.</p>';
     return;
   }
-  VIDEOS = data.index || [];
-  SUMMARIES = data.summaries || {};
+  VIDEOS.forEach(function (v, i) { v._c = (i / CHUNK_SIZE) | 0; });
+  await ensureChunk(0);   // covers the first page
+{% else %}
+  VIDEOS = DATA_OBJ.index || [];
+  VIDEOS.forEach(function (v) { v._c = 0; });
+  CHUNKS[0] = DATA_OBJ.summaries || {};
+{% endif %}
   populateChannelFilter();
   populateTagFilter();
   applyLang(detectLang());
 }
 
-bootstrap();
 {% if sync_url %}
 // Deferred out of the parse path so the rest of the script runs first.
 setTimeout(warnIfInsecure, 0);
@@ -1542,6 +1584,17 @@ document.addEventListener('visibilitychange', function() {
 window.addEventListener('focus', pullServerState);
 setInterval(pullServerState, 5 * 60 * 1000);
 {% endif %}
+</script>
+
+<script>
+{% if compressed %}const INDEX_B64 = "{{ index_b64 }}";
+const SUM_B64 = [{% for c in chunks_b64 %}"{{ c }}"{% if not loop.last %},{% endif %}{% endfor %}];
+{% else %}const DATA_OBJ = {{ data_obj }};
+const SUM_B64 = [];{% endif %}
+// Kick off the boot only once the blobs exist — bootstrap() reads them, and a
+// requestAnimationFrame scheduled from the UI script could fire while the
+// parser is still working through this script (temporal dead zone).
+requestAnimationFrame(function () { bootstrap(); });
 </script>
 
 </body>

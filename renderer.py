@@ -160,6 +160,10 @@ def _esc_html(s) -> str:
     )
 
 
+def _gzip_b64(raw: str) -> str:
+    return base64.b64encode(gzip.compress(raw.encode("utf-8"))).decode("ascii")
+
+
 def _summary_preview(html: str) -> tuple[str, str]:
     """Split a summary into the first paragraph and the remainder.
 
@@ -209,13 +213,15 @@ def render_export_html(
 ) -> None:
     """Render and write a self-contained export HTML file with embedded video data.
 
-    The data is embedded as two parts: a lightweight ``index`` (everything except
-    the heavy summary HTML) that drives filtering/sorting/search, and a
-    ``summaries`` map (video_id -> HTML) consulted when a card is rendered or a
-    text search is issued. The combined ``{index, summaries}`` JSON is gzip+base64
-    embedded (``compress=True``, decompressed in-browser via
-    ``DecompressionStream``); ``compress=False`` embeds it as a plain JSON string
-    parsed with ``JSON.parse`` for browsers without ``DecompressionStream``.
+    The data is embedded as a lightweight ``index`` (everything except the heavy
+    summary HTML, via ``_split_export_data()``) plus a series of summary
+    "chunks" (video_id -> HTML), each covering ``EXPORT_CHUNK_SIZE`` index
+    positions. ``compress=True`` (default) gzip+base64 encodes the index and
+    each chunk separately so the browser only has to decompress the chunk(s)
+    a rendered page actually needs (decoded in-browser via
+    ``DecompressionStream``). ``compress=False`` embeds one plain
+    ``{index, summaries}`` JSON object (no chunking) for browsers without
+    ``DecompressionStream``.
 
     videos: list of dicts with keys:
         video_id, channel_id, channel_title, title,
@@ -228,25 +234,19 @@ def render_export_html(
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
     template = env.get_template(EXPORT_TEMPLATE_NAME)
 
-    index: list[dict] = []
-    summaries: dict[str, str] = {}
-    for v in videos:
-        summary = _sanitize_summary(v.get("summary"))
-        vid = v["video_id"]
-        if summary:
-            summaries[vid] = summary
-        entry = {k: val for k, val in v.items() if k != "summary"}
-        index.append(entry)
+    index, chunks = _split_export_data(videos)
 
-    raw = json.dumps({"index": index, "summaries": summaries}, ensure_ascii=False)
-
-    data_b64 = None
+    index_b64 = None
+    chunks_b64: list[str] = []
     data_obj = None
     if compress:
-        data_b64 = base64.b64encode(gzip.compress(raw.encode("utf-8"))).decode("ascii")
+        index_b64 = _gzip_b64(json.dumps(index, ensure_ascii=False))
+        chunks_b64 = [_gzip_b64(json.dumps(c, ensure_ascii=False)) for c in chunks]
     else:
-        # Embed the JSON directly as a JS object literal; escape </ so it cannot
-        # break out of the <script> tag. Markup avoids double-escaping.
+        # Old browsers without DecompressionStream: one plain object literal,
+        # no chunking. Escape </ so it cannot break out of the <script> tag.
+        summaries = {vid: html for chunk in chunks for vid, html in chunk.items()}
+        raw = json.dumps({"index": index, "summaries": summaries}, ensure_ascii=False)
         data_obj = Markup(raw.replace("</", "<\\/"))
 
     # sync_url is operator-configured (not user content); wrap so autoescape preserves it
@@ -254,7 +254,9 @@ def render_export_html(
 
     html = template.render(
         compressed=compress,
-        data_b64=data_b64,
+        index_b64=index_b64,
+        chunks_b64=chunks_b64,
+        chunk_size=EXPORT_CHUNK_SIZE,
         data_obj=data_obj,
         generated_date=date.today().strftime("%B %d, %Y"),
         total_videos=len(videos),

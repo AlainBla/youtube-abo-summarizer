@@ -91,3 +91,59 @@ def test_esc_html_matches_js_escaping():
     # Mirrors escHtml() in export.html.j2: & < > " and nothing else.
     assert _esc_html('a&b<c>d"e\'f') == "a&amp;b&lt;c&gt;d&quot;e'f"
     assert _esc_html(None) == ""
+
+
+import json
+
+import pytest
+
+from export_harness import extract_script, node_available, render_export, run_node, video
+
+
+def test_compressed_export_embeds_index_and_chunk_blobs():
+    videos = [_video("v%03d" % i, "2026-01-01T00:%02d:00Z" % i) for i in range(7)]
+    html = render_export(videos)
+    assert "const INDEX_B64" in html
+    assert "const SUM_B64" in html
+    assert "const DATA_B64" not in html
+
+
+def test_ui_code_is_parsed_before_the_data_blob():
+    # Otherwise the pre-rendered cards are clickable before their onclick
+    # handlers exist, and every click is a ReferenceError.
+    html = render_export([_video("v1", "2026-01-01T00:00:00Z")])
+    assert html.index("function buildCard") < html.index("const INDEX_B64")
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_browser_decodes_index_and_only_the_needed_chunk():
+    # Use export_harness.video() (not the local _video()) because its default
+    # summary embeds the video id ("Summary of v119"), which the last
+    # assertion below checks for. %03d (not %02d) keeps the minute field a
+    # fixed 3-digit width so its lexical (string) order matches numeric order
+    # all the way to i=119 -- _split_export_data sorts on the raw
+    # published_at string.
+    videos = [video("v%03d" % i, "2026-01-01T00:%03d:00Z" % i) for i in range(120)]
+    html = render_export(videos)
+    script = extract_script(html)
+    out = run_node(script, """
+      bootstrap().then(function () {
+        console.log(JSON.stringify({
+          videos: VIDEOS.length,
+          firstId: VIDEOS[0].video_id,
+          firstChunk: VIDEOS[0]._c,
+          lastChunk: VIDEOS[VIDEOS.length - 1]._c,
+          chunkCount: SUM_B64.length,
+          decoded: CHUNKS.filter(Boolean).length,
+          summary: getSummary(VIDEOS[0]),
+        }));
+      });
+    """)
+    data = json.loads(out.strip().splitlines()[-1])
+    assert data["videos"] == 120
+    assert data["firstId"] == "v119"          # newest first
+    assert data["firstChunk"] == 0
+    assert data["lastChunk"] == 2             # 120 videos / 50 per chunk
+    assert data["chunkCount"] == 3
+    assert data["decoded"] == 1               # only chunk 0 decoded for page 1
+    assert "Summary of v119" in data["summary"]
