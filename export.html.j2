@@ -525,6 +525,33 @@
 })();
 </script>
 
+{% if sync_url %}
+<script>
+// Fire the sync requests before the data blobs are parsed, so the round trip
+// overlaps decoding. Both endpoints only need the token, so they run in
+// parallel instead of whoami-then-state. initSync() consumes the promises once
+// the index is ready — nothing touches the DOM from here.
+const SYNC_URL = "{{ sync_url }}";
+(function () {
+  var m = window.location.hash.match(/[#&]session=([^&]+)/);
+  if (m) {
+    try { localStorage.setItem('yt_sync_token', decodeURIComponent(m[1])); } catch (e) {}
+    try {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    } catch (e) {}  // file:// may throw SecurityError
+  }
+  var token = '';
+  try { token = localStorage.getItem('yt_sync_token') || ''; } catch (e) {}
+  if (!token) return;
+  var opts = {headers: {'Authorization': 'Bearer ' + token}};
+  window.__syncBoot = {
+    whoami: fetch(SYNC_URL + '/api/whoami', opts).catch(function () { return null; }),
+    state: fetch(SYNC_URL + '/api/state', opts).catch(function () { return null; })
+  };
+})();
+</script>
+{% endif %}
+
 <div class="pagination" id="pagination"></div>
 
 <footer class="page-footer">
@@ -540,9 +567,6 @@ const PAGE_SIZE = {{ first_page_size }};
 const TOTAL_VIDEOS = {{ total_videos }};
 const GENERATED_DATE = '{{ generated_date }}';
 const EMBEDDED_DEFAULT = '{{ default_lang }}';
-{% if sync_url %}
-const SYNC_URL = "{{ sync_url }}";
-{% endif %}
 
 // ── i18n ──────────────────────────────────────────────────────────────────────
 const I18N = {
@@ -921,31 +945,36 @@ function applyServerState(serverData) {
   }
 }
 
-function initSync() {
-  // Step 1: harvest #session=UUID from URL fragment, then strip immediately
-  var hash = window.location.hash;
-  var m = hash.match(/[#&]session=([^&]+)/);
-  if (m) {
-    localStorage.setItem('yt_sync_token', decodeURIComponent(m[1]));
-    try {
-      history.replaceState(
-        null, '',
-        window.location.pathname + window.location.search
-      );
-    } catch (e) {}  // file:// may throw SecurityError — silently continue
-  }
+// Re-issue both sync requests (used after 'online' events; the initial pair is
+// fired by the early inline script).
+function startSyncRequests() {
+  var token = getSyncToken();
+  if (!token) return null;
+  var opts = {headers: {'Authorization': 'Bearer ' + token}};
+  return {
+    whoami: fetch(SYNC_URL + '/api/whoami', opts).catch(function () { return null; }),
+    state: fetch(SYNC_URL + '/api/state', opts).catch(function () { return null; })
+  };
+}
 
+function initSync() {
   var token = getSyncToken();
   if (!token) {
     showSyncLoggedOut();
     return;
   }
-
+  if (!window.__syncBoot) window.__syncBoot = startSyncRequests();
+  if (!window.__syncBoot) {
+    showSyncLoggedOut();
+    return;
+  }
+  var boot = window.__syncBoot;
   var s = I18N[currentLang || 'de'];
   updateSyncStatus(s.syncStatusSyncing);
 
-  fetch(SYNC_URL + '/api/whoami', {headers: {'Authorization': 'Bearer ' + token}})
-    .then(function(r) {
+  boot.whoami
+    .then(function (r) {
+      if (!r) throw new Error('offline');
       if (r.status === 401) {
         localStorage.removeItem('yt_sync_token');
         showSyncLoggedOut();
@@ -953,24 +982,21 @@ function initSync() {
       }
       return r.json();
     })
-    .then(function(data) {
-      if (!data) return null;
+    .then(function (data) {
+      if (!data) return;
       showSyncLoggedIn(data.email);
       if (data.can_ingest) showIngestUI();
-      return fetch(SYNC_URL + '/api/state', {
-        headers: {'Authorization': 'Bearer ' + token}
+      return boot.state.then(function (r) {
+        if (!r) throw new Error('offline');
+        if (r.status === 401) {
+          localStorage.removeItem('yt_sync_token');
+          showSyncLoggedOut();
+          return null;
+        }
+        return r.json();
       });
     })
-    .then(function(r) {
-      if (!r) return null;
-      if (r.status === 401) {
-        localStorage.removeItem('yt_sync_token');
-        showSyncLoggedOut();
-        return null;
-      }
-      return r.json();
-    })
-    .then(function(serverData) {
+    .then(function (serverData) {
       if (!serverData) return;
       applyServerState(serverData);
       applyFiltersAndSort(currentPage);
@@ -979,7 +1005,7 @@ function initSync() {
         ' \u2014 ' + new Date().toLocaleTimeString()
       );
     })
-    .catch(function() {
+    .catch(function () {
       updateSyncStatus(I18N[currentLang || 'de'].syncStatusFailed);
     });
 }
@@ -1638,14 +1664,15 @@ async function bootstrap() {
   var lang = detectLang();
   if (lang !== EMBEDDED_DEFAULT) document.getElementById('grid').innerHTML = '';
   applyLang(lang);
+{% if sync_url %}
+  initSync();
+{% endif %}
 }
 
 {% if sync_url %}
-// Deferred out of the parse path so the rest of the script runs first.
 setTimeout(warnIfInsecure, 0);
-initSync();
-window.addEventListener('online', function() {
-  if (getSyncToken()) initSync();
+window.addEventListener('online', function () {
+  if (getSyncToken()) { window.__syncBoot = startSyncRequests(); initSync(); }
 });
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'visible') pullServerState();
