@@ -563,6 +563,13 @@ const CHUNK_SIZE = {{ chunk_size }};
 const CHUNKS = [];
 const CHUNK_PROMISES = [];
 let VIDEOS = [];
+// Flips true in bootstrap() once VIDEOS and chunk 0 are decoded and in place.
+// Server-state handlers (initSync, pullServerState) that can fire while this
+// is still false must merge into the local sets/localStorage as usual but
+// skip re-rendering -- VIDEOS is empty or stale until bootstrap says so, and
+// bootstrap's own applyLang()/applyFiltersAndSort() will render the merged
+// state moments later.
+let dataReady = false;
 const PAGE_SIZE = {{ first_page_size }};
 const TOTAL_VIDEOS = {{ total_videos }};
 const GENERATED_DATE = '{{ generated_date }}';
@@ -999,7 +1006,12 @@ function initSync() {
     .then(function (serverData) {
       if (!serverData) return;
       applyServerState(serverData);
-      applyFiltersAndSort(currentPage);
+      // Skip the re-render while bootstrap() hasn't populated VIDEOS yet --
+      // rendering now would run applyFiltersAndSort's VIDEOS.filter(...)
+      // against [] and wipe the pre-rendered first page. bootstrap() calls
+      // applyLang()/applyFiltersAndSort() itself once VIDEOS is ready, which
+      // will pick up the state merged just above.
+      if (dataReady) applyFiltersAndSort(currentPage);
       updateSyncStatus(
         I18N[currentLang || 'de'].syncStatusSynced +
         ' \u2014 ' + new Date().toLocaleTimeString()
@@ -1027,7 +1039,11 @@ function pullServerState() {
       var prevRead = new Set(readSet);
       var prevBookmark = new Set(bookmarkSet);
       applyServerState(serverData);
-      if (!setsEqual(prevRead, readSet) || !setsEqual(prevBookmark, bookmarkSet)) {
+      // See the matching comment in initSync(): merge always, but only
+      // re-render once bootstrap() has populated VIDEOS -- this handler is
+      // reachable from visibilitychange/focus/setInterval, which are wired
+      // up at parse time, well before the index/chunk-0 decode resolves.
+      if (dataReady && (!setsEqual(prevRead, readSet) || !setsEqual(prevBookmark, bookmarkSet))) {
         applyFiltersAndSort(currentPage);
       }
       updateSyncStatus(
@@ -1650,6 +1666,13 @@ async function bootstrap() {
     document.getElementById('grid').innerHTML =
       '<p class="no-videos">This archive needs a modern browser '
       + '(DecompressionStream support). Re-export with --no-compress for older browsers.</p>';
+{% if sync_url %}
+    // dataReady stays false -- VIDEOS never gets populated on this path, so
+    // initSync()'s eventual applyServerState()/applyFiltersAndSort() will
+    // merge state but skip rendering, leaving the message above intact. The
+    // sync bar still needs to reflect the visitor's real login state though.
+    initSync();
+{% endif %}
     return;
   }
 {% else %}
@@ -1657,6 +1680,7 @@ async function bootstrap() {
   VIDEOS.forEach(function (v) { v._c = 0; });
   CHUNKS[0] = DATA_OBJ.summaries || {};
 {% endif %}
+  dataReady = true;
   populateChannelFilter();
   populateTagFilter();
   // The pre-rendered cards carry the export's default language. If the visitor
