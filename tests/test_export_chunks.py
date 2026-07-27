@@ -94,6 +94,7 @@ def test_esc_html_matches_js_escaping():
 
 
 import json
+import re
 
 import pytest
 
@@ -113,6 +114,31 @@ def test_ui_code_is_parsed_before_the_data_blob():
     # handlers exist, and every click is a ReferenceError.
     html = render_export([_video("v1", "2026-01-01T00:00:00Z")])
     assert html.index("function buildCard") < html.index("const INDEX_B64")
+
+
+def test_data_blob_script_is_the_last_element_before_body_close():
+    # The whole point of the two-script split is that the browser can finish
+    # parsing/executing the UI code before it has to tokenize the multi-MB
+    # base64 payload. If a future edit moves other markup or script after the
+    # data-blob script, that guarantee silently breaks. Nothing but whitespace
+    # and the closing tags may follow the data script's </script>.
+    html = render_export([_video("v1", "2026-01-01T00:00:00Z")])
+    tail = html[html.rindex("</script>") + len("</script>"):]
+    assert re.fullmatch(r"\s*</body>\s*</html>\s*", tail), tail
+
+
+def test_bootstrap_is_scheduled_via_raf_not_called_synchronously():
+    # A bare, synchronous `bootstrap();` call would run (and could read
+    # INDEX_B64/SUM_B64) before the data-blob script has even finished
+    # parsing when scheduled from elsewhere -- it must only ever be invoked
+    # from inside the requestAnimationFrame callback in the trailing script.
+    html = render_export([_video("v1", "2026-01-01T00:00:00Z")])
+    assert "requestAnimationFrame(function () { bootstrap(); });" in html
+    calls = [m.start() for m in re.finditer(r"\bbootstrap\(\);", html)]
+    assert len(calls) == 1, "expected exactly one bootstrap() call site"
+    call_pos = calls[0]
+    prefix = "function () { "
+    assert html[call_pos - len(prefix):call_pos] == prefix
 
 
 @pytest.mark.skipif(not node_available(), reason="node not installed")
@@ -147,3 +173,22 @@ def test_browser_decodes_index_and_only_the_needed_chunk():
     assert data["chunkCount"] == 3
     assert data["decoded"] == 1               # only chunk 0 decoded for page 1
     assert "Summary of v119" in data["summary"]
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_bootstrap_resolves_on_empty_archive_without_throwing():
+    # With zero videos, chunks == [] so SUM_B64 == []. The chunk-0 decode
+    # must be skipped (there is nothing to decode), not attempted against a
+    # missing SUM_B64[0] -- that used to throw inside the unawaited
+    # requestAnimationFrame callback (an unhandled rejection: no cards, no
+    # error message, populateChannelFilter/populateTagFilter/applyLang never
+    # ran).
+    html = render_export([])
+    script = extract_script(html)
+    out = run_node(script, """
+      bootstrap().then(function () {
+        console.log(JSON.stringify({videos: VIDEOS.length}));
+      });
+    """)
+    data = json.loads(out.strip().splitlines()[-1])
+    assert data["videos"] == 0

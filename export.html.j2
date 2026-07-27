@@ -1553,14 +1553,15 @@ async function bootstrap() {
 {% if compressed %}
   try {
     VIDEOS = await gunzipB64(INDEX_B64);
+    VIDEOS.forEach(function (v, i) { v._c = (i / CHUNK_SIZE) | 0; });
+    // SUM_B64 is empty for a zero-video archive -- nothing to decode.
+    if (SUM_B64.length) await ensureChunk(0);   // covers the first page
   } catch (e) {
     document.getElementById('grid').innerHTML =
       '<p class="no-videos">This archive needs a modern browser '
       + '(DecompressionStream support). Re-export with --no-compress for older browsers.</p>';
     return;
   }
-  VIDEOS.forEach(function (v, i) { v._c = (i / CHUNK_SIZE) | 0; });
-  await ensureChunk(0);   // covers the first page
 {% else %}
   VIDEOS = DATA_OBJ.index || [];
   VIDEOS.forEach(function (v) { v._c = 0; });
