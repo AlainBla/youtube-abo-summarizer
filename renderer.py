@@ -5,7 +5,7 @@ import gzip
 import json
 import os
 import re
-from datetime import date
+from datetime import datetime
 
 import nh3
 
@@ -118,7 +118,7 @@ def render_html(
     template = env.get_template(TEMPLATE_NAME)
 
     total_videos = sum(len(ch["videos"]) for ch in channels_data)
-    generated_date = date.today().strftime("%B %d, %Y")
+    generated_date = datetime.now().strftime(GENERATED_STAMP_FORMAT)
 
     # Sanitize summaries, then mark as Markup so autoescape does not re-escape them
     for ch in channels_data:
@@ -138,6 +138,10 @@ def render_html(
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
 
+
+# Shown in the page header and title of both the report and the export. Local
+# time, with hour and minute so several runs on the same day stay tellable apart.
+GENERATED_STAMP_FORMAT = "%B %d, %Y %H:%M"
 
 EXPORT_CHUNK_SIZE = 50
 EXPORT_FIRST_PAGE = 20
@@ -271,7 +275,7 @@ def render_export_html(
         chunks_b64=chunks_b64,
         chunk_size=EXPORT_CHUNK_SIZE,
         data_obj=data_obj,
-        generated_date=date.today().strftime("%B %d, %Y"),
+        generated_date=datetime.now().strftime(GENERATED_STAMP_FORMAT),
         total_videos=len(videos),
         default_lang=lang,
         sync_url=safe_sync_url,
