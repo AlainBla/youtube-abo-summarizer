@@ -381,6 +381,41 @@
   </style>
 </head>
 <body>
+{%- macro card(v) -%}
+<article class="video-card" data-video-id="{{ v.video_id|esch }}">
+<div class="video-thumb">
+{%- if show_embed -%}
+<div class="video-embed-facade" onclick="loadEmbed(this, '{{ v.video_id|esch }}')">
+{%- if v.thumbnail_url %}<img loading="lazy" src="{{ v.thumbnail_url|esch }}" alt="{{ v.title|esch }}">{% endif -%}
+<button class="facade-play" aria-label="Play">&#9654;</button></div>
+{%- else -%}
+{%- if v.thumbnail_url %}<img src="{{ v.thumbnail_url|esch }}" alt="{{ v.title|esch }}">{% else %}<div class="no-thumb">{{ t.no_thumb }}</div>{% endif -%}
+{%- endif -%}
+</div>
+<div class="video-body">
+<div class="video-actions">
+<button class="read-btn" onclick="toggleRead('{{ v.video_id|esch }}')">{{ t.read_btn }}</button>
+<button class="bookmark-btn" onclick="toggleBookmark('{{ v.video_id|esch }}')">{{ t.bookmark_btn }}</button>
+</div>
+<a class="video-title" href="https://www.youtube.com/watch?v={{ v.video_id|esch }}" target="_blank" rel="noopener">{{ v.title|esch }}</a>
+<div class="video-meta"><span class="channel-link" onclick="setChannelFilter('{{ v.channel_id|esch }}')">{{ v.channel_title|esch }}</span> &middot; {{ v.published_at_display|esch }}{% if v.duration %} &middot; {{ v.duration|esch }}{% endif %}{% if v.summary_model %}<span class="model-badge">{{ v.summary_model|esch }}</span>{% endif %}</div>
+{%- if v.tags %}<div class="video-tags">{% for tag in v.tags %}<span class="tag-chip" onclick="setTagFilter('{{ tag|esch }}')">{{ tag|esch }}</span>{% endfor %}</div>{% endif -%}
+<div class="video-summary">
+{%- if v.summary_preview -%}
+{{ v.summary_preview }}{% if v.summary_rest %}<button class="summary-toggle" onclick="toggleSummary(this)">{{ t.show_more }}</button><div class="summary-details" hidden>{{ v.summary_rest }}</div>{% endif %}
+{%- elif v.transcript_error == 'ip_blocked' -%}
+<p class="no-transcript ip-blocked">{{ t.transcript_ip_blocked }}</p>
+{%- elif v.transcript_error == 'rate_limited' -%}
+<p class="no-transcript rate-limited">{{ t.transcript_rate_limited }}</p>
+{%- elif v.transcript_error == 'country_blocked' -%}
+<p class="no-transcript country-blocked">{{ t.transcript_country_blocked }}</p>
+{%- else -%}
+<p class="no-transcript unavailable">{{ t.transcript_unavailable }}</p>
+{%- endif -%}
+</div>
+</div>
+</article>
+{%- endmacro -%}
 
 <header class="page-header">
   <div class="header-row">
@@ -417,23 +452,23 @@
   <input type="search" id="search" placeholder="Suchen&hellip;" autocomplete="off">
   <div class="control-group">
     <label class="ctrl-label" for="date-filter" id="label-date">Ab</label>
-    <input type="date" id="date-filter">
+    <input type="date" id="date-filter" autocomplete="off">
   </div>
   <div class="control-group">
     <label class="ctrl-label" for="channel-filter" id="label-channel">Kanal</label>
-    <select id="channel-filter">
+    <select id="channel-filter" autocomplete="off">
       <option value="">Alle</option>
     </select>
   </div>
   <div class="control-group">
     <label class="ctrl-label" for="tag-filter" id="label-tag">Tag</label>
-    <select id="tag-filter">
+    <select id="tag-filter" autocomplete="off">
       <option value="">Alle</option>
     </select>
   </div>
   <div class="control-group">
     <label class="ctrl-label" for="read-filter" id="label-read">Gelesen</label>
-    <select id="read-filter">
+    <select id="read-filter" autocomplete="off">
       <option value="">Alle</option>
       <option value="unread">Nur ungelesen</option>
       <option value="read">Nur gelesen</option>
@@ -441,14 +476,14 @@
   </div>
   <div class="control-group">
     <label class="ctrl-label" for="bookmark-filter" id="label-bookmark">Merken</label>
-    <select id="bookmark-filter">
+    <select id="bookmark-filter" autocomplete="off">
       <option value="">Alle</option>
       <option value="bookmarked">Nur gemerkt</option>
     </select>
   </div>
   <div class="control-group">
     <label class="ctrl-label" for="sort" id="label-sort">Sortierung</label>
-    <select id="sort">
+    <select id="sort" autocomplete="off">
       <option value="date-desc">Neueste zuerst</option>
       <option value="date-asc">&Auml;lteste zuerst</option>
       <option value="channel">Kanal A&ndash;Z</option>
@@ -459,7 +494,63 @@
   <span class="results-count" id="key-hint" style="color:#444">j/k &mdash; vor/zur&uuml;ck</span>
 </div>
 
-<div id="grid"></div>
+<div id="grid">{% for v in first_page %}{{ card(v) }}{% endfor %}</div>
+<!-- /grid -->
+
+<script>
+// Paint the pre-rendered cards with the stored read/bookmark state right away;
+// waiting for the main script would show every card as unread for a moment.
+(function () {
+  function ids(key) {
+    try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')); }
+    catch (e) { return new Set(); }
+  }
+  var read = ids('yt_read');
+  var marked = ids('yt_bookmark');
+  if (!read.size && !marked.size) return;
+  var cards = document.querySelectorAll('#grid .video-card');
+  for (var i = 0; i < cards.length; i++) {
+    var id = cards[i].getAttribute('data-video-id');
+    if (read.has(id)) {
+      cards[i].classList.add('is-read');
+      var rb = cards[i].querySelector('.read-btn');
+      if (rb) rb.classList.add('is-active');
+    }
+    if (marked.has(id)) {
+      cards[i].classList.add('is-bookmarked');
+      var bb = cards[i].querySelector('.bookmark-btn');
+      if (bb) bb.classList.add('is-active');
+    }
+  }
+})();
+</script>
+
+{% if sync_url %}
+<script>
+// Fire the sync requests before the data blobs are parsed, so the round trip
+// overlaps decoding. Both endpoints only need the token, so they run in
+// parallel instead of whoami-then-state. initSync() consumes the promises once
+// the index is ready — nothing touches the DOM from here.
+const SYNC_URL = "{{ sync_url }}";
+(function () {
+  var m = window.location.hash.match(/[#&]session=([^&]+)/);
+  if (m) {
+    try { localStorage.setItem('yt_sync_token', decodeURIComponent(m[1])); } catch (e) {}
+    try {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    } catch (e) {}  // file:// may throw SecurityError
+  }
+  var token = '';
+  try { token = localStorage.getItem('yt_sync_token') || ''; } catch (e) {}
+  if (!token) return;
+  var opts = {headers: {'Authorization': 'Bearer ' + token}};
+  window.__syncBoot = {
+    whoami: fetch(SYNC_URL + '/api/whoami', opts).catch(function () { return null; }),
+    state: fetch(SYNC_URL + '/api/state', opts).catch(function () { return null; })
+  };
+})();
+</script>
+{% endif %}
 
 <div class="pagination" id="pagination"></div>
 
@@ -468,16 +559,23 @@
 </footer>
 
 <script>
-{% if compressed %}const DATA_B64 = "{{ data_b64 }}";{% else %}const DATA_OBJ = {{ data_obj }};{% endif %}
+const CHUNK_SIZE = {{ chunk_size }};
+const CHUNKS = [];
+const CHUNK_PROMISES = [];
 let VIDEOS = [];
-let SUMMARIES = {};
-const PAGE_SIZE = 20;
+// Flips true in bootstrap() once VIDEOS and chunk 0 are decoded and in place.
+// Server-state handlers (initSync, pullServerState) and applyFiltersAndSort()
+// itself (called from every filter/sort/search/lang control, all wired at
+// script-parse time) can fire while this is still false. They must merge
+// state into the local sets/localStorage/DOM as usual but skip re-rendering
+// -- VIDEOS is empty or stale until bootstrap says so, and bootstrap's own
+// applyLang()/applyFiltersAndSort() will render the merged state, from
+// whatever values the controls hold at that point, moments later.
+let dataReady = false;
+const PAGE_SIZE = {{ first_page_size }};
 const TOTAL_VIDEOS = {{ total_videos }};
 const GENERATED_DATE = '{{ generated_date }}';
 const EMBEDDED_DEFAULT = '{{ default_lang }}';
-{% if sync_url %}
-const SYNC_URL = "{{ sync_url }}";
-{% endif %}
 
 // ── i18n ──────────────────────────────────────────────────────────────────────
 const I18N = {
@@ -514,6 +612,7 @@ const I18N = {
     transcriptCountryBlocked: '\ud83c\udf10 Kein Transkript \u2014 Video ist nur in bestimmten Regionen verf\u00fcgbar (Geoblocking).',
     transcriptUnavailable: 'Kein Transkript f\u00fcr dieses Video verf\u00fcgbar.',
     noVideos: 'Keine Videos gefunden.',
+    loadingData: 'Daten werden geladen…',
     results: function(n) { return n + ' Video' + (n !== 1 ? 's' : ''); },
     prevPage: '\u2190',
     nextPage: '\u2192',
@@ -577,6 +676,7 @@ const I18N = {
     transcriptCountryBlocked: '\ud83c\udf10 No transcript \u2014 Video is only available in certain regions (geo-blocking).',
     transcriptUnavailable: 'No transcript available for this video.',
     noVideos: 'No videos found.',
+    loadingData: 'Loading data…',
     results: function(n) { return n + ' video' + (n !== 1 ? 's' : ''); },
     prevPage: '\u2190',
     nextPage: '\u2192',
@@ -685,7 +785,10 @@ window.toggleRead = function(videoId) {
   saveSet(COOKIE_READ, readSet);
   {% if sync_url %}syncToggle('read', videoId, readSet.has(videoId) ? 1 : 0);{% endif %}
   var readFilter = document.getElementById('read-filter').value;
-  if (readFilter === 'read' || readFilter === 'unread') {
+  // Before dataReady, applyFiltersAndSort() is a no-op (see its own guard),
+  // so falling through to updateCardInPlace() keeps the click giving
+  // immediate visual feedback on the pre-rendered card either way.
+  if (dataReady && (readFilter === 'read' || readFilter === 'unread')) {
     applyFiltersAndSort(currentPage);
   } else {
     updateCardInPlace(videoId);
@@ -701,7 +804,9 @@ window.toggleBookmark = function(videoId) {
   saveSet(COOKIE_BOOKMARK, bookmarkSet);
   {% if sync_url %}syncToggle('bookmark', videoId, bookmarkSet.has(videoId) ? 1 : 0);{% endif %}
   var bookmarkFilter = document.getElementById('bookmark-filter').value;
-  if (bookmarkFilter === 'bookmarked') {
+  // Same reasoning as toggleRead above: fall through to updateCardInPlace()
+  // while dataReady is still false so the click always has visible effect.
+  if (dataReady && bookmarkFilter === 'bookmarked') {
     applyFiltersAndSort(currentPage);
   } else {
     updateCardInPlace(videoId);
@@ -854,31 +959,36 @@ function applyServerState(serverData) {
   }
 }
 
-function initSync() {
-  // Step 1: harvest #session=UUID from URL fragment, then strip immediately
-  var hash = window.location.hash;
-  var m = hash.match(/[#&]session=([^&]+)/);
-  if (m) {
-    localStorage.setItem('yt_sync_token', decodeURIComponent(m[1]));
-    try {
-      history.replaceState(
-        null, '',
-        window.location.pathname + window.location.search
-      );
-    } catch (e) {}  // file:// may throw SecurityError — silently continue
-  }
+// Re-issue both sync requests (used after 'online' events; the initial pair is
+// fired by the early inline script).
+function startSyncRequests() {
+  var token = getSyncToken();
+  if (!token) return null;
+  var opts = {headers: {'Authorization': 'Bearer ' + token}};
+  return {
+    whoami: fetch(SYNC_URL + '/api/whoami', opts).catch(function () { return null; }),
+    state: fetch(SYNC_URL + '/api/state', opts).catch(function () { return null; })
+  };
+}
 
+function initSync() {
   var token = getSyncToken();
   if (!token) {
     showSyncLoggedOut();
     return;
   }
-
+  if (!window.__syncBoot) window.__syncBoot = startSyncRequests();
+  if (!window.__syncBoot) {
+    showSyncLoggedOut();
+    return;
+  }
+  var boot = window.__syncBoot;
   var s = I18N[currentLang || 'de'];
   updateSyncStatus(s.syncStatusSyncing);
 
-  fetch(SYNC_URL + '/api/whoami', {headers: {'Authorization': 'Bearer ' + token}})
-    .then(function(r) {
+  boot.whoami
+    .then(function (r) {
+      if (!r) throw new Error('offline');
       if (r.status === 401) {
         localStorage.removeItem('yt_sync_token');
         showSyncLoggedOut();
@@ -886,33 +996,35 @@ function initSync() {
       }
       return r.json();
     })
-    .then(function(data) {
-      if (!data) return null;
+    .then(function (data) {
+      if (!data) return;
       showSyncLoggedIn(data.email);
       if (data.can_ingest) showIngestUI();
-      return fetch(SYNC_URL + '/api/state', {
-        headers: {'Authorization': 'Bearer ' + token}
+      return boot.state.then(function (r) {
+        if (!r) throw new Error('offline');
+        if (r.status === 401) {
+          localStorage.removeItem('yt_sync_token');
+          showSyncLoggedOut();
+          return null;
+        }
+        return r.json();
       });
     })
-    .then(function(r) {
-      if (!r) return null;
-      if (r.status === 401) {
-        localStorage.removeItem('yt_sync_token');
-        showSyncLoggedOut();
-        return null;
-      }
-      return r.json();
-    })
-    .then(function(serverData) {
+    .then(function (serverData) {
       if (!serverData) return;
       applyServerState(serverData);
-      applyFiltersAndSort(currentPage);
+      // Skip the re-render while bootstrap() hasn't populated VIDEOS yet --
+      // rendering now would run applyFiltersAndSort's VIDEOS.filter(...)
+      // against [] and wipe the pre-rendered first page. bootstrap() calls
+      // applyLang()/applyFiltersAndSort() itself once VIDEOS is ready, which
+      // will pick up the state merged just above.
+      if (dataReady) applyFiltersAndSort(currentPage);
       updateSyncStatus(
         I18N[currentLang || 'de'].syncStatusSynced +
         ' \u2014 ' + new Date().toLocaleTimeString()
       );
     })
-    .catch(function() {
+    .catch(function () {
       updateSyncStatus(I18N[currentLang || 'de'].syncStatusFailed);
     });
 }
@@ -934,7 +1046,11 @@ function pullServerState() {
       var prevRead = new Set(readSet);
       var prevBookmark = new Set(bookmarkSet);
       applyServerState(serverData);
-      if (!setsEqual(prevRead, readSet) || !setsEqual(prevBookmark, bookmarkSet)) {
+      // See the matching comment in initSync(): merge always, but only
+      // re-render once bootstrap() has populated VIDEOS -- this handler is
+      // reachable from visibilitychange/focus/setInterval, which are wired
+      // up at parse time, well before the index/chunk-0 decode resolves.
+      if (dataReady && (!setsEqual(prevRead, readSet) || !setsEqual(prevBookmark, bookmarkSet))) {
         applyFiltersAndSort(currentPage);
       }
       updateSyncStatus(
@@ -1216,7 +1332,7 @@ function buildCard(v) {
   if (v.duration) metaExtras += ' &middot; ' + escHtml(v.duration);
   if (v.summary_model) metaExtras += '<span class="model-badge">' + escHtml(v.summary_model) + '</span>';
 
-  const summary = SUMMARIES[v.video_id];
+  const summary = getSummary(v);
   let summaryHtml;
   if (summary) {
     const cut = summary.indexOf('</p>');
@@ -1282,14 +1398,30 @@ function loadEmbed(el, id) {
 
 function getSearchText(v) {
   if (v.search_text !== undefined) return v.search_text;
-  const html = SUMMARIES[v.video_id] || '';
+  const html = getSummary(v) || '';
   const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   v.search_text = ((v.title || '') + ' ' + text).toLowerCase();
   return v.search_text;
 }
 
 function applyFiltersAndSort(page) {
+  // Every filter/sort/search/lang control wires its listener at script-parse
+  // time, long before bootstrap() decodes the index -- an interaction during
+  // that window would otherwise run this function's VIDEOS.filter(...)
+  // against an empty VIDEOS and wipe the pre-rendered first page. Skip the
+  // render here; the control's own value is left untouched in the DOM, so
+  // bootstrap's own applyLang()/applyFiltersAndSort() call (once dataReady
+  // flips true) picks it up and renders exactly what the user chose.
+  if (!dataReady) return;
+
   const q = document.getElementById('search').value.trim().toLowerCase();
+  // A text search reads summary text, which lives in the chunks. Matching on a
+  // partial set would silently drop hits, so wait for all of them instead.
+  if (q && !allChunksReady()) {
+    document.getElementById('results-count').textContent = I18N[currentLang].loadingData;
+    ensureAllChunks().then(function () { applyFiltersAndSort(page); }).catch(showChunkLoadError);
+    return;
+  }
   const sort = document.getElementById('sort').value;
   const channelId = document.getElementById('channel-filter').value;
   const tagFilter = document.getElementById('tag-filter').value;
@@ -1361,6 +1493,19 @@ function renderPageInPlace(slice) {
 
 function renderPage(page, skipScroll) {
   var s = I18N[currentLang];
+  // Never render a card whose summary chunk is missing — it would look like a
+  // video without a transcript. Keep the current DOM and re-render when ready.
+  var wantedPage = Math.min(
+    Math.max(1, page),
+    Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  );
+  var pendingStart = (wantedPage - 1) * PAGE_SIZE;
+  var pending = filtered.slice(pendingStart, pendingStart + PAGE_SIZE);
+  if (pending.length && !chunksReady(pending)) {
+    document.getElementById('results-count').textContent = s.loadingData;
+    ensureChunks(pending).then(function () { renderPage(page, skipScroll); }).catch(showChunkLoadError);
+    return;
+  }
   var total = filtered.length;
   var pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   var prevPage = currentPage;
@@ -1494,47 +1639,135 @@ document.getElementById('lang-select').addEventListener('change', function() {
   applyLang(this.value);
 });
 
-// ── Data loading (decompress embedded blob, then bootstrap the UI) ─────────────
-async function loadData() {
-{% if compressed %}
-  var bin = atob(DATA_B64);
+// ── Data loading (index first, summary chunks on demand) ──────────────────────
+async function gunzipB64(b64) {
+  var bin = atob(b64);
   var bytes = new Uint8Array(bin.length);
   for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   if (typeof DecompressionStream === 'undefined') {
     throw new Error('DecompressionStream unsupported');
   }
   var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-  var text = await new Response(stream).text();
-  return JSON.parse(text);
-{% else %}
-  return DATA_OBJ;
-{% endif %}
+  return JSON.parse(await new Response(stream).text());
+}
+
+function ensureChunk(k) {
+  if (CHUNKS[k]) return Promise.resolve(CHUNKS[k]);
+  if (!CHUNK_PROMISES[k]) {
+    CHUNK_PROMISES[k] = gunzipB64(SUM_B64[k]).then(function (map) {
+      CHUNKS[k] = map;
+      return map;
+    }).catch(function (err) {
+      // Clear the cache entry so a later retry (another filter/sort change,
+      // or prefetchChunks' idle loop) issues a fresh decode attempt instead
+      // of replaying this same rejected promise forever.
+      CHUNK_PROMISES[k] = null;
+      throw err;
+    });
+  }
+  return CHUNK_PROMISES[k];
+}
+
+function chunksReady(list) {
+  return list.every(function (v) { return !!CHUNKS[v._c]; });
+}
+
+// A chunk that never decodes would otherwise leave "results-count" stuck on
+// the loading text forever, with no visible sign anything went wrong. Surface
+// it in the same spot instead -- the cache entry is already cleared (see
+// ensureChunk's catch), so retrying the interaction (change a filter, search
+// again) attempts a fresh decode rather than replaying this failure.
+function showChunkLoadError(err) {
+  console.error('Failed to load video summary data:', err);
+  document.getElementById('results-count').textContent = 'Error loading video data.';
+}
+
+function ensureChunks(list) {
+  var wanted = {};
+  list.forEach(function (v) { wanted[v._c] = true; });
+  return Promise.all(Object.keys(wanted).map(function (k) { return ensureChunk(+k); }));
+}
+
+function allChunksReady() {
+  for (var k = 0; k < SUM_B64.length; k++) if (!CHUNKS[k]) return false;
+  return true;
+}
+
+function ensureAllChunks() {
+  var all = [];
+  for (var k = 0; k < SUM_B64.length; k++) all.push(ensureChunk(k));
+  return Promise.all(all);
+}
+
+// Pull the remaining chunks in while the browser is idle, so a search later on
+// usually finds everything already decoded.
+function prefetchChunks() {
+  var idle = window.requestIdleCallback || function (cb) { return setTimeout(cb, 50); };
+  var next = 0;
+  function step() {
+    while (next < SUM_B64.length && CHUNKS[next]) next++;
+    if (next >= SUM_B64.length) return;
+    ensureChunk(next).then(function () { idle(step); }).catch(function (err) {
+      // Best-effort background prefetch -- one bad chunk should not stall
+      // the whole loop. Move on; a page/search that actually needs this
+      // chunk will retry the decode on demand via ensureChunk/ensureChunks.
+      console.error('Prefetch failed for summary chunk', next, err);
+      next++;
+      idle(step);
+    });
+  }
+  idle(step);
+}
+
+// Summary HTML lives in the chunk that covers this video's index position.
+function getSummary(v) {
+  var map = CHUNKS[v._c];
+  return map ? map[v.video_id] : undefined;
 }
 
 async function bootstrap() {
-  var data;
+{% if compressed %}
   try {
-    data = await loadData();
+    VIDEOS = await gunzipB64(INDEX_B64);
+    VIDEOS.forEach(function (v, i) { v._c = (i / CHUNK_SIZE) | 0; });
+    // SUM_B64 is empty for a zero-video archive -- nothing to decode.
+    if (SUM_B64.length) await ensureChunk(0);   // covers the first page
   } catch (e) {
     document.getElementById('grid').innerHTML =
       '<p class="no-videos">This archive needs a modern browser '
       + '(DecompressionStream support). Re-export with --no-compress for older browsers.</p>';
+{% if sync_url %}
+    // dataReady stays false -- VIDEOS never gets populated on this path, so
+    // initSync()'s eventual applyServerState()/applyFiltersAndSort() will
+    // merge state but skip rendering, leaving the message above intact. The
+    // sync bar still needs to reflect the visitor's real login state though.
+    initSync();
+{% endif %}
     return;
   }
-  VIDEOS = data.index || [];
-  SUMMARIES = data.summaries || {};
+{% else %}
+  VIDEOS = DATA_OBJ.index || [];
+  VIDEOS.forEach(function (v) { v._c = 0; });
+  CHUNKS[0] = DATA_OBJ.summaries || {};
+{% endif %}
+  dataReady = true;
   populateChannelFilter();
   populateTagFilter();
-  applyLang(detectLang());
+  // The pre-rendered cards carry the export's default language. If the visitor
+  // resolves to a different one, drop them so applyLang() rebuilds from scratch.
+  var lang = detectLang();
+  if (lang !== EMBEDDED_DEFAULT) document.getElementById('grid').innerHTML = '';
+  applyLang(lang);
+{% if sync_url %}
+  initSync();
+{% endif %}
+  prefetchChunks();
 }
 
-bootstrap();
 {% if sync_url %}
-// Deferred out of the parse path so the rest of the script runs first.
 setTimeout(warnIfInsecure, 0);
-initSync();
-window.addEventListener('online', function() {
-  if (getSyncToken()) initSync();
+window.addEventListener('online', function () {
+  if (getSyncToken()) { window.__syncBoot = startSyncRequests(); initSync(); }
 });
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'visible') pullServerState();
@@ -1542,6 +1775,17 @@ document.addEventListener('visibilitychange', function() {
 window.addEventListener('focus', pullServerState);
 setInterval(pullServerState, 5 * 60 * 1000);
 {% endif %}
+</script>
+
+<script>
+{% if compressed %}const INDEX_B64 = "{{ index_b64 }}";
+const SUM_B64 = [{% for c in chunks_b64 %}"{{ c }}"{% if not loop.last %},{% endif %}{% endfor %}];
+{% else %}const DATA_OBJ = {{ data_obj }};
+const SUM_B64 = [];{% endif %}
+// Kick off the boot only once the blobs exist — bootstrap() reads them, and a
+// requestAnimationFrame scheduled from the UI script could fire while the
+// parser is still working through this script (temporal dead zone).
+requestAnimationFrame(function () { bootstrap(); });
 </script>
 
 </body>

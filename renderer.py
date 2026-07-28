@@ -139,6 +139,70 @@ def render_html(
         f.write(html)
 
 
+EXPORT_CHUNK_SIZE = 50
+EXPORT_FIRST_PAGE = 20
+
+
+def _esc_html(s) -> str:
+    """Escape exactly like escHtml() in export.html.j2 (& < > " and nothing else).
+
+    Kept byte-compatible with the JS implementation so the pre-rendered first
+    page and the JS-built cards produce identical markup.
+    """
+    if s is None:
+        return ""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _gzip_b64(raw: str) -> str:
+    return base64.b64encode(gzip.compress(raw.encode("utf-8"))).decode("ascii")
+
+
+def _summary_preview(html: str) -> tuple[str, str]:
+    """Split a summary into the first paragraph and the remainder.
+
+    Mirrors the split in buildCard(): cut after the first '</p>', the rest is
+    trimmed and hidden behind the "more" toggle.
+    """
+    cut = html.find("</p>")
+    if cut == -1:
+        return html, ""
+    return html[: cut + 4], html[cut + 4 :].strip()
+
+
+def _split_export_data(
+    videos: list[dict], chunk_size: int = EXPORT_CHUNK_SIZE
+) -> tuple[list[dict], list[dict[str, str]]]:
+    """Sort newest-first, then split into a summary-free index and summary chunks.
+
+    Chunk k holds the sanitized summaries of index positions
+    [k*chunk_size, (k+1)*chunk_size), so the browser can decode only the chunks
+    a rendered page actually needs. Videos without a summary occupy an index
+    slot but no chunk entry.
+    """
+    ordered = sorted(
+        videos,
+        key=lambda v: ((v.get("published_at") or ""), v.get("video_id") or ""),
+        reverse=True,
+    )
+    index: list[dict] = []
+    chunks: list[dict[str, str]] = []
+    for pos, v in enumerate(ordered):
+        if pos % chunk_size == 0:
+            chunks.append({})
+        summary = _sanitize_summary(v.get("summary"))
+        if summary:
+            chunks[-1][v["video_id"]] = summary
+        index.append({k: val for k, val in v.items() if k != "summary"})
+    return index, chunks
+
+
 def render_export_html(
     videos: list[dict],
     output_path: str,
@@ -149,13 +213,15 @@ def render_export_html(
 ) -> None:
     """Render and write a self-contained export HTML file with embedded video data.
 
-    The data is embedded as two parts: a lightweight ``index`` (everything except
-    the heavy summary HTML) that drives filtering/sorting/search, and a
-    ``summaries`` map (video_id -> HTML) consulted when a card is rendered or a
-    text search is issued. The combined ``{index, summaries}`` JSON is gzip+base64
-    embedded (``compress=True``, decompressed in-browser via
-    ``DecompressionStream``); ``compress=False`` embeds it as a plain JSON string
-    parsed with ``JSON.parse`` for browsers without ``DecompressionStream``.
+    The data is embedded as a lightweight ``index`` (everything except the heavy
+    summary HTML, via ``_split_export_data()``) plus a series of summary
+    "chunks" (video_id -> HTML), each covering ``EXPORT_CHUNK_SIZE`` index
+    positions. ``compress=True`` (default) gzip+base64 encodes the index and
+    each chunk separately so the browser only has to decompress the chunk(s)
+    a rendered page actually needs (decoded in-browser via
+    ``DecompressionStream``). ``compress=False`` embeds one plain
+    ``{index, summaries}`` JSON object (no chunking) for browsers without
+    ``DecompressionStream``.
 
     videos: list of dicts with keys:
         video_id, channel_id, channel_title, title,
@@ -166,27 +232,34 @@ def render_export_html(
     """
     lang = i18n_module.resolve_lang(lang)
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
+    env.filters["esch"] = lambda s: Markup(_esc_html(s))
     template = env.get_template(EXPORT_TEMPLATE_NAME)
 
-    index: list[dict] = []
-    summaries: dict[str, str] = {}
-    for v in videos:
-        summary = _sanitize_summary(v.get("summary"))
-        vid = v["video_id"]
-        if summary:
-            summaries[vid] = summary
-        entry = {k: val for k, val in v.items() if k != "summary"}
-        index.append(entry)
+    index, chunks = _split_export_data(videos)
 
-    raw = json.dumps({"index": index, "summaries": summaries}, ensure_ascii=False)
+    # Pre-render the first page so the browser can paint before any blob is
+    # decoded. Chunk 0 covers it because EXPORT_CHUNK_SIZE >= EXPORT_FIRST_PAGE.
+    first_chunk = chunks[0] if chunks else {}
+    first_page = []
+    for entry in index[:EXPORT_FIRST_PAGE]:
+        summary = first_chunk.get(entry["video_id"], "")
+        preview, rest = _summary_preview(summary) if summary else ("", "")
+        item = dict(entry)
+        item["summary_preview"] = Markup(preview)
+        item["summary_rest"] = Markup(rest)
+        first_page.append(item)
 
-    data_b64 = None
+    index_b64 = None
+    chunks_b64: list[str] = []
     data_obj = None
     if compress:
-        data_b64 = base64.b64encode(gzip.compress(raw.encode("utf-8"))).decode("ascii")
+        index_b64 = _gzip_b64(json.dumps(index, ensure_ascii=False))
+        chunks_b64 = [_gzip_b64(json.dumps(c, ensure_ascii=False)) for c in chunks]
     else:
-        # Embed the JSON directly as a JS object literal; escape </ so it cannot
-        # break out of the <script> tag. Markup avoids double-escaping.
+        # Old browsers without DecompressionStream: one plain object literal,
+        # no chunking. Escape </ so it cannot break out of the <script> tag.
+        summaries = {vid: html for chunk in chunks for vid, html in chunk.items()}
+        raw = json.dumps({"index": index, "summaries": summaries}, ensure_ascii=False)
         data_obj = Markup(raw.replace("</", "<\\/"))
 
     # sync_url is operator-configured (not user content); wrap so autoescape preserves it
@@ -194,13 +267,18 @@ def render_export_html(
 
     html = template.render(
         compressed=compress,
-        data_b64=data_b64,
+        index_b64=index_b64,
+        chunks_b64=chunks_b64,
+        chunk_size=EXPORT_CHUNK_SIZE,
         data_obj=data_obj,
         generated_date=date.today().strftime("%B %d, %Y"),
         total_videos=len(videos),
         default_lang=lang,
         sync_url=safe_sync_url,
         show_embed=show_embed,
+        first_page=first_page,
+        first_page_size=EXPORT_FIRST_PAGE,
+        t=i18n_module.get_strings(lang),
     )
 
     with open(output_path, "w", encoding="utf-8") as f:
