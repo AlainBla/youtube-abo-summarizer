@@ -61,6 +61,60 @@ def build_client() -> OpenAI:
     return OpenAI(base_url=base_url, api_key=api_key)
 
 
+# Block-level tags that may legitimately follow a timestamp link. When the model
+# closes an anchor with one of these, the tag is kept after the inserted </a>;
+# anything else (</article>, </small>, ...) is dropped as pure noise.
+_STRUCTURAL_TAGS = frozenset(
+    {"p", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "div"}
+)
+
+# A timestamp link: opening <a ... t=SECS ...>, the visible MM:SS label, and
+# whatever the model used to close it. The closing group tolerates a stray "</"
+# prefix and any tag name, because both show up in real model output.
+_TS_LINK_RE = re.compile(
+    r'(?P<head><a\b[^>]*?\bt=)(?P<secs>[0-9:]*)(?P<tail>[^>]*>)'
+    r'(?P<label>[^<]*)'
+    r'(?:</\s*)?</(?P<closing>[a-zA-Z][a-zA-Z0-9]*)>'
+)
+
+
+def _label_seconds(label: str) -> int | None:
+    """Convert a MM:SS or HH:MM:SS timestamp label to seconds, or None."""
+    parts = label.strip().split(":")
+    if len(parts) not in (2, 3) or not all(p.isdigit() for p in parts):
+        return None
+    nums = [int(p) for p in parts]
+    if len(parts) == 2:
+        return nums[0] * 60 + nums[1]
+    return nums[0] * 3600 + nums[1] * 60 + nums[2]
+
+
+def _fix_timestamp_links(html: str) -> str:
+    """Repair the two ways models break timestamp links.
+
+    1. The `t=` value is the visible label's digits rather than a second count
+       ("02:02" becoming t=202 or t=2 instead of t=122). The label reliably comes
+       from a real transcript marker, so it is authoritative and `t=` is derived
+       from it.
+    2. The anchor is closed with the wrong tag (`</p>`, `</h3>`, `</article>`) or
+       with a stray `</` before `</a>`, which leaves the link open and makes the
+       browser swallow the rest of the card into it.
+
+    Links whose label is not a parseable timestamp are left alone apart from the
+    closing tag.
+    """
+
+    def fix(m: re.Match) -> str:
+        label = m.group("label")
+        secs = _label_seconds(label)
+        t = str(secs) if secs is not None else m.group("secs")
+        closing = m.group("closing")
+        suffix = "" if closing == "a" or closing not in _STRUCTURAL_TAGS else f"</{closing}>"
+        return f'{m.group("head")}{t}{m.group("tail")}{label}</a>{suffix}'
+
+    return _TS_LINK_RE.sub(fix, html)
+
+
 def _dedup_timestamps(html: str) -> str:
     """Within each <p> and <li>, remove duplicate timestamp links with the same t= value.
 
@@ -307,4 +361,6 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> t
         raise ValueError(f"Model returned no content (finish_reason={finish_reason!r})")
     html, tags = _clean_response(choice.message.content)
     _validate_summary(html, getattr(choice, "finish_reason", None))
-    return _dedup_timestamps(html), tags
+    # Repair links before deduping — dedup compares t= values, which are only
+    # meaningful once they have been recomputed from the labels.
+    return _dedup_timestamps(_fix_timestamp_links(html)), tags
