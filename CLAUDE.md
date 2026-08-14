@@ -74,11 +74,16 @@ python repair.py
 
 # Re-summarize everything (e.g. after switching models)
 python repair.py --force-summarize
+
+# Repair broken timestamp links in stored summaries (no LLM calls)
+python repair.py --fix-links --dry-run
+python repair.py --fix-links
 ```
 
 - Missing transcripts are re-fetched (skips `country_blocked` videos permanently).
 - `--force-summarize` re-runs the LLM even if a summary already exists; also re-generates and stores tags.
-- `--video ID [ID ...]` restricts all operations to the specified video IDs.
+- `--fix-links` rewrites stored summaries through `openrouter._fix_timestamp_links()` — recomputes each `t=` offset from its visible `MM:SS` label, closes anchors the model left open, adds a missing `ts-link` class. Purely textual, no API calls, and it only touches files that actually change. Back up `data/summaries/` first: the rewrite is in place and `data/` is gitignored.
+- `--video ID,ID,...` restricts all operations to the specified video IDs (comma-separated).
 - `--dry-run` prints what would be done without writing anything.
 - To backfill tags on existing videos (after upgrading from a version without tag support): `python repair.py --force-summarize`
 

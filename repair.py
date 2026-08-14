@@ -20,6 +20,10 @@ Usage:
 
   # Re-summarize all videos that have a transcript (fresh run with new model)
   python repair.py --force-summarize
+
+  # Repair broken timestamp links in stored summaries (no LLM calls)
+  python repair.py --fix-links --dry-run
+  python repair.py --fix-links
 """
 
 import argparse
@@ -65,12 +69,42 @@ def parse_args():
         default=None,
         help="LLM model to use for summarization (overrides LLM_MODEL / OPENROUTER_MODEL env vars).",
     )
+    parser.add_argument(
+        "--fix-links",
+        action="store_true",
+        help="Repair timestamp links in stored summaries (wrong t= offsets, broken "
+             "anchor tags, missing ts-link class). No LLM calls. Combine with --dry-run.",
+    )
     return parser.parse_args()
+
+
+def fix_links(entries, dry_run: bool) -> None:
+    """Rewrite stored summaries through openrouter's timestamp-link repair.
+
+    Purely textual: recomputes each t= from its visible label, closes anchors the
+    model left open, and adds the missing ts-link class. No API calls.
+    """
+    n_changed = 0
+    for entry in entries:
+        path = store.SUMMARIES_DIR / f"{entry['video_id']}.html"
+        if not path.exists():
+            continue
+        before = path.read_text(encoding="utf-8")
+        after = openrouter._dedup_timestamps(openrouter._fix_timestamp_links(before))
+        if after == before:
+            continue
+        n_changed += 1
+        print(f"  [fix-links] {entry['title'][:60]}  ({entry['video_id']})")
+        if not dry_run:
+            path.write_text(after, encoding="utf-8")
+    verb = "would be repaired" if dry_run else "repaired"
+    print(f"\nDone.  {n_changed} of {len(entries)} summaries {verb}.")
 
 
 def main():
     args = parse_args()
-    tr.log_proxy_config(no_proxy=args.no_proxy)
+    if not args.fix_links:
+        tr.log_proxy_config(no_proxy=args.no_proxy)
     model = args.model or os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
     video_filter = {v.strip() for v in args.video.split(",") if v.strip()} if args.video else None
 
@@ -83,6 +117,13 @@ def main():
 
     if not entries:
         print("No videos to process.")
+        return
+
+    if args.fix_links:
+        print(f"Scanning {len(entries)} video(s) for broken timestamp links")
+        if args.dry_run:
+            print("  (dry-run — no changes will be written)")
+        fix_links(entries, args.dry_run)
         return
 
     print(f"Scanning {len(entries)} video(s)  [model: {model}]")

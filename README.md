@@ -311,7 +311,7 @@ After code changes: `sudo systemctl restart yt-sync`
 
 ```bash
 # Re-summarize two specific videos
-python repair.py --force-summarize --video abc123xyz def456uvw
+python repair.py --force-summarize --video abc123xyz,def456uvw
 
 # Preview what would be repaired without making any changes
 python repair.py --dry-run
@@ -321,12 +321,18 @@ python repair.py
 
 # Re-summarize everything (e.g. after switching to a better model)
 python repair.py --force-summarize
+
+# Repair broken timestamp links in stored summaries (no LLM calls)
+python repair.py --fix-links --dry-run
+python repair.py --fix-links
 ```
 
 | Flag | Description |
 |---|---|
-| `--video ID [ID ...]` | Restrict to specific video IDs |
+| `--video ID,ID,...` | Restrict to specific video IDs (comma-separated) |
 | `--force-summarize` | Re-summarize even if a summary already exists; also re-generates tags |
+| `--fix-links` | Repair timestamp links in stored summaries: wrong `t=` offsets, anchors the model left open, missing `ts-link` class. No LLM calls — back up `data/summaries/` first, the rewrite is in place |
+| `--model MODEL_ID` | Override the model from `LLM_MODEL` / `OPENROUTER_MODEL` |
 | `--dry-run` | Print what would be done without writing anything |
 
 `country_blocked` videos are never re-fetched (permanent restriction).
