@@ -231,7 +231,11 @@ def _process_single_video(service, video_id: str, model: str, now: datetime, ski
             # New video — DB row not created yet, use manual from memory if available
             llm_input = manual if manual else transcript
         print(f"    Summarizing via {model}...")
-        summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
+        try:
+            summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
+        except openrouter.SummaryRejected as e:
+            print(f"    Summary rejected: {e} — stored without summary.")
+            summary, tags = None, None
 
     if existing:
         store.update_video_with_summary(
@@ -393,7 +397,11 @@ def main():
                     # New video — DB row not created yet, use manual from memory if available
                     llm_input = manual if manual else transcript
                 print(f"    Summarizing via {model}...")
-                summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
+                try:
+                    summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
+                except openrouter.SummaryRejected as e:
+                    print(f"    Summary rejected: {e} — stored without summary.")
+                    summary, tags = None, None
             else:
                 summary = None
                 tags = None

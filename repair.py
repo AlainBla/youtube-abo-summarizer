@@ -93,6 +93,7 @@ def main():
     n_transcript_fail = 0
     n_summarized = 0
     n_skipped = 0
+    n_rejected = 0
 
     for entry in entries:
         vid_id    = entry["video_id"]
@@ -150,7 +151,12 @@ def main():
             print(f"    Summarizing via {model}...")
             llm_path = store.get_llm_transcript_path(vid_id)
             llm_input = llm_path.read_text(encoding="utf-8") if llm_path else transcript
-            summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
+            try:
+                summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
+            except openrouter.SummaryRejected as e:
+                print(f"    Summary rejected: {e} — left unchanged.")
+                n_rejected += 1
+                continue
             store.update_video_with_summary(
                 vid_id, None, summary, t_error, summary_model=model, tags=tags
             )
@@ -158,7 +164,7 @@ def main():
 
     print(
         f"\nDone.  transcripts: {n_transcript_ok} fetched / {n_transcript_fail} failed  |  "
-        f"summaries: {n_summarized} written  |  skipped: {n_skipped}"
+        f"summaries: {n_summarized} written / {n_rejected} rejected  |  skipped: {n_skipped}"
     )
 
 

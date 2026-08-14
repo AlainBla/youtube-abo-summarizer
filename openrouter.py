@@ -96,6 +96,33 @@ def _parse_tags(content: str) -> tuple[str, list[str]]:
     return html, tags
 
 
+class SummaryRejected(Exception):
+    """The model returned output that is unusable as a summary.
+
+    Raised instead of returning garbage, so callers can store no summary at all
+    and let `repair.py` retry later.
+    """
+
+
+# 30 consecutive repetitions of the same token. Models occasionally collapse
+# into a repetition loop ("our our our ...") and run until max_tokens. Scanned
+# against the whole summary store: no legitimate summary trips this.
+_REPETITION_RE = re.compile(r"\b(\w+)(\s+\1){29,}")
+
+
+def _validate_summary(html: str, finish_reason: str | None) -> None:
+    """Raise SummaryRejected if the model output is degenerate or truncated."""
+    if finish_reason == "length":
+        raise SummaryRejected(
+            f"Summary hit the {_MAX_OUTPUT}-token output cap and is truncated"
+        )
+    m = _REPETITION_RE.search(html)
+    if m:
+        raise SummaryRejected(
+            f"Summary degenerated into a repetition loop ({m.group(1)!r} repeated)"
+        )
+
+
 def _clean_response(content: str) -> tuple[str, list[str]]:
     """Turn a raw model response into (summary_html, tags).
 
@@ -213,7 +240,18 @@ def _summarize_chunk(
     choice = response.choices[0]
     if choice.message.content is None:
         raise ValueError(f"Chunk {chunk_index + 1}/{total_chunks}: model returned no content")
-    return choice.message.content.strip()
+    text = choice.message.content.strip()
+    # Repetition loops are checked here too — a degenerate chunk would poison the
+    # synthesis pass. A `length` finish_reason is deliberately tolerated: the
+    # 2048-token chunk budget is tight enough that legitimate key points may hit
+    # it, and truncated key points still contribute usefully to the reduce step.
+    m = _REPETITION_RE.search(text)
+    if m:
+        raise SummaryRejected(
+            f"Chunk {chunk_index + 1}/{total_chunks} degenerated into a "
+            f"repetition loop ({m.group(1)!r} repeated)"
+        )
+    return text
 
 
 def _build_synthesis_message(
@@ -268,4 +306,5 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> t
         finish_reason = getattr(choice, "finish_reason", "unknown")
         raise ValueError(f"Model returned no content (finish_reason={finish_reason!r})")
     html, tags = _clean_response(choice.message.content)
+    _validate_summary(html, getattr(choice, "finish_reason", None))
     return _dedup_timestamps(html), tags
