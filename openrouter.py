@@ -96,6 +96,20 @@ def _parse_tags(content: str) -> tuple[str, list[str]]:
     return html, tags
 
 
+def _clean_response(content: str) -> tuple[str, list[str]]:
+    """Turn a raw model response into (summary_html, tags).
+
+    Tags are extracted first: some models put the <!-- tags: ... --> comment
+    *after* the closing code fence, others inside it. Opening and closing fence
+    are therefore stripped independently — extracting the tags may already have
+    taken the closing fence with it.
+    """
+    html, tags = _parse_tags(content.strip())
+    html = re.sub(r"^```[a-zA-Z]*\s*\n?", "", html)
+    html = re.sub(r"\n?```\s*$", "", html)
+    return html.strip(), tags
+
+
 def _transcript_duration(transcript: str) -> int | None:
     """Return total seconds from the last [MM:SS] marker in the transcript, or None."""
     matches = re.findall(r'\[(\d+):(\d{2})\]', transcript)
@@ -253,8 +267,5 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> t
     if choice.message.content is None:
         finish_reason = getattr(choice, "finish_reason", "unknown")
         raise ValueError(f"Model returned no content (finish_reason={finish_reason!r})")
-    content = choice.message.content.strip()
-    # Some models wrap the HTML in a markdown code fence; strip it.
-    content = re.sub(r"^```[a-zA-Z]*\s*\n?(.*?)\n?```$", r"\1", content, flags=re.DOTALL).strip()
-    html, tags = _parse_tags(content)
+    html, tags = _clean_response(choice.message.content)
     return _dedup_timestamps(html), tags
