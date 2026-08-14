@@ -88,3 +88,25 @@ def test_dedup_runs_on_corrected_values():
     html = f"<p>A {link(202, '02:02')} B {link(2, '02:02')}</p>"
     out = openrouter._dedup_timestamps(fix(html))
     assert out.count("<a ") == 1
+
+
+# ── the ts-link class ────────────────────────────────────────────────────────
+
+def test_missing_class_is_added():
+    """Without class="ts-link" the link renders as a plain blue browser link."""
+    html = '<p>Text <a href="https://www.youtube.com/watch?v=abc123&t=123">02:03</a>.</p>'
+    out = fix(html)
+    assert out == f"<p>Text {link(123, '02:03')}.</p>"
+
+
+def test_existing_class_is_not_duplicated():
+    html = f"<p>{link(123, '02:03')}</p>"
+    out = fix(html)
+    assert out.count("ts-link") == 1
+
+
+def test_class_added_alongside_other_attributes():
+    html = '<p><a target="_blank" href="https://www.youtube.com/watch?v=abc123&t=123">02:03</a></p>'
+    out = fix(html)
+    assert 'class="ts-link"' in out
+    assert 'target="_blank"' in out

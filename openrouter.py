@@ -99,18 +99,23 @@ def _fix_timestamp_links(html: str) -> str:
     2. The anchor is closed with the wrong tag (`</p>`, `</h3>`, `</article>`) or
        with a stray `</` before `</a>`, which leaves the link open and makes the
        browser swallow the rest of the card into it.
+    3. `class="ts-link"` is missing, so the templates' timestamp styling does not
+       apply and the link renders as a default blue underlined browser link.
 
     Links whose label is not a parseable timestamp are left alone apart from the
-    closing tag.
+    closing tag and the class.
     """
 
     def fix(m: re.Match) -> str:
         label = m.group("label")
         secs = _label_seconds(label)
         t = str(secs) if secs is not None else m.group("secs")
+        opening = f'{m.group("head")}{t}{m.group("tail")}'
+        if "ts-link" not in opening:
+            opening = f'{opening[:-1].rstrip()} class="ts-link">'
         closing = m.group("closing")
         suffix = "" if closing == "a" or closing not in _STRUCTURAL_TAGS else f"</{closing}>"
-        return f'{m.group("head")}{t}{m.group("tail")}{label}</a>{suffix}'
+        return f"{opening}{label}</a>{suffix}"
 
     return _TS_LINK_RE.sub(fix, html)
 
