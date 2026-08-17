@@ -141,6 +141,7 @@ def main():
             "title": e["title"],
             "published_at": e["published_at"],
             "published_at_display": _fmt_date(e["published_at"]),
+            "collected_at": e.get("collected_at"),
             "duration": _fmt_duration(e.get("duration")),
             "thumbnail_url": e["thumbnail_url"],
             "summary": e.get("summary"),

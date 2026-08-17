@@ -486,6 +486,7 @@
     <select id="sort" autocomplete="off">
       <option value="date-desc">Neueste zuerst</option>
       <option value="date-asc">&Auml;lteste zuerst</option>
+      <option value="added-desc">Zuletzt hinzugef&uuml;gt</option>
       <option value="channel">Kanal A&ndash;Z</option>
       <option value="title">Titel A&ndash;Z</option>
     </select>
@@ -599,6 +600,7 @@ const I18N = {
     bookmarkedOnly: 'Nur gemerkt',
     sortDateDesc: 'Neueste zuerst',
     sortDateAsc: '\u00c4lteste zuerst',
+    sortAddedDesc: 'Zuletzt hinzugef\u00fcgt',
     sortChannel: 'Kanal A\u2013Z',
     sortTitle: 'Titel A\u2013Z',
     keyHint: 'j/k \u2014 vor/zur\u00fcck',
@@ -663,6 +665,7 @@ const I18N = {
     bookmarkedOnly: 'Bookmarked only',
     sortDateDesc: 'Newest first',
     sortDateAsc: 'Oldest first',
+    sortAddedDesc: 'Recently added',
     sortChannel: 'Channel A\u2013Z',
     sortTitle: 'Title A\u2013Z',
     keyHint: 'j/k \u2014 prev/next',
@@ -1226,8 +1229,9 @@ function applyLang(lang) {
   var sortOpts = document.getElementById('sort').options;
   sortOpts[0].textContent = s.sortDateDesc;
   sortOpts[1].textContent = s.sortDateAsc;
-  sortOpts[2].textContent = s.sortChannel;
-  sortOpts[3].textContent = s.sortTitle;
+  sortOpts[2].textContent = s.sortAddedDesc;
+  sortOpts[3].textContent = s.sortChannel;
+  sortOpts[4].textContent = s.sortTitle;
 
   // control labels
   document.getElementById('label-date').textContent = s.labelFrom;
@@ -1448,6 +1452,15 @@ function applyFiltersAndSort(page) {
     switch (sort) {
       case 'date-asc':
         return a.published_at.localeCompare(b.published_at);
+      case 'added-desc': {
+        // collect.py stamps one timestamp per run, so a whole run shares the
+        // same collected_at -- tie-break on publish date to keep those blocks
+        // in a stable, meaningful order. Older exports carry no collected_at.
+        var ac = a.collected_at || a.published_at;
+        var bc = b.collected_at || b.published_at;
+        var d = bc.localeCompare(ac);
+        return d !== 0 ? d : b.published_at.localeCompare(a.published_at);
+      }
       case 'channel': {
         var c = a.channel_title.localeCompare(b.channel_title, undefined, {sensitivity: 'base'});
         return c !== 0 ? c : b.published_at.localeCompare(a.published_at);

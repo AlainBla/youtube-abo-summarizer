@@ -1,5 +1,27 @@
 // Minimal browser stubs so the export UI script can run under Node.
 // Node 18+ provides atob, Blob, DecompressionStream, Response, URL natively.
+// How many <option>s each <select> carries in the real template. applyLang()
+// addresses them by index, so an out-of-range read here must blow up rather
+// than silently write into a phantom option -- that is how index drift between
+// the markup and applyLang() gets caught. Keep in sync with export.html.j2.
+const __optionCounts = {'sort': 5, 'read-filter': 3, 'bookmark-filter': 2};
+const __DEFAULT_OPTIONS = 4;
+
+function __options(id) {
+  const n = id in __optionCounts ? __optionCounts[id] : __DEFAULT_OPTIONS;
+  const opts = [];
+  for (let i = 0; i < n; i++) opts.push({textContent: '', value: ''});
+  return new Proxy(opts, {
+    get: function (target, prop) {
+      if (typeof prop === 'string' && /^\d+$/.test(prop) && !(prop in target)) {
+        throw new RangeError('option index ' + prop + ' out of range for #' + id +
+                             ' (has ' + target.length + ')');
+      }
+      return target[prop];
+    },
+  });
+}
+
 const __els = {};
 function __el(id) {
   if (!__els[id]) {
@@ -12,7 +34,7 @@ function __el(id) {
       disabled: false,
       hidden: false,
       style: {},
-      options: [{}, {}, {}, {}],
+      options: __options(id),
       classList: {add: function () {}, remove: function () {}, toggle: function () {}},
       addEventListener: function () {},
       appendChild: function () {},

@@ -13,7 +13,7 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 - **AI summarization**: Generates structured HTML summaries written as flowing prose (bullet points only for genuine enumerations); sections are in chronological order and scaled to video length (2–3 sections for short videos, up to 6–10 for long ones); each section contains clickable timestamp links placed inline after the relevant sentence; output language configurable via `SUMMARY_LANG` (default: German). The same LLM call also extracts 3–7 concise English topic tags, stored alongside the summary
 - **Transcript and summary storage**: Transcripts and summaries are cached to `data/`. On subsequent runs, videos that already have both a transcript and a summary are skipped entirely — no redundant YouTube or LLM calls. If only the transcript is missing it is fetched; if only the summary is missing the stored transcript is re-used and only the LLM call is made
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
-- **Browsable archive export**: Single portable HTML file with client-side search, date filter (published after), channel filter, tag filter, read/bookmark filter, sort, and pagination — works fully offline; each filter and sort control has a visible label; tag chips and channel names on cards are clickable and toggle their respective filters directly
+- **Browsable archive export**: Single portable HTML file with client-side search, date filter (published after), channel filter, tag filter, read/bookmark filter, sort (publish date, date added, channel, title), and pagination — works fully offline; each filter and sort control has a visible label; tag chips and channel names on cards are clickable and toggle their respective filters directly
 - **Read/bookmark tracking**: Each video card has read and bookmark buttons; state is persisted in browser cookies (365 days) and shared between the report and export views
 - **Multi-language UI**: Report and export templates support German (`de`, default) and English (`en`); select via `--lang` on the CLI; the export additionally shows an in-page language selector that persists the choice in a cookie and falls back to the browser's preferred language
 - **Repair tool**: Re-fetches missing transcripts and re-summarizes missing or broken summaries; supports targeting specific videos
@@ -120,7 +120,7 @@ No YouTube API calls or LLM calls happen here — it reads only from `data/`.
 
 ## Usage — export archive
 
-`export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, a "published after" date filter, channel/tag/read/bookmark filter dropdowns (each with a descriptive label), sorting by date/channel/title, and pagination (20 items per page). Tag chips on each video card are clickable and set the tag filter directly. Read and bookmark state is tracked in browser `localStorage` and persists across sessions. No server required.
+`export.py` renders all (or a subset of) stored videos into a single self-contained HTML file for offline browsing. It includes client-side search across titles and summaries, a "published after" date filter, channel/tag/read/bookmark filter dropdowns (each with a descriptive label), sorting by publish date / date added / channel / title, and pagination (20 items per page). The "Zuletzt hinzugefügt" ("Recently added") sort uses the store's `collected_at` timestamp, so videos queued through the Ingest button appear at the top regardless of when they were published. Tag chips on each video card are clickable and set the tag filter directly. Read and bookmark state is tracked in browser `localStorage` and persists across sessions. No server required.
 
 The first page of cards (20, matching the page size) is pre-rendered as static HTML directly in the file, so it paints immediately — before any embedded data is decoded. The rest of the UI (search, filters, sorting, later pages) becomes interactive once the page's own script has decoded the lightweight metadata index in the background.
 
@@ -386,7 +386,7 @@ Each report script activates the virtual environment, renders the HTML, sends th
 |---|---|
 | `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
-| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel/tag/read/bookmark filters, sort, and pagination |
+| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel/tag/read/bookmark filters, sort (publish date, date added, channel, title), and pagination |
 | `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries (also re-generates tags with `--force-summarize`) |
 | `recover_from_export.py` | Restores store entries from a previously exported HTML file; inserts missing DB rows and summary files; leaves existing entries untouched; supports `--dry-run` |
 | `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
