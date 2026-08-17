@@ -378,6 +378,43 @@
     .sync-user-email { color: #aaa; font-size: 0.85rem; }
     .sync-status { color: #555; font-size: 0.8rem; margin-left: auto; }
     {% endif %}
+    /* ── Update banner ── */
+    .update-banner {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      max-width: 900px;
+      margin: 0 auto 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: #1d2a1d;
+      border: 1px solid #2f4a2f;
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.9rem;
+      color: #cfe6cf;
+    }
+    .update-banner button {
+      background: #2a3a2a;
+      border: 1px solid #3d573d;
+      border-radius: 6px;
+      color: #dff0df;
+      font-size: 0.85rem;
+      padding: 0.3rem 0.7rem;
+      cursor: pointer;
+    }
+    .update-banner button:hover { background: #34472f; }
+    .update-banner .update-dismiss {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: #7a9a7a;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 0 0.2rem;
+    }
+    .update-banner .update-dismiss:hover { background: none; color: #cfe6cf; }
   </style>
 </head>
 <body>
@@ -416,6 +453,12 @@
 </div>
 </article>
 {%- endmacro -%}
+
+<div class="update-banner" id="update-banner" style="display:none">
+  <span id="update-text"></span>
+  <button id="update-reload" onclick="location.reload()"></button>
+  <button class="update-dismiss" id="update-dismiss" onclick="dismissUpdate()">&times;</button>
+</div>
 
 <header class="page-header">
   <div class="header-row">
@@ -577,6 +620,11 @@ const PAGE_SIZE = {{ first_page_size }};
 const TOTAL_VIDEOS = {{ total_videos }};
 const GENERATED_DATE = '{{ generated_date }}';
 const EMBEDDED_DEFAULT = '{{ default_lang }}';
+// Snapshot of the export this document was rendered from, plus the sidecar the
+// page polls to notice a newer one. See renderer._export_manifest().
+const MANIFEST = {{ manifest_json }};
+const MANIFEST_URL = {{ manifest_url }};
+const UPDATE_POLL_MS = 5 * 60 * 1000;
 
 // ── i18n ──────────────────────────────────────────────────────────────────────
 const I18N = {
@@ -644,6 +692,10 @@ const I18N = {
         + 'Der Login funktioniert nur, wenn die Seite \u00fcber ' + origin
         + ' ge\u00f6ffnet wird (oder lokal als file://-Datei).';
     },
+    updateNew: function(n) { return n + ' neue Video' + (n !== 1 ? 's' : '') + ' verf\u00fcgbar'; },
+    updateGeneric: 'Archiv aktualisiert',
+    updateReload: 'Neu laden',
+    updateDismiss: 'Hinweis schließen',
   },
   en: {
     pageTitle: 'YouTube Export',
@@ -709,6 +761,10 @@ const I18N = {
         + 'Login only works when the page is opened via ' + origin
         + ' (or locally as a file:// document).';
     },
+    updateNew: function(n) { return n + ' new video' + (n !== 1 ? 's' : '') + ' available'; },
+    updateGeneric: 'Archive updated',
+    updateReload: 'Reload',
+    updateDismiss: 'Dismiss',
   }
 };
 
@@ -1195,6 +1251,64 @@ function detectLang() {
   return 'de';
 }
 
+// ── Update poll ───────────────────────────────────────────────────────────────
+// The archive is a static file, so a tab left open keeps showing whatever was
+// deployed when it loaded. Polling the manifest sidecar written next to the
+// HTML lets the page notice a newer export and offer a reload.
+var pendingUpdate = null;    // manifest of the newer export, once one shows up
+var dismissedUpdate = null;  // generated_at the visitor waved away
+
+function updatePollable() {
+  // A file:// archive has no server to ask, and fetch would fail anyway.
+  return /^https?:$/.test(location.protocol);
+}
+
+function renderUpdateBanner() {
+  var banner = document.getElementById('update-banner');
+  if (!banner) return;
+  if (!pendingUpdate || pendingUpdate.generated_at === dismissedUpdate) {
+    banner.style.display = 'none';
+    return;
+  }
+  var s = I18N[currentLang] || I18N[EMBEDDED_DEFAULT];
+  var added = (pendingUpdate.video_count || 0) - MANIFEST.video_count;
+  // A filtered export (--hours/--channel) can shrink between runs, and a
+  // re-export without new videos keeps the count -- say "updated" then.
+  document.getElementById('update-text').textContent =
+    added > 0 ? s.updateNew(added) : s.updateGeneric;
+  document.getElementById('update-reload').textContent = s.updateReload;
+  document.getElementById('update-dismiss').setAttribute('aria-label', s.updateDismiss);
+  banner.style.display = '';
+}
+
+function dismissUpdate() {
+  if (pendingUpdate) dismissedUpdate = pendingUpdate.generated_at;
+  renderUpdateBanner();
+}
+
+function checkForUpdate() {
+  if (!updatePollable()) return Promise.resolve();
+  return fetch(MANIFEST_URL, {cache: 'no-store'})
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (meta) {
+      if (meta && meta.generated_at && meta.generated_at !== MANIFEST.generated_at) {
+        pendingUpdate = meta;
+      }
+      renderUpdateBanner();
+    })
+    .catch(function () { /* offline, 404, mid-deploy -- just try again later */ });
+}
+
+function startUpdatePolling() {
+  if (!updatePollable()) return;
+  setInterval(function () {
+    if (document.visibilityState !== 'hidden') checkForUpdate();
+  }, UPDATE_POLL_MS);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') checkForUpdate();
+  });
+}
+
 // ── Apply language ─────────────────────────────────────────────────────────────
 function applyLang(lang) {
   currentLang = lang;
@@ -1256,6 +1370,7 @@ function applyLang(lang) {
     if (ingestBtn) ingestBtn.textContent = s.ingestBtn;
   })();
   {% endif %}
+  renderUpdateBanner();
   applyFiltersAndSort();
 }
 
@@ -1776,6 +1891,8 @@ async function bootstrap() {
 {% endif %}
   prefetchChunks();
 }
+
+startUpdatePolling();
 
 {% if sync_url %}
 setTimeout(warnIfInsecure, 0);

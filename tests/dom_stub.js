@@ -4,6 +4,17 @@
 // addresses them by index, so an out-of-range read here must blow up rather
 // than silently write into a phantom option -- that is how index drift between
 // the markup and applyLang() gets caught. Keep in sync with export.html.j2.
+// The page schedules long-running intervals (update poll, sync pull). A browser
+// tab lives on regardless; Node would stay alive until the first tick, so every
+// test would sit out the full interval. Unref them: they still fire if the test
+// waits, but they no longer hold the event loop open.
+const __setInterval = globalThis.setInterval;
+globalThis.setInterval = function (fn, ms) {
+  const timer = __setInterval(fn, ms);
+  if (timer && typeof timer.unref === 'function') timer.unref();
+  return timer;
+};
+
 const __optionCounts = {'sort': 5, 'read-filter': 3, 'bookmark-filter': 2};
 const __DEFAULT_OPTIONS = 4;
 
@@ -38,8 +49,9 @@ function __el(id) {
       classList: {add: function () {}, remove: function () {}, toggle: function () {}},
       addEventListener: function () {},
       appendChild: function () {},
-      setAttribute: function () {},
-      getAttribute: function () { return null; },
+      attrs: {},
+      setAttribute: function (k, v) { this.attrs[k] = String(v); },
+      getAttribute: function (k) { return k in this.attrs ? this.attrs[k] : null; },
       querySelector: function () { return __el(id + '-child'); },
       querySelectorAll: function () { return []; },
       remove: function () {},
@@ -56,6 +68,7 @@ globalThis.localStorage = {
 };
 globalThis.document = {
   cookie: '',
+  visibilityState: 'visible',
   documentElement: {},
   title: '',
   getElementById: __el,

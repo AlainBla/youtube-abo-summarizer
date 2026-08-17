@@ -8,6 +8,7 @@ data/
 summary_*.html
 export_*.html
 full_archive*.html
+*.html.meta.json
 *.o.html
 __pycache__/
 *.pyc

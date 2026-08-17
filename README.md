@@ -168,6 +168,20 @@ decoded first, so a search never misses a match hiding in a page that hasn't loa
 browsers, `--no-compress` embeds one plain `{index, summaries}` JavaScript object instead — no chunking,
 no `DecompressionStream` required, but the whole archive loads up front.
 
+### "New videos" banner
+
+Every export also writes a small manifest next to the HTML file — `full_archive.html` gets
+`full_archive.html.meta.json` — containing the generation timestamp, the video count, and the newest
+video ID. When the archive is served over HTTP(S), the open page re-fetches that manifest every five
+minutes (skipped while the tab is in the background, plus one immediate check when you return to the
+tab) and compares it against the values embedded at export time. If a newer export has been deployed,
+a banner appears at the top of the page: "3 neue Videos verfügbar" when the archive grew, otherwise
+"Archiv aktualisiert" — with a reload button and an "×" that dismisses it until the next export.
+
+Nothing to configure: upload or serve the `.meta.json` file alongside the HTML and the banner works.
+If the manifest is missing (or the archive is opened as a local `file://` document) the page simply
+never polls, exactly as before.
+
 ## Sync server (optional)
 
 `sync-server/` is a standalone Flask service for syncing read/bookmark state across browsers.

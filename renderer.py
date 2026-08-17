@@ -5,7 +5,7 @@ import gzip
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 import nh3
 
@@ -146,6 +146,11 @@ GENERATED_STAMP_FORMAT = "%B %d, %Y %H:%M"
 EXPORT_CHUNK_SIZE = 50
 EXPORT_FIRST_PAGE = 20
 
+# Sidecar next to the exported HTML, polled by the open page to notice that a
+# newer archive has been deployed. Kept tiny (a handful of fields) so a tab can
+# ask for it every few minutes without cost.
+EXPORT_MANIFEST_SUFFIX = ".meta.json"
+
 
 def _esc_html(s) -> str:
     """Escape exactly like escHtml() in export.html.j2 (& < > " and nothing else).
@@ -207,6 +212,22 @@ def _split_export_data(
     return index, chunks
 
 
+def _export_manifest(index: list[dict]) -> dict:
+    """Describe this export run for the update poll in the browser.
+
+    ``index`` is the newest-first list from ``_split_export_data()``, so its
+    first entry is the newest video. ``generated_at`` is the field the page
+    actually compares -- the counts only decide the wording of the banner.
+    """
+    newest = index[0] if index else {}
+    return {
+        "generated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+        "video_count": len(index),
+        "newest_id": newest.get("video_id"),
+        "newest_published_at": newest.get("published_at"),
+    }
+
+
 def render_export_html(
     videos: list[dict],
     output_path: str,
@@ -226,6 +247,11 @@ def render_export_html(
     ``DecompressionStream``). ``compress=False`` embeds one plain
     ``{index, summaries}`` JSON object (no chunking) for browsers without
     ``DecompressionStream``.
+
+    Alongside the HTML a manifest sidecar ``<output_path>.meta.json`` is written
+    (after the HTML, never before it). The page embeds the same manifest and
+    polls the sidecar every few minutes, so a tab left open notices a newer
+    export and offers a reload.
 
     videos: list of dicts with keys:
         video_id, channel_id, channel_title, title,
@@ -269,6 +295,14 @@ def render_export_html(
     # sync_url is operator-configured (not user content); wrap so autoescape preserves it
     safe_sync_url = Markup(sync_url) if sync_url else None
 
+    manifest = _export_manifest(index)
+    manifest_path = output_path + EXPORT_MANIFEST_SUFFIX
+    # The page resolves the sidecar relative to its own URL, so the basename is
+    # all it needs for the usual /dir/file.html and /dir/ (index) deployments.
+    # An extensionless rewrite without a trailing slash would resolve it one
+    # directory up -- serve the archive under its real path if that applies.
+    manifest_url = os.path.basename(manifest_path)
+
     html = template.render(
         compressed=compress,
         index_b64=index_b64,
@@ -282,8 +316,15 @@ def render_export_html(
         show_embed=show_embed,
         first_page=first_page,
         first_page_size=EXPORT_FIRST_PAGE,
+        manifest_json=Markup(json.dumps(manifest, ensure_ascii=False).replace("</", "<\\/")),
+        manifest_url=Markup(json.dumps(manifest_url)),
         t=i18n_module.get_strings(lang),
     )
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
+
+    # Written after the HTML: a manifest that lands first would, for the moment
+    # in between, announce videos the served archive does not contain yet.
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False)
