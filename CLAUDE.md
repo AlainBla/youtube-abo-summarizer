@@ -209,11 +209,16 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth (supports STARTTLS port 587 and SSL port 465), per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` appends video ID to `INGEST_QUEUE` file and returns 202; `/api/whoami` returns `can_ingest` flag |
 | `ingest_worker.sh` | Cron script that drains `INGEST_QUEUE` by running `collect.py --video <id>` for each entry; logs to `data/ingest_worker.log`; schedule every minute |
 
+### Cron configuration (`cron.env`)
+
+The cron scripts carry no host-specific values — this repository is public. They source `cron.env` (gitignored, template in `cron.env.example`) for `EXPORT_OUTPUT` (archive path, default `<repo>/yt.html`), `SYNC_URL` (unset → export runs without `--sync-url`) and `DIGEST_TO` (required by `run_*.sh`, which abort without it). A plain assignment in `cron.env` overrides the same variable set in the crontab line, since the file is sourced after the environment is inherited. `tests/test_collect_shell_wiring.py` fails if a concrete host or mail address reappears in a tracked `*.sh`.
+
 ## Credentials and Sensitive Files
 
 - `client_secrets.json` — Google OAuth credentials (never commit)
 - `token.pickle` — cached OAuth token (never commit)
 - `.env` — API keys and SMTP credentials (never commit)
+- `cron.env` — host-specific cron settings (never commit; see `cron.env.example`)
 - `last_run.json` — auto-generated state file (gitignored)
 - `data/` — auto-generated store directory (gitignored): `videos.db`, `transcripts/`, `summaries/`
 

@@ -396,11 +396,18 @@ Each report script activates the virtual environment, renders the HTML, sends th
 
 `collect.sh` regenerates the export archive as soon as a run has actually stored new videos: `collect.py`
 exits with code `10` in that case (`0` when it ran fine but added nothing), and the script chains the
-export onto that code. Override the target file and sync URL via the environment if your setup differs:
+export onto that code.
 
-```
-EXPORT_OUTPUT=/path/to/yt.html SYNC_URL=https://sync.example.com /path/to/collect.sh
-```
+Host-specific settings do not live in the scripts — copy `cron.env.example` to `cron.env` (gitignored)
+next to them and fill it in:
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `EXPORT_OUTPUT` | `collect.sh`, `ingest_worker.sh` | Where the archive is written; must be the file the web server serves, because the export bakes its basename into the page as the update-manifest URL. Default: `<repo>/yt.html` |
+| `SYNC_URL` | `collect.sh`, `ingest_worker.sh` | Sync server base URL embedded into the archive; unset exports without sync support |
+| `DIGEST_TO` | `run_*.sh` | Recipient of the digest mails; the scripts abort when it is unset |
+
+The scripts source `cron.env`, so an assignment there wins over a variable set in the crontab line.
 
 Chaining the export with a plain `&&` instead would re-export on every run — each export stamps a fresh
 timestamp, so the archive's "new videos" banner would be permanently lit for every open browser tab.

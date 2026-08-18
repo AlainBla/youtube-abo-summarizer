@@ -9,8 +9,18 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
+
+# Host-specific settings (paths, sync URL, digest recipient) live in cron.env,
+# which is gitignored -- this repository is public. See cron.env.example.
+# Anything already set in the environment can be preserved there with the
+# ${VAR:-default} form; a plain assignment in cron.env wins over the caller.
+if [ -f "$REPO/cron.env" ]; then
+    # shellcheck source=/dev/null
+    . "$REPO/cron.env"
+fi
+
 EXPORT_OUTPUT="${EXPORT_OUTPUT:-$REPO/yt.html}"
-SYNC_URL="${SYNC_URL:-https://imap.parkautomat.net/sync/}"
+SYNC_URL="${SYNC_URL:-}"
 EXIT_NEW_VIDEOS=10
 
 cd "$REPO"
@@ -20,7 +30,11 @@ rc=0
 python3 collect.py --auth --hours 4 >> "$REPO/cron.log" 2>&1 || rc=$?
 
 if [ "$rc" -eq "$EXIT_NEW_VIDEOS" ]; then
-    python3 export.py --all --sync-url "$SYNC_URL" --output "$EXPORT_OUTPUT" >> "$REPO/cron.log" 2>&1
+    sync_args=()
+    if [ -n "$SYNC_URL" ]; then
+        sync_args=(--sync-url "$SYNC_URL")
+    fi
+    python3 export.py --all ${sync_args[@]+"${sync_args[@]}"} --output "$EXPORT_OUTPUT" >> "$REPO/cron.log" 2>&1
 elif [ "$rc" -ne 0 ]; then
     exit "$rc"
 fi

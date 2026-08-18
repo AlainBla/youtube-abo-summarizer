@@ -38,3 +38,28 @@ def test_ingest_worker_accepts_the_new_videos_code_as_success():
     assert "EXIT_NEW_VIDEOS=10" in sh, "ingest_worker.sh must pin the signal code"
     assert '-eq "$EXIT_NEW_VIDEOS"' in sh or "-eq 10" in sh, \
         "ingest_worker.sh would re-queue a video whose collect run added it"
+
+
+def test_no_host_specific_values_are_hardcoded_in_the_cron_scripts():
+    """This repository is public: sync URL, output path and digest recipient
+    belong in cron.env (gitignored), not in the tracked shell scripts."""
+    import glob
+    import re
+
+    offenders = []
+    for path in sorted(glob.glob(os.path.join(REPO, "*.sh"))):
+        text = _read(os.path.basename(path))
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            # A concrete host or mail address, as opposed to example.com in docs
+            if re.search(r"https?://(?!sync\.example\.com)[\w.-]+\.(net|de|com|org)", line) \
+                    or re.search(r"[\w.-]+@(?!example\.com)[\w.-]+\.(net|de|com|org)", line):
+                offenders.append(f"{os.path.basename(path)}:{lineno}: {line.strip()}")
+    assert not offenders, "host-specific values must live in cron.env:\n" + "\n".join(offenders)
+
+
+def test_cron_env_is_gitignored_and_has_an_example():
+    with open(os.path.join(REPO, ".gitignore"), encoding="utf-8") as f:
+        assert "cron.env" in f.read().splitlines()
+    assert os.path.exists(os.path.join(REPO, "cron.env.example"))

@@ -5,7 +5,12 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 OUTPUT="$REPO/summary_$(date +%Y-%m-%d_%H-%M).html"
-TO="alain@parkautomat.net"
+# Recipient comes from cron.env (gitignored; this repo is public).
+if [ -f "$REPO/cron.env" ]; then
+    # shellcheck source=/dev/null
+    . "$REPO/cron.env"
+fi
+TO="${DIGEST_TO:?set DIGEST_TO in cron.env or the environment}"
 
 cd "$REPO"
 source .venv/bin/activate

@@ -14,8 +14,17 @@ COLLECT="$REPO/collect.py"
 EXPORT="$REPO/export.py"
 PYTHON="$REPO/.venv/bin/python3"
 LOG="$REPO/data/ingest_worker.log"
-EXPORT_OUTPUT="$REPO/yt.html"
-SYNC_URL="https://imap.parkautomat.net/sync/"
+# Where the archive is served from. Must match the file the web server
+# delivers -- the export bakes this basename into the page as the update
+# manifest URL. Override from cron when it lives outside the repo.
+# Host-specific settings live in cron.env (gitignored; this repo is public).
+if [ -f "$REPO/cron.env" ]; then
+    # shellcheck source=/dev/null
+    . "$REPO/cron.env"
+fi
+
+EXPORT_OUTPUT="${EXPORT_OUTPUT:-$REPO/yt.html}"
+SYNC_URL="${SYNC_URL:-}"
 MAX_RETRIES=100
 EXIT_NEW_VIDEOS=10
 
@@ -61,5 +70,9 @@ rm -f "$TMPFILE"
 
 if [ "$success" -eq 1 ]; then
     echo "[$(date -Iseconds)] re-export" >> "$LOG"
-    cd "$REPO" && "$PYTHON" "$EXPORT" --all --sync-url "$SYNC_URL" --output "$EXPORT_OUTPUT" >> "$LOG" 2>&1
+    sync_args=()
+    if [ -n "$SYNC_URL" ]; then
+        sync_args=(--sync-url "$SYNC_URL")
+    fi
+    cd "$REPO" && "$PYTHON" "$EXPORT" --all ${sync_args[@]+"${sync_args[@]}"} --output "$EXPORT_OUTPUT" >> "$LOG" 2>&1
 fi

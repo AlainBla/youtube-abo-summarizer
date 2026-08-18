@@ -3,6 +3,7 @@
 client_secrets.json
 token.pickle
 .env
+cron.env
 last_run.json
 data/
 summary_*.html
