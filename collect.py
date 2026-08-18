@@ -43,6 +43,16 @@ load_dotenv()
 
 _SHORTS_DEFAULT_MAX_SECONDS = 180
 
+# Exit code telling the caller that this run put new videos into the store.
+# collect.sh chains the export onto it, so the archive -- and the "new videos"
+# banner it shows -- is only regenerated when there is something to announce.
+# Distinct from 0 (ran fine, nothing new) and 1 (failed).
+EXIT_NEW_VIDEOS = 10
+
+
+def _exit_code(added: int) -> int:
+    return EXIT_NEW_VIDEOS if added else 0
+
 
 def _parse_duration_seconds(duration: str | None) -> int | None:
     """Parse ISO 8601 duration string (e.g. PT1H2M3S) to total seconds.
@@ -282,7 +292,7 @@ def main():
             if _process_single_video(service, vid, model, now, skip_shorts=not args.include_shorts, no_proxy=args.no_proxy):
                 added_count += 1
         print(f"\nDone. {added_count} video(s) added to store.")
-        return
+        return added_count
 
     # --- Resolve channel list ---
     if args.auth:
@@ -446,7 +456,8 @@ def main():
             print(f"\nPruned {removed} store entry(s) older than {args.prune_days} days.")
 
     print(f"\nDone. {total_added} new video(s) added to store.")
+    return total_added
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(_exit_code(main() or 0))

@@ -34,6 +34,7 @@ python collect.py --file channels.txt [--hours N]
 - Videos already in the store are handled incrementally: skipped entirely if both transcript and summary exist; otherwise only the missing piece is fetched or generated.
 - Without `--hours`, uses each channel's last-run timestamp from `last_run.json`; defaults to 24 h on first run.
 - `--hours N` overrides last-run state and does **not** update it.
+- Exit codes: `10` (`EXIT_NEW_VIDEOS`) when the run stored at least one new video, `0` when it ran fine but added nothing, non-zero otherwise. `collect.sh` gates the export on `10` — chaining the export with a plain `&&` instead would re-export on every run, flipping the archive's `generated_at` and leaving the update banner permanently on. `ingest_worker.sh` counts `10` as success, or it would re-queue every video it successfully ingested.
 - `--prune-days N` removes store entries older than N days. Omitted by default (no pruning).
 - Short videos (duration ≤ `SHORTS_MAX_SECONDS`, default 180 s) are **skipped by default**. Pass `--include-shorts` to collect them. Threshold is configurable via `SHORTS_MAX_SECONDS` in `.env`.
 
@@ -53,7 +54,7 @@ python report.py [--hours 24] [--output summary.html] [--skip-empty] [--send-to 
 
 | Script | Purpose |
 |---|---|
-| `collect.sh` | Runs `collect.py --auth`; schedule frequently (e.g. `*/30 * * * *`) |
+| `collect.sh` | Runs `collect.py --auth --hours 4`; on exit code 10 (new videos stored) immediately re-exports the archive to `$EXPORT_OUTPUT` (default `yt.html`, sync URL from `$SYNC_URL`); schedule frequently (e.g. `*/30 * * * *`) |
 | `run_6hours.sh` | Renders and mails a 6-hour digest |
 | `run_12hours.sh` | Renders and mails a 12-hour digest |
 | `run_daily.sh` | Renders and mails a 24-hour digest |

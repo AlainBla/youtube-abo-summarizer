@@ -387,12 +387,23 @@ Recommended crontab setup:
 
 | Script | Purpose |
 |---|---|
-| `collect.sh` | Runs `collect.py --auth`; schedule this frequently |
+| `collect.sh` | Runs `collect.py --auth`; re-exports the archive as soon as new videos were stored; schedule this frequently |
 | `run_6hours.sh` | Renders and emails a 6-hour digest via `report.py` |
 | `run_12hours.sh` | Renders and emails a 12-hour digest via `report.py` |
 | `run_daily.sh` | Renders and emails a 24-hour digest via `report.py` |
 
 Each report script activates the virtual environment, renders the HTML, sends the email, and cleans up HTML files older than 7 days.
+
+`collect.sh` regenerates the export archive as soon as a run has actually stored new videos: `collect.py`
+exits with code `10` in that case (`0` when it ran fine but added nothing), and the script chains the
+export onto that code. Override the target file and sync URL via the environment if your setup differs:
+
+```
+EXPORT_OUTPUT=/path/to/yt.html SYNC_URL=https://sync.example.com /path/to/collect.sh
+```
+
+Chaining the export with a plain `&&` instead would re-export on every run — each export stamps a fresh
+timestamp, so the archive's "new videos" banner would be permanently lit for every open browser tab.
 
 ## Architecture
 

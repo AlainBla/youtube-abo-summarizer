@@ -53,6 +53,10 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 - `requests.exceptions.ProxyError` / `ConnectionError` → `unavailable`
 - Proxy retry: on `ip_blocked`, retries once via the configured proxy (if set); on `country_blocked`, retries once with a country-pinned Webshare proxy if `WEBSHARE_PROXY_URL` is set
 
+### Collect / cron wiring
+- `collect.py` exits with `EXIT_NEW_VIDEOS` (10) when a run stored at least one new video, `0` when it ran fine but stored nothing. `main()` returns the count; the mapping lives in `_exit_code()` so it stays testable
+- Anything that shells out to `collect.py` must treat 10 as success — `ingest_worker.sh` would otherwise re-queue every video it just ingested. `collect.sh` gates the archive re-export on exactly this code; a plain `&&` would re-export every run and keep the export's update banner permanently lit (the banner triggers on a changed `generated_at`, not on new rows)
+
 ### Renderer / templates
 - `renderer.render_html()` accepts `lang="de"|"en"`
 - `renderer.render_export_html()` accepts `lang=`, `sync_url=`, and `show_embed=` (default `True`; pass `False` for `--thumbnail` mode which renders static `<img>` instead of YouTube `<iframe>`)
