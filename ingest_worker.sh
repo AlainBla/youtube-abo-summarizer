@@ -14,7 +14,7 @@ COLLECT="$REPO/collect.py"
 EXPORT="$REPO/export.py"
 PYTHON="$REPO/.venv/bin/python3"
 LOG="$REPO/data/ingest_worker.log"
-EXPORT_OUTPUT="$REPO/full_archive.html"
+EXPORT_OUTPUT="$REPO/yt.html"
 SYNC_URL="https://imap.parkautomat.net/sync/"
 MAX_RETRIES=100
 
