@@ -224,7 +224,7 @@ python ebook.py --all --no-thumbnails --no-transcripts
 python ebook.py --all --lang en
 ```
 
-`--hours` and `--all` are mutually exclusive. Neither is required — running `python ebook.py` with no window flag behaves exactly like `--all` (all videos in the store), still capped by `--limit`. `--limit` keeps only the N newest videos after all other filters are applied (`0` = no limit); it defaults to `100` so an unqualified run still produces a reasonably sized book. The default output filename is `ebook_YYYY-MM-DD_HH-MM.epub`.
+`--hours` and `--all` are mutually exclusive. Neither is required — running `python ebook.py` with no window flag behaves exactly like `--all` (all videos in the store), still capped by `--limit`. `--limit` keeps only the N newest videos that survive **every** filter including `--read` (`0` = no limit); it defaults to `100` so an unqualified run still produces a reasonably sized book. That order matters with `--read drop`: `--limit 50 --read drop` gives you the 50 newest *unread* videos, not the unread remainder of the 50 newest — on a mostly-read store the latter would quietly produce a nearly empty book. The default output filename is `ebook_YYYY-MM-DD_HH-MM.epub`.
 
 ### Read/unread split
 

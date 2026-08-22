@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import zipfile
 
@@ -98,7 +99,7 @@ def test_raw_iso_duration_is_formatted_before_reaching_the_chapter(tmp_path, mon
                                       "--no-transcripts", "--output", str(out)])
     ebook.main()
     with zipfile.ZipFile(out) as z:
-        chapter = z.read("OEBPS/chapter-w-2026-34.xhtml").decode("utf-8")
+        chapter = z.read("OEBPS/chapter-all-w-2026-34.xhtml").decode("utf-8")
     assert "1:02:03" in chapter
     assert "PT1H2M3S" not in chapter
 
@@ -150,3 +151,50 @@ def test_read_drop_excludes_dropped_videos_thumbnails_and_transcripts(tmp_path, 
     assert "OEBPS/transcript-v1.xhtml" not in names
     assert "OEBPS/images/v2.jpg" in names
     assert "OEBPS/images/v1.jpg" not in names
+
+
+# ── --limit applies after the read filter ───────────────────────────────────
+# "--limit 50 --read drop" must mean "the 50 newest unread videos", not "the
+# unread ones among the 50 newest" -- with a mostly-read store the latter
+# quietly produces a nearly empty book.
+
+def _read_ids_stub(monkeypatch, ids):
+    monkeypatch.setattr(ebook, "load_read_ids", lambda db, email: set(ids))
+
+
+def _chapter_video_ids(path) -> list[str]:
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        found = []
+        for name in z.namelist():
+            if "chapter-" in name:
+                found += re.findall(r'<section id="v-([^"]+)"', z.read(name).decode())
+    return found
+
+
+def test_limit_counts_unread_videos_under_read_drop(tmp_path, monkeypatch):
+    videos = [video("v%d" % i, "2026-08-%02dT00:00:00Z" % (i + 1)) for i in range(6)]
+    _stub_store(monkeypatch, videos)
+    # The three newest are read; only v0..v2 are unread.
+    _read_ids_stub(monkeypatch, ["v5", "v4", "v3"])
+    out = tmp_path / "book.epub"
+    monkeypatch.setattr(sys, "argv", ["ebook.py", "--all", "--limit", "2",
+                                      "--user", "a@b.com", "--read", "drop",
+                                      "--no-thumbnails", "--no-transcripts",
+                                      "--output", str(out)])
+    ebook.main()
+    assert sorted(_chapter_video_ids(out)) == ["v1", "v2"], "expected the 2 newest unread"
+
+
+def test_limit_still_counts_everything_under_read_split(tmp_path, monkeypatch):
+    videos = [video("v%d" % i, "2026-08-%02dT00:00:00Z" % (i + 1)) for i in range(6)]
+    _stub_store(monkeypatch, videos)
+    _read_ids_stub(monkeypatch, ["v5"])
+    out = tmp_path / "book.epub"
+    monkeypatch.setattr(sys, "argv", ["ebook.py", "--all", "--limit", "2",
+                                      "--user", "a@b.com", "--read", "split",
+                                      "--no-thumbnails", "--no-transcripts",
+                                      "--output", str(out)])
+    ebook.main()
+    # split keeps read videos, so the newest two overall are v5 (read) and v4.
+    assert sorted(_chapter_video_ids(out)) == ["v4", "v5"]

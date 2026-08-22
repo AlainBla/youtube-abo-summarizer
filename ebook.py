@@ -166,7 +166,7 @@ def parse_args(argv=None):
     parser.add_argument("--videos", help="comma-separated video IDs")
     parser.add_argument("--tag", help="restrict to videos carrying this tag")
     parser.add_argument("--limit", type=_limit_type, default=DEFAULT_LIMIT,
-                        help="keep only the N newest videos (0 = no limit)")
+                        help="keep only the N newest videos that survive the read filter (0 = no limit)")
     parser.add_argument("--user", help="email whose read state is taken from the sync database")
     parser.add_argument("--sync-db", default=DEFAULT_SYNC_DB, help="path to the sync server database")
     parser.add_argument("--read", choices=["split", "drop", "ignore"], default="split",
@@ -195,8 +195,12 @@ def main():
         entries = store.get_all_videos(with_transcripts=False)
 
     video_ids = [v.strip() for v in args.videos.split(",")] if args.videos else None
+    # Deliberately unlimited here: --limit is applied *after* the read filter
+    # below, so "--limit 50 --read drop" means "the 50 newest unread videos",
+    # not "the unread ones among the 50 newest" -- which would quietly produce
+    # a nearly empty book on a mostly-read store.
     selected = select_videos(entries, channel=args.channel, videos=video_ids,
-                              tag=args.tag, limit=args.limit)
+                              tag=args.tag, limit=0)
     if not selected:
         print("No videos to put in the book.")
         sys.exit(0)
@@ -214,7 +218,19 @@ def main():
     # was never partitioned by anyone's read state.
     read_ids = load_read_ids(args.sync_db, args.user) if args.user else set()
     read_mode = args.read if args.user else "ignore"
-    part_pairs = partition_by_read(selected, read_ids, read_mode)
+
+    # Apply --limit to what survives the read filter, newest first, before
+    # partitioning for real: under "drop" that is the unread videos, under
+    # "split"/"ignore" it is everything, so the limit always counts the
+    # videos that actually end up in the book.
+    surviving = [v for _, videos in partition_by_read(selected, read_ids, read_mode)
+                 for v in videos]
+    surviving.sort(key=lambda v: ((v.get("published_at") or ""), v.get("video_id") or ""),
+                   reverse=True)
+    if args.limit:
+        surviving = surviving[:args.limit]
+
+    part_pairs = partition_by_read(surviving, read_ids, read_mode)
     parts = []
     kept = []
     for key, videos in part_pairs:

@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
@@ -50,7 +51,7 @@ def test_spine_starts_with_the_title_page_and_lists_every_chapter(tmp_path):
         opf = ET.fromstring(z.read("OEBPS/content.opf"))
         ids = [i.get("idref") for i in opf.findall(".//opf:spine/opf:itemref", OPF_NS)]
     assert ids[0] == "title"
-    assert "chap-w-2026-34" in ids and "chap-w-2026-35" in ids
+    assert "chap-unread-w-2026-34" in ids and "chap-unread-w-2026-35" in ids
 
 
 def test_every_document_in_the_archive_parses_as_xml(tmp_path):
@@ -64,7 +65,7 @@ def test_nav_lists_parts_and_weeks(tmp_path):
     with zipfile.ZipFile(_book(tmp_path)) as z:
         nav = z.read("OEBPS/nav.xhtml").decode("utf-8")
     assert "Ungelesen" in nav
-    assert "chapter-w-2026-34.xhtml" in nav
+    assert "chapter-unread-w-2026-34.xhtml" in nav
 
 
 def test_container_points_at_the_package_document(tmp_path):
@@ -150,3 +151,29 @@ def test_no_text_is_lost_when_splitting():
     text = sentence * 300
     joined = " ".join(epub_builder._transcript_paragraphs(text))
     assert joined.split() == text.split()
+
+
+def test_the_same_week_in_two_parts_gets_two_chapter_files(tmp_path):
+    """Chapter files are keyed by week; with --read split the same calendar
+    week normally appears in both parts. Keying on the week alone made the
+    second part's chapter overwrite the first, silently dropping its videos
+    from the book."""
+    unread = epub_builder.group_by_week([video("v1", "2026-08-04T10:00:00Z")])
+    read = epub_builder.group_by_week([video("v2", "2026-08-05T10:00:00Z")])
+    assert unread[0]["anchor"] == read[0]["anchor"], "fixture must share one week"
+    parts = [
+        {"key": "unread", "title": "Ungelesen", "weeks": unread},
+        {"key": "read", "title": "Gelesen", "weeks": read},
+    ]
+    out = str(tmp_path / "book.epub")
+    epub_builder.build_epub(parts, out, "Test", "de", i18n.get_strings("de"), book_id="urn:uuid:x")
+
+    with zipfile.ZipFile(out) as z:
+        sections = []
+        for name in z.namelist():
+            if "chapter-" in name:
+                sections += re.findall(r'<section id="v-([^"]+)"', z.read(name).decode())
+        opf = ET.fromstring(z.read("OEBPS/content.opf"))
+        spine = [i.get("idref") for i in opf.findall(".//opf:spine/opf:itemref", OPF_NS)]
+    assert sorted(sections) == ["v1", "v2"], "no video may be lost to a filename collision"
+    assert len(set(spine)) == len(spine), "spine must not reference one chapter twice"

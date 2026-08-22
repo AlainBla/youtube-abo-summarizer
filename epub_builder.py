@@ -354,7 +354,11 @@ def build_epub(parts, output_path, title, lang, strings, images=None,
 
     for part in parts:
         for week in part["weeks"]:
-            href = "chapter-%s.xhtml" % week["anchor"]
+            # The part key is part of the filename: with --read split the
+            # same calendar week appears in both parts, and keying on the
+            # week alone made the second part overwrite the first, silently
+            # dropping its videos from the book.
+            href = "chapter-%s-%s.xhtml" % (part["key"], week["anchor"])
             week["href"] = href
             files[href] = render_chapter(week, strings, lang, image_hrefs, set(transcripts))
 
