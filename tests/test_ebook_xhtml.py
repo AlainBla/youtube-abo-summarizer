@@ -45,6 +45,16 @@ def test_fallback_resolves_entities_instead_of_double_escaping():
     ET.fromstring("<div>" + out + "</div>")     # must not raise
 
 
+def test_numeric_reference_to_invalid_char_is_stripped_in_fallback():
+    # "&#12;" is a literal numeric character reference in the input (not a
+    # named entity, so the entity pass above never touches it). html.unescape
+    # decodes it to a raw form feed inside the fallback -- the fallback must
+    # strip that char again rather than let it back into the output.
+    out = epub_builder.xhtmlify("<p>a&#12;b<b>")
+    assert "\x0c" not in out
+    ET.fromstring("<div>" + out + "</div>")     # must not raise
+
+
 def test_chapter_is_well_formed_and_carries_every_video():
     week = epub_builder.group_by_week([
         video("v1", "2026-08-19T10:00:00Z", title='Quote " & <tag>'),

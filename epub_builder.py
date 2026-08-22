@@ -97,8 +97,14 @@ def xhtmlify(fragment):
         # only. Resolve entities from the original (pre-numeric-conversion)
         # fragment before re-escaping, so a valid "&nbsp;" isn't first turned
         # into "&#160;" above and then double-escaped into "&amp;#160;" here.
+        # html.unescape() can itself produce a char the earlier strip was
+        # meant to rule out (e.g. a literal "&#12;" numeric reference in the
+        # input decodes to a raw form-feed) -- the named-entity regex above
+        # never touches numeric references, so this is the only place that
+        # sees the decoded char; strip invalid chars again after decoding.
         plain = re.sub(r"<[^>]*>", "", fragment)
-        return "<p>" + html.escape(html.unescape(plain)) + "</p>"
+        resolved = _INVALID_XML_CHAR_RE.sub("", html.unescape(plain))
+        return "<p>" + html.escape(resolved) + "</p>"
 
 
 @functools.lru_cache(maxsize=1)
