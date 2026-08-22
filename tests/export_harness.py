@@ -76,3 +76,37 @@ def video(vid, published, **over):
     }
     v.update(over)
     return v
+
+
+def raw_store_video(vid, published, **over):
+    """A video record shaped exactly like a raw `store.py` row.
+
+    Unlike video() -- whose fields are pre-formatted the way export.py's CLI
+    hands them to the export template -- this mirrors what store.get_all_videos()
+    actually returns: an un-formatted ISO-8601 duration ("PT1H2M3S"), a summary
+    whose timestamp link hrefs carry a real, un-escaped "&t=" query parameter
+    (as stored summaries do; see openrouter.py), and a "Z"-suffixed
+    published_at. ebook.py reads directly from the store with no export.py-style
+    reshaping in between, so tests exercising it must use records shaped like
+    this one, not video() -- using the pre-formatted fixture there is what let
+    the missing-ampersand-escaping and raw-duration bugs slip through review.
+    """
+    v = {
+        "video_id": vid,
+        "channel_id": "UC1",
+        "channel_title": "Channel One",
+        "title": "Title " + vid,
+        "published_at": published,
+        "collected_at": published,
+        "duration": "PT1H2M3S",
+        "thumbnail_url": "https://i.ytimg.com/vi/%s/hq.jpg" % vid,
+        "summary": (
+            '<h3>Intro</h3><p>See <a class="ts-link" '
+            'href="https://www.youtube.com/watch?v=%s&t=122">02:02</a> for details.</p>' % vid
+        ),
+        "summary_model": None,
+        "transcript_error": None,
+        "tags": ["Tag A"],
+    }
+    v.update(over)
+    return v

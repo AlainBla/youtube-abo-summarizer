@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="book-id">{{ book_id }}</dc:identifier>
+    <dc:title>{{ title }}</dc:title>
+    <dc:language>{{ lang }}</dc:language>
+    <meta property="dcterms:modified">{{ generated }}</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+{% for href in items if href != 'nav.xhtml' %}    <item id="{{ item_id(href) }}" href="{{ href }}" media-type="{{ media_type(href) }}"/>
+{% endfor %}  </manifest>
+  <spine toc="toc-ncx">
+    <itemref idref="title"/>
+{% for part in parts %}{% for week in part.weeks %}    <itemref idref="chap-{{ week.anchor }}"/>
+{% endfor %}{% endfor %}{% for vid in transcripts %}    <itemref idref="transcript-{{ vid }}"/>
+{% endfor %}  </spine>
+</package>

@@ -181,10 +181,13 @@ def update_video_with_summary(
         (SUMMARIES_DIR / f"{video_id}.html").write_text(summary, encoding="utf-8")
 
 
-def get_videos_since(since: datetime) -> list[dict]:
+def get_videos_since(since: datetime, with_transcripts: bool = True) -> list[dict]:
     """Return all stored videos published at or after `since`, newest first.
 
-    Loads transcript and summary from their files; both may be None.
+    Loads summary from file; loads transcript from file too unless
+    with_transcripts=False, in which case entry["transcript"] is always None.
+    Skipping transcript reads matters when a caller (e.g. the ebook exporter)
+    only needs metadata/summaries but the store holds thousands of videos.
     """
     rows = _conn().execute(
         "SELECT * FROM videos WHERE published_at >= ? ORDER BY published_at DESC",
@@ -194,19 +197,25 @@ def get_videos_since(since: datetime) -> list[dict]:
     result = []
     for row in rows:
         d = dict(row)
-        t_path = _resolve_transcript_path(d["video_id"], d.get("transcript_lang"))
+        if with_transcripts:
+            t_path = _resolve_transcript_path(d["video_id"], d.get("transcript_lang"))
+            d["transcript"] = t_path.read_text(encoding="utf-8") if t_path else None
+        else:
+            d["transcript"] = None
         s_path = SUMMARIES_DIR / f"{d['video_id']}.html"
-        d["transcript"] = t_path.read_text(encoding="utf-8") if t_path else None
         d["summary"] = s_path.read_text(encoding="utf-8") if s_path.exists() else None
         d["tags"] = json.loads(d["tags"]) if d.get("tags") else []
         result.append(d)
     return result
 
 
-def get_all_videos() -> list[dict]:
+def get_all_videos(with_transcripts: bool = True) -> list[dict]:
     """Return all stored videos, newest first.
 
-    Loads transcript and summary from their files; both may be None.
+    Loads summary from file; loads transcript from file too unless
+    with_transcripts=False, in which case entry["transcript"] is always None.
+    Skipping transcript reads matters when a caller (e.g. the ebook exporter)
+    only needs metadata/summaries but the store holds thousands of videos.
     """
     rows = _conn().execute(
         "SELECT * FROM videos ORDER BY published_at DESC"
@@ -215,9 +224,12 @@ def get_all_videos() -> list[dict]:
     result = []
     for row in rows:
         d = dict(row)
-        t_path = _resolve_transcript_path(d["video_id"], d.get("transcript_lang"))
+        if with_transcripts:
+            t_path = _resolve_transcript_path(d["video_id"], d.get("transcript_lang"))
+            d["transcript"] = t_path.read_text(encoding="utf-8") if t_path else None
+        else:
+            d["transcript"] = None
         s_path = SUMMARIES_DIR / f"{d['video_id']}.html"
-        d["transcript"] = t_path.read_text(encoding="utf-8") if t_path else None
         d["summary"] = s_path.read_text(encoding="utf-8") if s_path.exists() else None
         d["tags"] = json.loads(d["tags"]) if d.get("tags") else []
         result.append(d)

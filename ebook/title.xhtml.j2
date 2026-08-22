@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{{ lang }}" lang="{{ lang }}">
+<head><title>{{ title }}</title>
+<link rel="stylesheet" type="text/css" href="book.css"/></head>
+<body>
+<h1>{{ title }}</h1>
+{% if date_from and date_to %}<p class="range">{{ t.book_period }}: {{ date_from.strftime('%d.%m.%Y') }}&#8211;{{ date_to.strftime('%d.%m.%Y') }}</p>{% endif %}
+<p class="meta">{{ generated }}</p>
+<ul class="parts">
+{% for part in parts %}{% set count = namespace(n=0) %}{% for week in part.weeks %}{% set count.n = count.n + week.videos|length %}{% endfor %}  <li>{{ part.title }}: {{ count.n }}</li>
+{% endfor %}</ul>
+</body>
+</html>

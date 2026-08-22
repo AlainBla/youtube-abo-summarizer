@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{{ lang }}" lang="{{ lang }}">
+<head><title>{{ t.book_transcript }}</title>
+<link rel="stylesheet" type="text/css" href="book.css"/></head>
+<body>
+<h1>{{ t.book_transcript }}</h1>
+{% for para in paragraphs %}<p>{{ para }}</p>
+{% endfor %}
+<p class="back"><a href="{{ back_href }}">{{ t.book_back }}</a></p>
+</body>
+</html>

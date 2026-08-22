@@ -195,6 +195,53 @@ Nothing to configure: upload or serve the `.meta.json` file alongside the HTML a
 If the manifest is missing (or the archive is opened as a local `file://` document) the page simply
 never polls, exactly as before.
 
+## Usage — ebook export
+
+`ebook.py` renders stored videos into a single EPUB 3 file for reading offline on an e-reader or the Kindle app — one chapter per ISO calendar week, with each video's summary, thumbnail (optional) and transcript (optional). Like `export.py`, it only reads from `data/`: no YouTube API calls and no LLM calls. The title page shows the book's covered date range (earliest to latest video) alongside the video counts and generation date; a video whose transcript couldn't be fetched shows the matching localized notice instead of an empty section.
+
+```bash
+# Last 100 videos in the store (the default)
+python ebook.py --all
+
+# All videos, no limit
+python ebook.py --all --limit 0
+
+# Only the last 48 hours
+python ebook.py --hours 48
+
+# Restrict to one channel, one tag, or an explicit list of video IDs
+python ebook.py --all --channel UC123abc
+python ebook.py --all --tag Rust
+python ebook.py --all --videos abc,def,ghi
+
+# Custom output filename
+python ebook.py --all --output my_book.epub
+
+# Skip thumbnails and/or transcripts to keep the file small
+python ebook.py --all --no-thumbnails --no-transcripts
+
+# Embedded language (chapter titles, nav labels, etc.)
+python ebook.py --all --lang en
+```
+
+`--hours` and `--all` are mutually exclusive. Neither is required — running `python ebook.py` with no window flag behaves exactly like `--all` (all videos in the store), still capped by `--limit`. `--limit` keeps only the N newest videos after all other filters are applied (`0` = no limit); it defaults to `100` so an unqualified run still produces a reasonably sized book. The default output filename is `ebook_YYYY-MM-DD_HH-MM.epub`.
+
+### Read/unread split
+
+Pass `--user EMAIL` to split the book by a user's read state, read from the sync server's database (`sync-server/sync.db` by default, override with `--sync-db`):
+
+```bash
+python ebook.py --all --user you@example.com
+python ebook.py --all --user you@example.com --read drop     # omit read videos entirely
+python ebook.py --all --user you@example.com --read ignore   # single part, read state not applied
+```
+
+`--read` only takes effect together with `--user` — without `--user` the book is always one undivided "Videos" part, since there is no read state to split by. With `--user` set: `--read split` (the default) produces two parts, "Unread" first and "Read" second — the natural reading order; `--read drop` keeps only unread videos; `--read ignore` puts everything in a single part despite `--user` being given. An email with no matching sync user is an error; if every video ends up filtered out (e.g. `--read drop` with nothing unread), `ebook.py` exits 0 with a message instead of writing an unreadable, empty book.
+
+### Reading on a Kindle
+
+The generated `.epub` can be delivered to a Kindle via Amazon's [Send to Kindle](https://www.amazon.com/sendtokindle) — email the file as an attachment to your device's `@kindle.com` address (registered senders only), or use the Send to Kindle app/website. No conversion needed; the file is a standard, spec-valid EPUB 3 archive.
+
 ## Sync server (optional)
 
 `sync-server/` is a standalone Flask service for syncing read/bookmark state across browsers.
