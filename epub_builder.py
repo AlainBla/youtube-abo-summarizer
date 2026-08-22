@@ -7,7 +7,7 @@ import re
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
@@ -31,6 +31,17 @@ MEDIA_TYPES = {
 # Only these named entities can appear in stored summaries (nh3 escapes the
 # rest); XML knows none of them except the five predefined ones.
 _NAMED_ENTITY_RE = re.compile(r"&(?!amp;|lt;|gt;|quot;|apos;|#)([a-zA-Z][a-zA-Z0-9]*);")
+
+# A bare "&" that isn't part of one of the five predefined XML entities or a
+# numeric reference is not legal XML character data. Stored summaries are
+# full of these -- every timestamp link's href reads
+# "watch?v=ID&t=122" -- and the named-entity pass above only rewrites
+# "&name;" forms, so it leaves a bare "&t=122" untouched. Left alone, that
+# single stray "&" makes ET.fromstring() raise below and xhtmlify() falls
+# back to escaping the whole fragment to plain text, discarding all markup
+# and every link. Runs after the named-entity pass so it never touches an
+# "&" that pass already turned into a numeric reference.
+_BARE_AMPERSAND_RE = re.compile(r"&(?!amp;|lt;|gt;|quot;|apos;|#)")
 
 # XML 1.0 Char production (https://www.w3.org/TR/xml/#charsets): everything
 # outside these ranges -- e.g. raw control chars like form feed, which HTML
@@ -104,6 +115,7 @@ def xhtmlify(fragment):
         return "".join("&#%d;" % ord(c) for c in decoded)
 
     text = _NAMED_ENTITY_RE.sub(numeric, fragment)
+    text = _BARE_AMPERSAND_RE.sub("&amp;", text)
     try:
         ET.fromstring("<div>" + text + "</div>")
         return text
@@ -195,6 +207,16 @@ def _chapter_href_for(parts, video_id):
     return "nav.xhtml"
 
 
+def _covered_date_range(parts):
+    """Earliest and latest publish date across every video in the book.
+
+    (None, None) when the book somehow has no videos -- callers must guard
+    against that rather than assume a range always exists.
+    """
+    dates = [_published_date(v) for part in parts for week in part["weeks"] for v in week["videos"]]
+    return (min(dates), max(dates)) if dates else (None, None)
+
+
 def build_epub(parts, output_path, title, lang, strings, images=None,
                 transcripts=None, book_id=None):
     """Write the EPUB 3 archive.
@@ -211,11 +233,14 @@ def build_epub(parts, output_path, title, lang, strings, images=None,
     generated = datetime.now(tz=timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
     book_id = book_id or "urn:uuid:" + str(uuid.uuid4())
 
+    date_from, date_to = _covered_date_range(parts)
+
     files = {}  # href inside OEBPS -> str | bytes
     with open(os.path.join(TEMPLATE_DIR, "book.css"), encoding="utf-8") as f:
         files["book.css"] = f.read()
     files["title.xhtml"] = env.get_template("title.xhtml.j2").render(
-        title=title, lang=lang, t=strings, generated=generated[:10], parts=parts)
+        title=title, lang=lang, t=strings, generated=generated[:10], parts=parts,
+        date_from=date_from, date_to=date_to)
 
     image_hrefs = {}
     for video_id, blob in images.items():

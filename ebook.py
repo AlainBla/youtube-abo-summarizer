@@ -13,6 +13,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 import epub_builder
+import export
 import i18n as i18n_module
 import store
 
@@ -200,8 +201,20 @@ def main():
         print("No videos to put in the book.")
         sys.exit(0)
 
+    # Store rows carry the raw ISO-8601 duration ("PT1H2M3S") -- chapter.xhtml.j2
+    # just prints it, so format it the same way export.py does before it ever
+    # reaches the template. Copy each dict rather than mutate the row in
+    # place, since `entries` may be a cached/shared list.
+    selected = [dict(v, duration=export._fmt_duration(v.get("duration"))) for v in selected]
+
+    # The "Unread"/"Read" split only makes sense once a user's read state has
+    # actually been loaded. Without --user, read_ids is always empty, so
+    # "split" mode would still produce a single part -- but labelled
+    # "Unread" instead of the generic "Videos" -- misrepresenting a book that
+    # was never partitioned by anyone's read state.
     read_ids = load_read_ids(args.sync_db, args.user) if args.user else set()
-    part_pairs = partition_by_read(selected, read_ids, args.read)
+    read_mode = args.read if args.user else "ignore"
+    part_pairs = partition_by_read(selected, read_ids, read_mode)
     parts = []
     kept = []
     for key, videos in part_pairs:
