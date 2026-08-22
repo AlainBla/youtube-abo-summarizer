@@ -83,6 +83,14 @@ def test_ncx_item_id_matches_the_spine_toc_attribute():
     assert epub_builder._item_id("toc.ncx") == "toc-ncx"
 
 
+def test_media_type_raises_a_diagnosable_error_for_unsupported_extensions():
+    try:
+        epub_builder._media_type("images/cover.png")
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "images/cover.png" in str(exc)
+
+
 def test_book_with_images_and_transcripts_manifests_and_spines_them(tmp_path):
     out = _book(
         tmp_path,

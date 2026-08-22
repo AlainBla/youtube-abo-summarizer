@@ -9,6 +9,7 @@ import argparse
 import os
 import sqlite3
 import sys
+import urllib.request
 from datetime import datetime
 
 DEFAULT_LIMIT = 100
@@ -73,6 +74,48 @@ def partition_by_read(videos, read_ids, mode):
         read = [v for v in videos if v["video_id"] in read_ids]
         parts = [("unread", unread)] if mode == "drop" else [("unread", unread), ("read", read)]
     return [(key, vs) for key, vs in parts if vs]
+
+
+def _default_fetch(url, timeout=10):
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        return resp.read()
+
+
+def collect_thumbnails(videos, cache_dir, fetch=None, max_bytes=2_000_000):
+    """Download (or reuse from disk) each video's thumbnail as raw JPEG bytes.
+
+    Returns ({video_id: jpeg bytes}, failure_count). A thumbnail is skipped
+    -- not raised -- on a non-https URL, a fetch error, or an oversized
+    payload, because a book missing one thumbnail is still a book. Downloads
+    land in `cache_dir` as "<video_id>.jpg" so a rebuild works with no
+    network at all once the cache is warm.
+    """
+    fetch = fetch or _default_fetch
+    os.makedirs(cache_dir, exist_ok=True)
+    images, failed = {}, 0
+    for v in videos:
+        video_id = v["video_id"]
+        path = os.path.join(cache_dir, "%s.jpg" % video_id)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                images[video_id] = f.read()
+            continue
+        url = v.get("thumbnail_url") or ""
+        if not url.startswith("https://"):
+            failed += 1
+            continue
+        try:
+            blob = fetch(url)
+        except Exception:
+            failed += 1
+            continue
+        if not blob or len(blob) > max_bytes:
+            failed += 1
+            continue
+        with open(path, "wb") as f:
+            f.write(blob)
+        images[video_id] = blob
+    return images, failed
 
 
 def parse_args(argv=None):
