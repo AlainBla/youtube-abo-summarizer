@@ -86,3 +86,40 @@ def test_empty_string_returns_none_or_empty():
     result = _sanitize_summary("")
     # Either None or empty string is acceptable; must not raise
     assert result is None or result == ""
+
+
+# ── Backslash-escaped attribute quotes ──────────────────────────────────────
+# One stored summary in ~4800 arrives JSON-escaped: <a href=\"https://...\">.
+# An HTML parser then reads the quote as part of the value, so the link is
+# broken in the report and the export, and epubcheck rejects the ebook with
+# RSC-020 ("is not a valid URL").
+
+def test_backslash_escaped_attribute_quotes_are_repaired():
+    raw = '<p><a href=\\"https://www.youtube.com/watch?v=ID&t=300\\" class=\\"ts-link\\">05:00</a></p>'
+    out = _sanitize_summary(raw)
+    assert 'href="https://www.youtube.com/watch?v=ID&amp;t=300"' in out, out
+    assert 'class="ts-link"' in out, out
+    assert "&quot;" not in out
+
+
+def test_quotes_in_prose_are_left_alone():
+    raw = '<p>Er sagte \\"hallo\\" und ging.</p>'
+    out = _sanitize_summary(raw)
+    assert "hallo" in out
+    assert "<p>" in out
+
+
+def test_a_href_with_whitespace_loses_the_link_but_keeps_the_text():
+    # The model sometimes breaks a video ID in half: watch?v=WYei Iz47ZNU.
+    # Such a URL is invalid (epubcheck RSC-020) and 404s in a browser, so the
+    # anchor keeps its text and loses the href.
+    raw = '<p><a href="https://www.youtube.com/watch?v=WYei Iz47ZNU&t=1060" class="ts-link">17:40</a></p>'
+    out = _sanitize_summary(raw)
+    assert "17:40" in out
+    assert "href=" not in out, out
+
+
+def test_a_valid_href_is_untouched():
+    raw = '<p><a href="https://www.youtube.com/watch?v=ID&t=10" class="ts-link">00:10</a></p>'
+    out = _sanitize_summary(raw)
+    assert 'href="https://www.youtube.com/watch?v=ID&amp;t=10"' in out

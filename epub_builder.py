@@ -137,10 +137,73 @@ def xhtmlify(fragment):
         return "<p>" + html.escape(resolved) + "</p>"
 
 
+_BLOCK_TAGS = ("p", "ul", "ol", "h3")
+
+
+def _hoist_blocks_out_of_headings(root):
+    """Move block content out of a heading and put it after the heading.
+
+    The model forgets </h3> often enough to matter: an HTML5 parser then
+    nests everything up to the next heading inside it. A heading may only
+    hold phrasing content, so epubcheck rejects the book -- and a whole
+    paragraph would render heading-sized. Hoisting restores what the model
+    meant, rather than flattening the paragraph into the title.
+    """
+    for parent in list(root.iter()):
+        for heading in list(parent):
+            if heading.tag != "h3":
+                continue
+            blocks = [child for child in list(heading) if child.tag in _BLOCK_TAGS]
+            if not blocks:
+                continue
+            position = list(parent).index(heading)
+            for offset, block in enumerate(blocks, start=1):
+                heading.remove(block)
+                parent.insert(position + offset, block)
+
+
+def _normalize_lists(fragment):
+    """Wrap anything that is not an <li> but sits directly in a list.
+
+    The model emits `<ul><a href="...">12:34</a></ul>` often enough to matter:
+    an HTML5 parser keeps it there (so nh3 does too) and it is well-formed
+    XML, but a list may only contain list items — epubcheck rejects the book
+    with RSC-005. Runs on xhtmlify()'s output, which is guaranteed parseable;
+    anything unexpected is returned untouched rather than risking the book.
+    """
+    if not fragment or not any(t in fragment for t in ("<ul", "<ol", "<h3")):
+        return fragment
+    try:
+        root = ET.fromstring("<div>" + fragment + "</div>")
+    except ET.ParseError:
+        return fragment
+
+    _hoist_blocks_out_of_headings(root)
+
+    for lst in root.iter():
+        if lst.tag not in ("ul", "ol"):
+            continue
+        for position, child in enumerate(list(lst)):
+            if child.tag == "li":
+                continue
+            item = ET.Element("li")
+            lst.remove(child)
+            item.append(child)
+            lst.insert(position, item)
+        if lst.text and lst.text.strip():
+            item = ET.Element("li")
+            item.text = lst.text
+            lst.text = None
+            lst.insert(0, item)
+
+    out = ET.tostring(root, encoding="unicode")
+    return out[len("<div>"):-len("</div>")] if out.startswith("<div>") else out
+
+
 @functools.lru_cache(maxsize=1)
 def _env():
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
-    env.filters["xhtml"] = lambda s: Markup(xhtmlify(renderer.sanitize_summary(s)))
+    env.filters["xhtml"] = lambda s: Markup(_normalize_lists(xhtmlify(renderer.sanitize_summary(s))))
     env.globals.update(item_id=_item_id, media_type=_media_type)
     return env
 

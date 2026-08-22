@@ -51,10 +51,31 @@ def _repair_broken_ts_links(html: str) -> str:
     return _BROKEN_TS_LINK_RE.sub(repair, html)
 
 
+# Attribute assignments the model JSON-escaped: href=\\"https://..\\". An HTML
+# parser reads the backslash-quote as part of the value, so the link breaks in
+# every output (and epubcheck rejects the ebook with RSC-020). Anchored on the
+# "=" so quoted prose is left alone.
+_ESCAPED_ATTR_QUOTE_RE = re.compile(r'=\\"([^"]*?)\\"')
+
+
+def _repair_escaped_attr_quotes(html: str) -> str:
+    return _ESCAPED_ATTR_QUOTE_RE.sub(r'="\1"', html)
+
+
+# A model that breaks a video ID in half produces href="...watch?v=WYei Iz47ZNU".
+# Such a URL is invalid (epubcheck RSC-020) and 404s in a browser, so the anchor
+# keeps its text and loses the link rather than pretending to work.
+_WHITESPACE_HREF_RE = re.compile(r'\s+href="[^"]*\s[^"]*"')
+
+
+def _drop_broken_hrefs(html: str) -> str:
+    return _WHITESPACE_HREF_RE.sub("", html)
+
+
 def _sanitize_summary(html: str | None) -> str | None:
     """Strip malicious HTML from a summary fragment.
 
-    Three-stage sanitization:
+    Four-stage sanitization:
     1. Broken-timestamp-anchor repair — rebuilds <a href="...t=M:SS</a> tags
        that the LLM emitted without the closing quote and link text.
     2. nh3.clean() — allowlist-based HTML sanitizer; removes all tags/attributes
@@ -64,8 +85,8 @@ def _sanitize_summary(html: str | None) -> str | None:
     """
     if not html:
         return html
-    # Stage 1: repair LLM-truncated timestamp anchors
-    repaired = _repair_broken_ts_links(html)
+    # Stage 1: repair LLM-truncated timestamp anchors and JSON-escaped quotes
+    repaired = _repair_broken_ts_links(_repair_escaped_attr_quotes(html))
     # Stage 2: allowlist-based XSS sanitization
     cleaned = nh3.clean(
         repaired,
@@ -74,7 +95,9 @@ def _sanitize_summary(html: str | None) -> str | None:
         url_schemes=_ALLOWED_URL_SCHEMES,
         link_rel=None,  # preserve existing rel/class; do not override
     )
-    # Stage 3: strip trailing incomplete tag from LLM truncation
+    # Stage 3: drop hrefs the model mangled with whitespace
+    cleaned = _drop_broken_hrefs(cleaned)
+    # Stage 4: strip trailing incomplete tag from LLM truncation
     cleaned = re.sub(r"<[^>]*$", "", cleaned).rstrip()
     return cleaned if cleaned else None
 

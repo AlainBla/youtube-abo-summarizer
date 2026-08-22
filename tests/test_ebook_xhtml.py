@@ -153,3 +153,55 @@ def test_a_mismatched_tag_no_longer_costs_the_summary_its_markup():
 def test_disallowed_markup_is_still_removed():
     out = _summary_of(_chapter_with_summary('<p>ok</p><script>alert(1)</script>'))
     assert "script" not in out.lower()
+
+
+# ── List content model ──────────────────────────────────────────────────────
+# The LLM sometimes emits <ul><a href=...>...</a></ul> — an anchor as a direct
+# child of the list, with no <li>. nh3 keeps it (that is how an HTML5 parser
+# reads it) and it is well-formed XML, but epubcheck rejects it with RSC-005:
+# a list may only contain <li>.
+
+def test_an_anchor_directly_inside_a_list_is_wrapped_in_a_list_item():
+    out = _summary_of(_chapter_with_summary(
+        '<ul><a href="https://www.youtube.com/watch?v=X&amp;t=305" class="ts-link">05:05</a></ul>'))
+    assert "05:05" in out
+    assert not re.search(r"<(ul|ol)>\s*<a\b", out), out
+    assert re.search(r"<li>\s*<a\b", out), out
+
+
+def test_stray_text_inside_a_list_is_wrapped_too():
+    out = _summary_of(_chapter_with_summary("<ul>loser Text<li>Punkt</li></ul>"))
+    assert "loser Text" in out and "Punkt" in out
+    assert not re.search(r"<ul>\s*[^<\s]", out), out
+
+
+def test_a_well_formed_list_keeps_its_items():
+    out = _summary_of(_chapter_with_summary("<ul><li>A</li><li>B</li></ul>"))
+    assert out.count("<li>") == 2
+    assert "<li>A</li>" in out and "<li>B</li>" in out
+
+
+def test_a_nested_list_is_not_left_as_a_direct_child():
+    out = _summary_of(_chapter_with_summary("<ul><li>A</li><ul><li>B</li></ul></ul>"))
+    assert not re.search(r"<ul>\s*<ul\b", out), out
+    assert "B" in out
+
+
+def test_a_block_element_inside_an_inline_element_becomes_a_span():
+    # <em><p>...</p></em> is well-formed XML and survives nh3, but a paragraph
+    # may not sit inside phrasing content — epubcheck rejects it (RSC-005).
+    out = _summary_of(_chapter_with_summary("<p><em><p>Text im Inline-Element</p></em></p>"))
+    assert "Text im Inline-Element" in out
+    assert not re.search(r"<(em|strong|a)\b[^>]*>\s*<(p|h3|ul|ol)\b", out), out
+
+
+def test_a_paragraph_inside_an_unclosed_heading_is_hoisted_out():
+    # Real case from the store: the model forgets </h3>, so an HTML5 parser
+    # (and therefore nh3) makes the following paragraph a child of the
+    # heading. A heading may only hold phrasing content -- epubcheck rejects
+    # it with RSC-005, and the paragraph would render heading-sized.
+    out = _summary_of(_chapter_with_summary(
+        '<h3>Abschnitt <a href="https://www.youtube.com/watch?v=X&amp;t=1000">16:40</a>'
+        '<p>Der eigentliche Absatz.</p>'))
+    assert "Der eigentliche Absatz." in out
+    assert not re.search(r"<h3\b[^>]*>(?:(?!</h3>).)*?<p\b", out, re.S), out

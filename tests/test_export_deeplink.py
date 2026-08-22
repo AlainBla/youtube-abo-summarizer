@@ -59,8 +59,18 @@ def test_a_video_from_a_later_chunk_is_rendered_alone():
     script = "location.search = '?v=v003';\n" + _script()
     snippet = """
     bootstrap().then(function () {
-      // Its summary lives outside chunk 0; renderPage() has to fetch that chunk.
-      return new Promise(function (r) { setTimeout(r, 0); });
+      // Its summary lives outside chunk 0, so renderPage() re-enters itself
+      // once ensureChunks() resolves. That takes an unknown number of ticks
+      // (gunzip is async), so wait for the card instead of for one timeout --
+      // a fixed setTimeout(0) here made this test flaky.
+      return new Promise(function (resolve, reject) {
+        var ticks = 0;
+        (function poll() {
+          if (document.getElementById('grid').innerHTML.indexOf('data-video-id="v003"') !== -1) return resolve();
+          if (++ticks > 200) return reject(new Error('card never appeared'));
+          setTimeout(poll, 5);
+        })();
+      });
     }).then(function () {
       var grid = document.getElementById('grid').innerHTML;
       console.log(JSON.stringify({
