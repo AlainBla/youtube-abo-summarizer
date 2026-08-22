@@ -157,7 +157,7 @@ python export.py --all --sync-url https://sync.example.com --output archive.html
 
 `--hours` and `--all` are mutually exclusive. The default output filename is `export_YYYY-MM-DD_HH-MM.html`.
 
-`--sort` picks the order: `date-desc` (default, newest publish date first), `date-asc` (chronological) or `added-desc` (most recently added to the store first — a video ingested on demand today ranks first even if it was published months ago). Weeks stay the grouping level in every mode; under `added-desc` a week is placed by its freshest arrival. The sort runs before `--limit`, so `--sort added-desc --limit 50` gives the 50 most recently added videos.
+`--sort` picks the order: `added-desc` (default, most recently added to the store first), `date-desc` (newest publish date first) or `date-asc` (chronological). Under `added-desc` a video ingested on demand today ranks first even if it was published months ago). Weeks stay the grouping level in every mode; under `added-desc` a week is placed by its freshest arrival. The sort runs before `--limit`, so `--sort added-desc --limit 50` gives the 50 most recently added videos.
 
 Videos whose transcript could not be fetched have no summary, so their chapter would be nothing but a notice — they are **left out by default**. Pass `--include-untranscribed` to keep them.
 The LLM model badge is hidden by default; use `--show-model` to display it.
@@ -201,7 +201,7 @@ never polls, exactly as before.
 
 ## Usage — ebook export
 
-`ebook.py` renders stored videos into a single EPUB 3 file for reading offline on an e-reader or the Kindle app — one chapter per video, newest first, grouped by ISO calendar week in the table of contents, each with its summary, thumbnail (optional) and transcript (optional). Every video is its own document, so the reader's next-chapter jump moves video by video and each one starts on a fresh page; a small line above the title names the calendar week it belongs to. Like `export.py`, it only reads from `data/`: no YouTube API calls and no LLM calls. The title page shows the book's covered date range (earliest to latest video) alongside the video counts and generation date; a video whose transcript couldn't be fetched shows the matching localized notice instead of an empty section.
+`ebook.py` renders stored videos into a single EPUB 3 file for reading offline on an e-reader or the Kindle app — one chapter per video, most recently added first, grouped by ISO calendar week in the table of contents, each with its summary, thumbnail (optional) and transcript (optional). Every video is its own document, so the reader's next-chapter jump moves video by video and each one starts on a fresh page; a small line above the title names the calendar week it belongs to. Like `export.py`, it only reads from `data/`: no YouTube API calls and no LLM calls. The title page shows the book's covered date range (earliest to latest video) alongside the video counts and generation date; a video whose transcript couldn't be fetched shows the matching localized notice instead of an empty section.
 
 ```bash
 # Last 100 videos in the store (the default)

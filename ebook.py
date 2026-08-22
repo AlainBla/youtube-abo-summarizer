@@ -172,9 +172,9 @@ def parse_args(argv=None):
     parser.add_argument("--include-untranscribed", action="store_true",
                         help="also include videos with no summary (their transcript could "
                              "not be fetched); left out by default")
-    parser.add_argument("--sort", choices=list(epub_builder.SORT_MODES), default="date-desc",
-                        help="order of the book: newest publish date first (default), "
-                             "chronological, or most recently added to the store first")
+    parser.add_argument("--sort", choices=list(epub_builder.SORT_MODES), default="added-desc",
+                        help="order of the book: most recently added to the store first "
+                             "(default), newest publish date first, or chronological")
     parser.add_argument("--read", choices=["split", "drop", "ignore"], default="split",
                         help="read videos: move to the back, drop them, or ignore the state")
     parser.add_argument("--no-thumbnails", dest="thumbnails", action="store_false",

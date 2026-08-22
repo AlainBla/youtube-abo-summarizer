@@ -200,8 +200,11 @@ def test_limit_still_counts_everything_under_read_split(tmp_path, monkeypatch):
     assert sorted(_chapter_video_ids(out)) == ["v4", "v5"]
 
 
-def test_sort_defaults_to_newest_publish_date_and_accepts_the_three_modes():
-    assert ebook.parse_args([]).sort == "date-desc"
+def test_sort_defaults_to_most_recently_added_and_accepts_the_three_modes():
+    # The store holds videos published long before they were collected (on-demand
+    # ingests, backfills), so "what is new to me" is the arrival, not the
+    # publish date.
+    assert ebook.parse_args([]).sort == "added-desc"
     for mode in ("date-desc", "date-asc", "added-desc"):
         assert ebook.parse_args(["--sort", mode]).sort == mode
     with pytest.raises(SystemExit):
