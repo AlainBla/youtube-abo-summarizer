@@ -61,6 +61,7 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 - Anything that shells out to `collect.py` must treat 10 as success — `ingest_worker.sh` would otherwise re-queue every video it just ingested. `collect.sh` gates the archive re-export on exactly this code; a plain `&&` would re-export every run and keep the export's update banner permanently lit (the banner triggers on a changed `generated_at`, not on new rows)
 
 - The repository is **public**. No sync URL, output path or mail address belongs in a tracked `*.sh`; they come from `cron.env` (gitignored, template `cron.env.example`), which every cron script sources. `tests/test_collect_shell_wiring.py` guards this
+- An unset `SYNC_URL` is a silent feature amputation, not a degraded mode: `export.py` without `--sync-url` renders no sync bar at all, so login, account display and ingest vanish from the archive. Both cron scripts log a warning when it is missing; keep that warning whenever you touch the export invocation
 
 ### Renderer / templates
 - `renderer.render_html()` accepts `lang="de"|"en"`

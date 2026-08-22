@@ -468,7 +468,7 @@ next to them and fill it in:
 | Variable | Used by | Meaning |
 |---|---|---|
 | `EXPORT_OUTPUT` | `collect.sh`, `ingest_worker.sh` | Where the archive is written; must be the file the web server serves, because the export bakes its basename into the page as the update-manifest URL. Default: `<repo>/yt.html` |
-| `SYNC_URL` | `collect.sh`, `ingest_worker.sh` | Sync server base URL embedded into the archive; unset exports without sync support |
+| `SYNC_URL` | `collect.sh`, `ingest_worker.sh` | Sync server base URL embedded into the archive. Leave it unset and the export drops the sync UI entirely — no login, no account display, no ingest button; the scripts log a warning in that case |
 | `DIGEST_TO` | `run_*.sh` | Recipient of the digest mails; the scripts abort when it is unset |
 
 The scripts source `cron.env`, so an assignment there wins over a variable set in the crontab line.

@@ -63,3 +63,13 @@ def test_cron_env_is_gitignored_and_has_an_example():
     with open(os.path.join(REPO, ".gitignore"), encoding="utf-8") as f:
         assert "cron.env" in f.read().splitlines()
     assert os.path.exists(os.path.join(REPO, "cron.env.example"))
+
+
+def test_both_export_scripts_warn_when_sync_url_is_unset():
+    """A missing SYNC_URL costs the archive its entire sync UI -- login,
+    account display and the ingest button all vanish -- and the export
+    otherwise succeeds without a word. It has to say so in the log."""
+    for name in ("collect.sh", "ingest_worker.sh"):
+        sh = _read(name)
+        assert 'if [ -z "$SYNC_URL" ]' in sh, name
+        assert "WARNING: SYNC_URL is unset" in sh, name

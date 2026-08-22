@@ -34,6 +34,12 @@ if [ "$rc" -eq "$EXIT_NEW_VIDEOS" ]; then
     if [ -n "$SYNC_URL" ]; then
         sync_args=(--sync-url "$SYNC_URL")
     fi
+    if [ -z "$SYNC_URL" ]; then
+        # Losing this is silent and total: the export drops the whole sync UI
+        # (login, account display, ingest button) instead of failing.
+        echo "[$(date -Iseconds)] WARNING: SYNC_URL is unset -- exporting without sync support. Set it in cron.env." >> "$REPO/cron.log"
+    fi
+
     python3 export.py --all ${sync_args[@]+"${sync_args[@]}"} --output "$EXPORT_OUTPUT" >> "$REPO/cron.log" 2>&1
 elif [ "$rc" -ne 0 ]; then
     exit "$rc"

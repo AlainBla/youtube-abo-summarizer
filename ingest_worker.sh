@@ -74,5 +74,11 @@ if [ "$success" -eq 1 ]; then
     if [ -n "$SYNC_URL" ]; then
         sync_args=(--sync-url "$SYNC_URL")
     fi
+    if [ -z "$SYNC_URL" ]; then
+        # Losing this is silent and total: the export drops the whole sync UI
+        # (login, account display, ingest button) instead of failing.
+        echo "[$(date -Iseconds)] WARNING: SYNC_URL is unset -- exporting without sync support. Set it in cron.env." >> "$LOG"
+    fi
+
     cd "$REPO" && "$PYTHON" "$EXPORT" --all ${sync_args[@]+"${sync_args[@]}"} --output "$EXPORT_OUTPUT" >> "$LOG" 2>&1
 fi
