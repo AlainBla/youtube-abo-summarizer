@@ -96,7 +96,11 @@ def collect_thumbnails(videos, cache_dir, fetch=None, max_bytes=2_000_000):
     for v in videos:
         video_id = v["video_id"]
         path = os.path.join(cache_dir, "%s.jpg" % video_id)
-        if os.path.exists(path):
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            # A 0-byte file can only be the debris of a killed write (real
+            # downloads are validated non-empty before ever being written,
+            # see below) -- treat it as a miss and refetch rather than
+            # trusting it, the same as a truncated one would be.
             with open(path, "rb") as f:
                 images[video_id] = f.read()
             continue
@@ -112,8 +116,13 @@ def collect_thumbnails(videos, cache_dir, fetch=None, max_bytes=2_000_000):
         if not blob or len(blob) > max_bytes:
             failed += 1
             continue
-        with open(path, "wb") as f:
+        # Write to a temp file and rename into place so a process killed
+        # mid-write can never leave a truncated "<video_id>.jpg" behind for
+        # a later run to load as if it were a complete, valid image.
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "wb") as f:
             f.write(blob)
+        os.replace(tmp_path, path)
         images[video_id] = blob
     return images, failed
 

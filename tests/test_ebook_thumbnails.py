@@ -38,6 +38,17 @@ def test_oversized_images_are_skipped(tmp_path):
         [video("v1", "2026-01-01T00:00:00Z")], str(tmp_path),
         fetch=lambda url: b"x" * 10, max_bytes=5)
     assert images == {} and failed == 1
+    # An oversized blob must never be written to the cache -- otherwise a
+    # later run would load the rejected payload from disk and serve it as
+    # if it were a validated thumbnail.
+    assert not (tmp_path / "v1.jpg").exists()
+
+
+def test_an_empty_body_is_skipped(tmp_path):
+    images, failed = ebook.collect_thumbnails(
+        [video("v1", "2026-01-01T00:00:00Z")], str(tmp_path), fetch=lambda url: b"")
+    assert images == {} and failed == 1
+    assert not (tmp_path / "v1.jpg").exists()
 
 
 def test_non_https_urls_are_never_fetched(tmp_path):
