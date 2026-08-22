@@ -137,7 +137,7 @@ python ebook.py --all --user you@example.com --read drop   # keep unread videos 
 python ebook.py --all --lang en                            # embedded UI language
 ```
 
-- `--hours` / `--all` are mutually exclusive, mirroring `export.py`.
+- `--hours` / `--all` are mutually exclusive, mirroring `export.py`; neither is required — no window flag behaves like `--all` (all videos in the store, still capped by `--limit`).
 - `select_videos()` filters (by `--channel`/`--videos`/`--tag`), sorts newest-first, then cuts to `--limit` (default `DEFAULT_LIMIT` = 100; `0` = no limit) — the cut happens before grouping into weeks, so "the newest 100" means exactly that, not "100 per week". `--limit` rejects negative values at the argparse layer (`_limit_type`): `picked[:limit]` would otherwise slice from the wrong end and silently drop the newest videos instead of the oldest.
 - `--user EMAIL` reads that user's read state from the sync database (`--sync-db`, default `sync-server/sync.db`) via `load_read_ids()`; an unknown email is a hard error. `--read` controls what happens with it: `split` (default) produces an "Unread" part followed by a "Read" part; `drop` keeps only unread videos; `ignore` puts everything into one "Videos" part regardless of `--user`. Empty parts are dropped; `partition_by_read()` in `ebook.py`.
 - `main()` exits 0 with a message — without touching the filesystem — both when the selection is empty (`select_videos()` returned nothing) and when every part ends up empty after `--read` (e.g. `--read drop` with nothing unread left): building an EPUB from zero parts would emit an NCX with an empty `navMap`, which is invalid per the EPUB DTD, so that case is caught before `build_epub()` is ever called.

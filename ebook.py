@@ -152,10 +152,15 @@ def _limit_type(value):
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="Build an EPUB ebook from stored summaries.")
+    parser = argparse.ArgumentParser(
+        description="Build an EPUB ebook from stored summaries. "
+                     "If neither --hours nor --all is given, behaves like --all "
+                     "(all videos in the store, still capped by --limit).")
     window = parser.add_mutually_exclusive_group()
     window.add_argument("--hours", type=int, help="only videos published in the last N hours")
-    window.add_argument("--all", action="store_true", help="all videos in the store")
+    window.add_argument("--all", action="store_true",
+                        help="all videos in the store (also the default when neither "
+                             "--hours nor --all is given)")
     parser.add_argument("--channel", help="restrict to one channel ID")
     parser.add_argument("--videos", help="comma-separated video IDs")
     parser.add_argument("--tag", help="restrict to videos carrying this tag")
@@ -179,7 +184,10 @@ def main():
     lang = i18n_module.resolve_lang(args.lang)
     strings = i18n_module.get_strings(lang)
 
-    if args.hours:
+    if args.hours is not None:
+        # `is not None`, not truthiness: `--hours 0` must mean "the last 0
+        # hours" (i.e. essentially nothing), not silently fall through to
+        # "all videos in the store" the way a bare `if args.hours:` would.
         since = datetime.now(tz=timezone.utc) - timedelta(hours=args.hours)
         entries = store.get_videos_since(since, with_transcripts=False)
     else:
@@ -193,13 +201,16 @@ def main():
         sys.exit(0)
 
     read_ids = load_read_ids(args.sync_db, args.user) if args.user else set()
+    part_pairs = partition_by_read(selected, read_ids, args.read)
     parts = []
-    for key, videos in partition_by_read(selected, read_ids, args.read):
+    kept = []
+    for key, videos in part_pairs:
         parts.append({
             "key": key,
             "title": strings[PART_TITLE_KEYS[key]],
             "weeks": epub_builder.group_by_week(videos),
         })
+        kept.extend(videos)
 
     if not parts:
         # Every selected video was filtered out by --read (e.g. --read drop
@@ -209,21 +220,29 @@ def main():
         print("No videos left after applying --read — nothing to build.")
         sys.exit(0)
 
+    # Thumbnails and transcripts must only be gathered for videos that
+    # actually ended up in `parts` -- `selected` still holds videos dropped
+    # by --read (e.g. already-read ones under --read drop). build_epub()
+    # embeds every image/transcript it is handed regardless of whether a
+    # chapter links to it, and content.opf.j2 puts every transcript into the
+    # spine, so a dropped video's transcript page would otherwise still ship
+    # in the book's reading order (linked from nav.xhtml) after a wasted
+    # thumbnail fetch.
     images, failed = ({}, 0)
     if args.thumbnails:
-        images, failed = collect_thumbnails(selected, THUMBNAIL_CACHE_DIR)
+        images, failed = collect_thumbnails(kept, THUMBNAIL_CACHE_DIR)
         if failed:
             print(f"{failed} thumbnail(s) could not be fetched — building without them.")
 
     transcripts = {}
     if args.transcripts:
-        for v in selected:
+        for v in kept:
             path = store.get_llm_transcript_path(v["video_id"])
             if path:
                 transcripts[v["video_id"]] = path.read_text(encoding="utf-8")
 
     output = args.output or f"ebook_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.epub"
-    print(f"Building {output} — {len(selected)} video(s), {len(parts)} part(s).")
+    print(f"Building {output} — {len(kept)} video(s), {len(parts)} part(s).")
     epub_builder.build_epub(parts, output, strings["book_title"], lang, strings,
                             images=images, transcripts=transcripts)
     print("Done.")

@@ -71,3 +71,40 @@ def test_all_read_and_drop_mode_exits_zero_with_a_message(tmp_path, monkeypatch,
 def test_negative_limit_is_rejected():
     with pytest.raises(SystemExit):
         ebook.parse_args(["--limit", "-5"])
+
+
+def test_read_drop_excludes_dropped_videos_thumbnails_and_transcripts(tmp_path, monkeypatch):
+    # Regression: main() used to pass the full `selected` list -- including
+    # videos --read drop excludes from the book -- into collect_thumbnails()
+    # and the transcript loop. build_epub() embeds every image/transcript
+    # it's handed, and content.opf.j2 puts every transcript into the spine,
+    # so a dropped video's thumbnail and transcript page used to still ship
+    # in the archive (the transcript backlinked to nav.xhtml) even though no
+    # chapter links to either.
+    _stub_store(monkeypatch, [video("v1", "2026-08-19T10:00:00Z"),
+                              video("v2", "2026-08-26T10:00:00Z")])
+    monkeypatch.setattr(ebook, "load_read_ids", lambda db, email: {"v1"})  # v1 is read
+
+    # Fake thumbnail fetch -- no real network.
+    monkeypatch.setattr(ebook, "_default_fetch", lambda url, timeout=10: b"\xff\xd8jpegdata")
+
+    # Fake transcript store -- both videos "have" a transcript on disk.
+    transcript_paths = {}
+    for vid in ("v1", "v2"):
+        p = tmp_path / f"{vid}.txt"
+        p.write_text(f"Transcript for {vid}.", encoding="utf-8")
+        transcript_paths[vid] = p
+    monkeypatch.setattr(ebook.store, "get_llm_transcript_path", lambda vid: transcript_paths.get(vid))
+    monkeypatch.setattr(ebook, "THUMBNAIL_CACHE_DIR", str(tmp_path / "thumb_cache"))
+
+    out = tmp_path / "book.epub"
+    monkeypatch.setattr(sys, "argv", ["ebook.py", "--all", "--user", "a@b.com", "--read", "drop",
+                                      "--output", str(out)])
+    ebook.main()
+
+    with zipfile.ZipFile(out) as z:
+        names = z.namelist()
+    assert "OEBPS/transcript-v2.xhtml" in names
+    assert "OEBPS/transcript-v1.xhtml" not in names
+    assert "OEBPS/images/v2.jpg" in names
+    assert "OEBPS/images/v1.jpg" not in names
