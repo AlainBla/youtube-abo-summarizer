@@ -109,3 +109,44 @@ def test_book_with_images_and_transcripts_manifests_and_spines_them(tmp_path):
         assert "OEBPS/transcript-v1.xhtml" in names
         spine_ids = [i.get("idref") for i in opf.findall(".//opf:spine/opf:itemref", OPF_NS)]
         assert "transcript-v1" in spine_ids
+
+
+# ── Transcript paragraphing ──────────────────────────────────────────────────
+# Real stored transcripts are a handful of very long lines, not prose with
+# blank lines: a 60-minute video arrives as ~6 lines of several thousand
+# characters each. Chunking by line count alone leaves single paragraphs of
+# 25k+ characters, which is a wall of text with no page-break opportunities
+# on an e-ink reader.
+
+def test_a_very_long_line_is_split_into_readable_paragraphs():
+    sentence = "Das ist ein Satz mit etwas Text darin. "
+    one_long_line = sentence * 200          # ~7600 chars, no newline at all
+    paragraphs = epub_builder._transcript_paragraphs(one_long_line)
+    assert len(paragraphs) > 1
+    assert max(len(p) for p in paragraphs) <= epub_builder.MAX_PARAGRAPH_CHARS
+
+
+def test_splitting_happens_at_sentence_boundaries():
+    text = ("A" * 900 + ". ") + ("B" * 900 + ". ") + ("C" * 900 + ".")
+    paragraphs = epub_builder._transcript_paragraphs(text)
+    assert len(paragraphs) == 3
+    assert all(p.endswith(".") for p in paragraphs)
+
+
+def test_a_sentence_longer_than_the_limit_is_still_emitted_whole():
+    # No sentence boundary to cut at -- losing text would be worse than a
+    # single oversized paragraph.
+    text = "x" * (epub_builder.MAX_PARAGRAPH_CHARS * 2)
+    paragraphs = epub_builder._transcript_paragraphs(text)
+    assert "".join(paragraphs).count("x") == epub_builder.MAX_PARAGRAPH_CHARS * 2
+
+
+def test_short_transcripts_are_left_as_one_paragraph():
+    assert epub_builder._transcript_paragraphs("Kurzer Text.") == ["Kurzer Text."]
+
+
+def test_no_text_is_lost_when_splitting():
+    sentence = "Ein Satz mit Inhalt. "
+    text = sentence * 300
+    joined = " ".join(epub_builder._transcript_paragraphs(text))
+    assert joined.split() == text.split()

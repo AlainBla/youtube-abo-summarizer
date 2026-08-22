@@ -11,6 +11,7 @@ export_*.html
 full_archive*.html
 yt.html
 *.html.meta.json
+*.epub
 *.o.html
 __pycache__/
 *.pyc

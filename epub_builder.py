@@ -179,6 +179,39 @@ def _item_id(href):
     return stem.replace(".", "-")
 
 
+# Longest paragraph a transcript page may contain. Stored transcripts are a
+# handful of very long lines -- a 60-minute video arrives as ~6 lines -- so
+# chunking by line count alone leaves single paragraphs of 25k+ characters:
+# a wall of text with no page-break opportunities on an e-ink reader.
+MAX_PARAGRAPH_CHARS = 1200
+
+# Sentence end followed by whitespace. Splitting here keeps the terminator
+# with its sentence, so paragraphs never start mid-thought.
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?\u2026])\s+")
+
+
+def _split_long_block(block):
+    """Cut an over-long block into paragraphs at sentence boundaries.
+
+    A single sentence longer than the limit is emitted whole: dropping text
+    would be worse than one oversized paragraph.
+    """
+    if len(block) <= MAX_PARAGRAPH_CHARS:
+        return [block]
+
+    paragraphs = []
+    current = ""
+    for sentence in _SENTENCE_END_RE.split(block):
+        if current and len(current) + 1 + len(sentence) > MAX_PARAGRAPH_CHARS:
+            paragraphs.append(current)
+            current = sentence
+        else:
+            current = sentence if not current else current + " " + sentence
+    if current:
+        paragraphs.append(current)
+    return paragraphs
+
+
 def _transcript_paragraphs(text):
     """Cut a raw transcript into readable paragraphs.
 
@@ -193,9 +226,15 @@ def _transcript_paragraphs(text):
     text = _INVALID_XML_CHAR_RE.sub("", text)
     blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
     if len(blocks) > 1:
-        return [" ".join(b.split()) for b in blocks]
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    return [" ".join(lines[i:i + 12]) for i in range(0, len(lines), 12)]
+        joined = [" ".join(b.split()) for b in blocks]
+    else:
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        joined = [" ".join(lines[i:i + 12]) for i in range(0, len(lines), 12)]
+
+    paragraphs = []
+    for block in joined:
+        paragraphs.extend(_split_long_block(block))
+    return paragraphs
 
 
 def _chapter_href_for(parts, video_id):
