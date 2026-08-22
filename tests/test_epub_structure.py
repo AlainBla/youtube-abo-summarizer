@@ -51,7 +51,7 @@ def test_spine_starts_with_the_title_page_and_lists_every_chapter(tmp_path):
         opf = ET.fromstring(z.read("OEBPS/content.opf"))
         ids = [i.get("idref") for i in opf.findall(".//opf:spine/opf:itemref", OPF_NS)]
     assert ids[0] == "title"
-    assert "chap-unread-w-2026-34" in ids and "chap-unread-w-2026-35" in ids
+    assert "video-v1" in ids and "video-v2" in ids
 
 
 def test_every_document_in_the_archive_parses_as_xml(tmp_path):
@@ -65,7 +65,7 @@ def test_nav_lists_parts_and_weeks(tmp_path):
     with zipfile.ZipFile(_book(tmp_path)) as z:
         nav = z.read("OEBPS/nav.xhtml").decode("utf-8")
     assert "Ungelesen" in nav
-    assert "chapter-unread-w-2026-34.xhtml" in nav
+    assert "video-v1.xhtml" in nav
 
 
 def test_container_points_at_the_package_document(tmp_path):
@@ -153,11 +153,11 @@ def test_no_text_is_lost_when_splitting():
     assert joined.split() == text.split()
 
 
-def test_the_same_week_in_two_parts_gets_two_chapter_files(tmp_path):
-    """Chapter files are keyed by week; with --read split the same calendar
-    week normally appears in both parts. Keying on the week alone made the
-    second part's chapter overwrite the first, silently dropping its videos
-    from the book."""
+def test_the_same_week_in_two_parts_loses_no_video(tmp_path):
+    """With --read split the same calendar week appears in both parts. While
+    chapter files were keyed by week, the second part's file overwrote the
+    first and its videos vanished from the book; per-video documents cannot
+    collide, and this test keeps it that way."""
     unread = epub_builder.group_by_week([video("v1", "2026-08-04T10:00:00Z")])
     read = epub_builder.group_by_week([video("v2", "2026-08-05T10:00:00Z")])
     assert unread[0]["anchor"] == read[0]["anchor"], "fixture must share one week"
@@ -169,11 +169,87 @@ def test_the_same_week_in_two_parts_gets_two_chapter_files(tmp_path):
     epub_builder.build_epub(parts, out, "Test", "de", i18n.get_strings("de"), book_id="urn:uuid:x")
 
     with zipfile.ZipFile(out) as z:
-        sections = []
-        for name in z.namelist():
-            if "chapter-" in name:
-                sections += re.findall(r'<section id="v-([^"]+)"', z.read(name).decode())
+        sections = [n[len("OEBPS/video-"):-len(".xhtml")]
+                    for n in z.namelist() if n.startswith("OEBPS/video-")]
         opf = ET.fromstring(z.read("OEBPS/content.opf"))
         spine = [i.get("idref") for i in opf.findall(".//opf:spine/opf:itemref", OPF_NS)]
     assert sorted(sections) == ["v1", "v2"], "no video may be lost to a filename collision"
     assert len(set(spine)) == len(spine), "spine must not reference one chapter twice"
+
+
+# ── One chapter per video ───────────────────────────────────────────────────
+# Each video is its own spine item and its own file, so an e-reader's
+# next-chapter jump moves video by video and every video starts on a fresh
+# page. Weeks remain the grouping level in the table of contents.
+
+def _book_with_two_weeks(tmp_path, **kwargs):
+    weeks = epub_builder.group_by_week([
+        video("v1", "2026-08-19T10:00:00Z"),
+        video("v2", "2026-08-20T10:00:00Z"),
+        video("v3", "2026-08-26T10:00:00Z"),
+    ])
+    parts = [{"key": "unread", "title": "Ungelesen", "weeks": weeks}]
+    out = str(tmp_path / "book.epub")
+    epub_builder.build_epub(parts, out, "Test", "de", i18n.get_strings("de"),
+                            book_id="urn:uuid:x", **kwargs)
+    return out
+
+
+def test_every_video_gets_its_own_document(tmp_path):
+    with zipfile.ZipFile(_book_with_two_weeks(tmp_path)) as z:
+        docs = [n for n in z.namelist() if n.startswith("OEBPS/video-")]
+        assert sorted(docs) == [
+            "OEBPS/video-v1.xhtml", "OEBPS/video-v2.xhtml", "OEBPS/video-v3.xhtml",
+        ]
+        # each holds exactly its own video
+        for vid in ("v1", "v2", "v3"):
+            body = z.read("OEBPS/video-%s.xhtml" % vid).decode()
+            assert "Title " + vid in body
+            for other in {"v1", "v2", "v3"} - {vid}:
+                assert "Title " + other not in body
+
+
+def test_the_spine_lists_every_video_in_reading_order(tmp_path):
+    with zipfile.ZipFile(_book_with_two_weeks(tmp_path)) as z:
+        opf = ET.fromstring(z.read("OEBPS/content.opf"))
+    ids = [i.get("idref") for i in opf.findall(".//opf:spine/opf:itemref", OPF_NS)]
+    assert ids[0] == "title"
+    assert ids[1:4] == ["video-v1", "video-v2", "video-v3"]
+
+
+def test_the_contents_keep_part_week_video_as_three_levels(tmp_path):
+    with zipfile.ZipFile(_book_with_two_weeks(tmp_path)) as z:
+        nav = z.read("OEBPS/nav.xhtml").decode()
+    assert "Ungelesen" in nav
+    assert "KW 34" in nav and "KW 35" in nav
+    assert 'href="video-v1.xhtml"' in nav and 'href="video-v3.xhtml"' in nav
+    assert "Title v1" in nav
+
+
+def test_each_video_document_names_its_week(tmp_path):
+    with zipfile.ZipFile(_book_with_two_weeks(tmp_path)) as z:
+        body = z.read("OEBPS/video-v1.xhtml").decode()
+    assert "KW 34" in body
+
+
+def test_a_transcript_links_back_to_its_own_video_document(tmp_path):
+    out = _book_with_two_weeks(tmp_path, transcripts={"v3": "Ein Transkript."})
+    with zipfile.ZipFile(out) as z:
+        body = z.read("OEBPS/transcript-v3.xhtml").decode()
+        assert 'href="video-v3.xhtml"' in body
+        assert 'href="transcript-v3.xhtml"' in z.read("OEBPS/video-v3.xhtml").decode()
+
+
+def test_ncx_gives_one_playorder_per_target(tmp_path):
+    """A week navPoint points at its first video, so both must carry the same
+    playOrder -- the NCX forbids two navPoints with different playOrder for
+    one target, and epubcheck rejects the book over it."""
+    with zipfile.ZipFile(_book_with_two_weeks(tmp_path)) as z:
+        ncx = ET.fromstring(z.read("OEBPS/toc.ncx"))
+    ns = {"ncx": "http://www.daisy.org/z3986/2005/ncx/"}
+    by_target = {}
+    for point in ncx.iter("{http://www.daisy.org/z3986/2005/ncx/}navPoint"):
+        src = point.find("ncx:content", ns).get("src")
+        by_target.setdefault(src, set()).add(point.get("playOrder"))
+    clashing = {src: orders for src, orders in by_target.items() if len(orders) > 1}
+    assert not clashing, clashing

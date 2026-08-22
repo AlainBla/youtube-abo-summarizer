@@ -12,7 +12,7 @@
 {% endfor %}  </manifest>
   <spine toc="toc-ncx">
     <itemref idref="title"/>
-{% for part in parts %}{% for week in part.weeks %}    <itemref idref="{{ item_id(week.href) }}"/>
-{% endfor %}{% endfor %}{% for vid in transcripts %}    <itemref idref="transcript-{{ vid }}"/>
+{% for part in parts %}{% for week in part.weeks %}{% for v in week.videos %}    <itemref idref="{{ item_id(v.href) }}"/>
+{% endfor %}{% endfor %}{% endfor %}{% for vid in transcripts %}    <itemref idref="transcript-{{ vid }}"/>
 {% endfor %}  </spine>
 </package>

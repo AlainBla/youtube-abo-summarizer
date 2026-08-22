@@ -25,7 +25,7 @@ def test_end_to_end_build_writes_a_readable_epub(tmp_path, monkeypatch):
     ebook.main()
     with zipfile.ZipFile(out) as z:
         assert z.infolist()[0].filename == "mimetype"
-        assert any(n.startswith("OEBPS/chapter-") for n in z.namelist())
+        assert any(n.startswith("OEBPS/video-") for n in z.namelist())
 
 
 def test_empty_selection_exits_zero_with_a_message(tmp_path, monkeypatch, capsys):
@@ -99,7 +99,7 @@ def test_raw_iso_duration_is_formatted_before_reaching_the_chapter(tmp_path, mon
                                       "--no-transcripts", "--output", str(out)])
     ebook.main()
     with zipfile.ZipFile(out) as z:
-        chapter = z.read("OEBPS/chapter-all-w-2026-34.xhtml").decode("utf-8")
+        chapter = z.read("OEBPS/video-v1.xhtml").decode("utf-8")
     assert "1:02:03" in chapter
     assert "PT1H2M3S" not in chapter
 
@@ -167,8 +167,8 @@ def _chapter_video_ids(path) -> list[str]:
     with zipfile.ZipFile(path) as z:
         found = []
         for name in z.namelist():
-            if "chapter-" in name:
-                found += re.findall(r'<section id="v-([^"]+)"', z.read(name).decode())
+            if name.startswith("OEBPS/video-"):
+                found.append(name[len("OEBPS/video-"):-len(".xhtml")])
     return found
 
 

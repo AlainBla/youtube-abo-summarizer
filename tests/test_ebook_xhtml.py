@@ -73,21 +73,23 @@ def test_chapter_shows_transcript_error_message_when_summary_is_missing():
     week = epub_builder.group_by_week(
         [video("v1", "2026-08-19T10:00:00Z", summary=None, transcript_error="rate_limited")]
     )[0]
-    xhtml = epub_builder.render_chapter(week, strings, "de", {}, set())
+    xhtml = epub_builder.render_video(week["videos"][0], week, strings, "de", {}, set())
     ET.fromstring(xhtml)                          # must still parse as XML
     assert strings["transcript_rate_limited"] in xhtml
 
 
-def test_chapter_is_well_formed_and_carries_every_video():
+def test_each_video_document_is_well_formed_and_self_contained():
     week = epub_builder.group_by_week([
         video("v1", "2026-08-19T10:00:00Z", title='Quote " & <tag>'),
         video("v2", "2026-08-20T10:00:00Z"),
     ])[0]
-    xhtml = epub_builder.render_chapter(week, i18n.get_strings("de"), "de", {}, set())
-    root = ET.fromstring(xhtml)                 # must parse as XML
-    ids = [s.get("id") for s in root.iter("{http://www.w3.org/1999/xhtml}section")]
-    assert "v-v1" in ids and "v-v2" in ids
-    assert "KW 34" in xhtml
+    strings = i18n.get_strings("de")
+    for index, marker in ((0, "Quote"), (1, "Title v2")):
+        xhtml = epub_builder.render_video(week["videos"][index], week, strings, "de", {}, set())
+        root = ET.fromstring(xhtml)             # must parse as XML, escaping and all
+        heading = root.find(".//{http://www.w3.org/1999/xhtml}h1")
+        assert marker in heading.text
+        assert "KW 34" in xhtml                 # the week kicker keeps the context
 
 
 def test_real_store_shaped_summary_keeps_its_markup_and_timestamp_link():
@@ -98,7 +100,7 @@ def test_real_store_shaped_summary_keeps_its_markup_and_timestamp_link():
     # raised, and xhtmlify() fell back to escaping the *entire* fragment to
     # plain text -- stripping every <h3>, list, and link a summary had.
     week = epub_builder.group_by_week([raw_store_video("v1", "2026-08-19T10:00:00Z")])[0]
-    xhtml = epub_builder.render_chapter(week, i18n.get_strings("de"), "de", {}, set())
+    xhtml = epub_builder.render_video(week['videos'][0], week, i18n.get_strings('de'), 'de', {}, set())
     ET.fromstring(xhtml)  # must still parse as XML
     assert "<h3>Intro</h3>" in xhtml
     assert '<a class="ts-link" href="https://www.youtube.com/watch?v=v1&amp;t=122">' in xhtml
@@ -108,11 +110,11 @@ def test_chapter_links_thumbnail_and_transcript_only_when_present():
     week = epub_builder.group_by_week(
         [video("v1", "2026-08-19T10:00:00Z", tags=["A", "B"])]
     )[0]
-    plain = epub_builder.render_chapter(week, i18n.get_strings("de"), "de", {}, set())
+    plain = epub_builder.render_video(week['videos'][0], week, i18n.get_strings('de'), 'de', {}, set())
     assert "images/" not in plain and "transcript-v1.xhtml" not in plain
 
-    rich = epub_builder.render_chapter(
-        week, i18n.get_strings("de"), "de", {"v1": "images/v1.jpg"}, {"v1"})
+    rich = epub_builder.render_video(
+        week["videos"][0], week, i18n.get_strings("de"), "de", {"v1": "images/v1.jpg"}, {"v1"})
     ET.fromstring(rich)                          # must parse as XML, incl. <img/>
     assert 'src="images/v1.jpg"' in rich
     assert "transcript-v1.xhtml" in rich
@@ -134,7 +136,7 @@ def _summary_of(chapter_xhtml: str) -> str:
 
 def _chapter_with_summary(summary: str) -> str:
     week = epub_builder.group_by_week([video("v1", "2026-08-19T10:00:00Z", summary=summary)])[0]
-    return epub_builder.render_chapter(week, i18n.get_strings("de"), "de", {}, set())
+    return epub_builder.render_video(week["videos"][0], week, i18n.get_strings("de"), "de", {}, set())
 
 
 def test_a_list_nested_in_a_paragraph_is_re_nested():

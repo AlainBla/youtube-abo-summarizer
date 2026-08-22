@@ -208,11 +208,15 @@ def _env():
     return env
 
 
-def render_chapter(week, strings, lang, images, transcripts):
-    """Render one ISO-week chapter as a complete, well-formed XHTML document."""
-    template = _env().get_template("chapter.xhtml.j2")
+def render_video(v, week, strings, lang, images, transcripts):
+    """Render one video as a complete, well-formed XHTML document.
+
+    `week` supplies the kicker line above the title, so a reader who lands on
+    a single chapter still sees which calendar week it belongs to.
+    """
+    template = _env().get_template("video.xhtml.j2")
     return template.render(
-        week=week, t=strings, lang=lang, images=images, transcripts=transcripts
+        v=v, week=week, t=strings, lang=lang, images=images, transcripts=transcripts
     )
 
 
@@ -306,8 +310,9 @@ def _chapter_href_for(parts, video_id):
     """Where a transcript page links back to: chapter file plus video anchor."""
     for part in parts:
         for week in part["weeks"]:
-            if any(v["video_id"] == video_id for v in week["videos"]):
-                return "%s#v-%s" % (week["href"], video_id)
+            for v in week["videos"]:
+                if v["video_id"] == video_id:
+                    return v.get("href", "nav.xhtml")
     return "nav.xhtml"
 
 
@@ -352,15 +357,18 @@ def build_epub(parts, output_path, title, lang, strings, images=None,
         files[href] = blob
         image_hrefs[video_id] = href
 
+    # One document per video: an e-reader's next-chapter jump then moves video
+    # by video and every video starts on a fresh page. Weeks stay the grouping
+    # level in the table of contents. A video ID is unique across the book (the
+    # parts are disjoint), so it alone keys the file.
     for part in parts:
         for week in part["weeks"]:
-            # The part key is part of the filename: with --read split the
-            # same calendar week appears in both parts, and keying on the
-            # week alone made the second part overwrite the first, silently
-            # dropping its videos from the book.
-            href = "chapter-%s-%s.xhtml" % (part["key"], week["anchor"])
-            week["href"] = href
-            files[href] = render_chapter(week, strings, lang, image_hrefs, set(transcripts))
+            for v in week["videos"]:
+                href = "video-%s.xhtml" % v["video_id"]
+                v["href"] = href
+                files[href] = render_video(v, week, strings, lang, image_hrefs,
+                                           set(transcripts))
+            week["href"] = week["videos"][0]["href"] if week["videos"] else "nav.xhtml"
 
     for video_id, text in transcripts.items():
         files["transcript-%s.xhtml" % video_id] = env.get_template("transcript.xhtml.j2").render(

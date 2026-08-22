@@ -7,7 +7,11 @@
 <ol>
 {% for part in parts %}  <li><span>{{ part.title }}</span>
     <ol>
-{% for week in part.weeks %}      <li><a href="{{ week.href }}">{{ t.book_week }} {{ week.iso_week }} &#183; {{ week.start.strftime('%d.%m.%Y') }}</a></li>
+{% for week in part.weeks %}      <li><span>{{ t.book_week }} {{ week.iso_week }} &#183; {{ week.start.strftime('%d.%m.%Y') }}</span>
+        <ol>
+{% for v in week.videos %}          <li><a href="{{ v.href }}">{{ v.title }}</a></li>
+{% endfor %}        </ol>
+      </li>
 {% endfor %}    </ol>
   </li>
 {% endfor %}</ol>
