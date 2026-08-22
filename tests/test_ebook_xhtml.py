@@ -13,6 +13,10 @@ from export_harness import video
 def test_named_entities_are_replaced_by_numeric_ones():
     out = epub_builder.xhtmlify("<p>a&nbsp;b</p>")
     assert "&nbsp;" not in out
+    # A degenerate implementation that escapes every input to plain text
+    # would also satisfy the assertion above; pin the actual expected
+    # markup so valid input is required to survive as markup.
+    assert out == "<p>a&#160;b</p>"
     ET.fromstring("<div>" + out + "</div>")
 
 
@@ -24,6 +28,21 @@ def test_unclosed_tag_is_escaped_instead_of_breaking_the_document():
 
 def test_none_summary_becomes_empty_string():
     assert epub_builder.xhtmlify(None) == ""
+
+
+def test_control_char_is_stripped_so_the_fallback_still_parses():
+    # \x0c (form feed) is not a legal XML 1.0 Char even though HTML tolerates
+    # it; the fallback path must not let it survive into the escaped output.
+    out = epub_builder.xhtmlify("<p>a\x0cb<b>unclosed</p>")
+    assert "\x0c" not in out
+    ET.fromstring("<div>" + out + "</div>")     # must not raise
+
+
+def test_fallback_resolves_entities_instead_of_double_escaping():
+    out = epub_builder.xhtmlify("<p>a&nbsp;b<b>")
+    assert "&amp;#160;" not in out
+    assert "\xa0" in out
+    ET.fromstring("<div>" + out + "</div>")     # must not raise
 
 
 def test_chapter_is_well_formed_and_carries_every_video():

@@ -1,5 +1,6 @@
 """Turn selected videos into the files of an EPUB 3 archive."""
 
+import functools
 import html
 import os
 import re
@@ -14,6 +15,17 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "ebook")
 # Only these named entities can appear in stored summaries (nh3 escapes the
 # rest); XML knows none of them except the five predefined ones.
 _NAMED_ENTITY_RE = re.compile(r"&(?!amp;|lt;|gt;|quot;|apos;|#)([a-zA-Z][a-zA-Z0-9]*);")
+
+# XML 1.0 Char production (https://www.w3.org/TR/xml/#charsets): everything
+# outside these ranges -- e.g. raw control chars like form feed, which HTML
+# tolerates -- is not legal character data and makes ET.fromstring() raise.
+# Built via chr() rather than literal \uXXXX escapes to keep this file plain
+# ASCII. Stripped up front so neither the pass-through path nor the escape
+# fallback below can leak an invalid char into the emitted markup.
+_INVALID_XML_CHAR_RE = re.compile(
+    "[^\t\n\r%s-%s%s-%s%s-%s]"
+    % (chr(0x20), chr(0xD7FF), chr(0xE000), chr(0xFFFD), chr(0x10000), chr(0x10FFFF))
+)
 
 
 def _published_date(entry):
@@ -59,6 +71,12 @@ def xhtmlify(fragment):
     if not fragment:
         return ""
 
+    # Strip XML-invalid characters first so both the pass-through path below
+    # and the escape fallback are built from clean input -- otherwise a
+    # control char surviving into the fallback would still make the "always
+    # well-formed" guarantee false.
+    fragment = _INVALID_XML_CHAR_RE.sub("", fragment)
+
     def numeric(match):
         entity = "&%s;" % match.group(1)
         decoded = html.unescape(entity)
@@ -74,9 +92,16 @@ def xhtmlify(fragment):
         ET.fromstring("<div>" + text + "</div>")
         return text
     except ET.ParseError:
-        return "<p>" + html.escape(re.sub(r"<[^>]*>", "", text)) + "</p>"
+        # Strip tags rather than repair them -- a stray "<" can swallow text
+        # up to the next ">", which is acceptable for this last-resort path
+        # only. Resolve entities from the original (pre-numeric-conversion)
+        # fragment before re-escaping, so a valid "&nbsp;" isn't first turned
+        # into "&#160;" above and then double-escaped into "&amp;#160;" here.
+        plain = re.sub(r"<[^>]*>", "", fragment)
+        return "<p>" + html.escape(html.unescape(plain)) + "</p>"
 
 
+@functools.lru_cache(maxsize=1)
 def _env():
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
     env.filters["xhtml"] = lambda s: Markup(xhtmlify(s))
