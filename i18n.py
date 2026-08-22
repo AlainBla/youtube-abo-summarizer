@@ -26,6 +26,9 @@ STRINGS: dict[str, dict] = {
             "verf\u00fcgbar (Geoblocking)."
         ),
         "transcript_unavailable": "Kein Transkript f\u00fcr dieses Video verf\u00fcgbar.",
+        "book_week": "KW",
+        "book_watch": "Auf YouTube ansehen",
+        "book_transcript": "Transkript",
     },
     "en": {
         "lang_attr": "en",
@@ -52,6 +55,9 @@ STRINGS: dict[str, dict] = {
             "regions (geo-blocking)."
         ),
         "transcript_unavailable": "No transcript available for this video.",
+        "book_week": "Week",
+        "book_watch": "Watch on YouTube",
+        "book_transcript": "Transcript",
     },
 }
 
