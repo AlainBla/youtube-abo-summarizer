@@ -4,13 +4,29 @@ import functools
 import html
 import os
 import re
+import uuid
 import xml.etree.ElementTree as ET
-from datetime import date, datetime, timedelta
+import zipfile
+from datetime import date, datetime, timedelta, timezone
 
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "ebook")
+
+# Package-document boilerplate that never varies between books.
+CONTAINER_XML = """<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>
+"""
+
+MEDIA_TYPES = {
+    ".xhtml": "application/xhtml+xml",
+    ".css": "text/css",
+    ".jpg": "image/jpeg",
+    ".ncx": "application/x-dtbncx+xml",
+}
 
 # Only these named entities can appear in stored summaries (nh3 escapes the
 # rest); XML knows none of them except the five predefined ones.
@@ -111,6 +127,7 @@ def xhtmlify(fragment):
 def _env():
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
     env.filters["xhtml"] = lambda s: Markup(xhtmlify(s))
+    env.globals.update(item_id=_item_id, media_type=_media_type)
     return env
 
 
@@ -120,3 +137,107 @@ def render_chapter(week, strings, lang, images, transcripts):
     return template.render(
         week=week, t=strings, lang=lang, images=images, transcripts=transcripts
     )
+
+
+def _media_type(href):
+    return MEDIA_TYPES[os.path.splitext(href)[1]]
+
+
+def _item_id(href):
+    """Manifest ID for a file: chapter-w-2026-34.xhtml -> chap-w-2026-34.
+
+    Two cases need special handling beyond the generic stem-based ID:
+    - Image hrefs ("images/<video_id>.jpg") get an "img-" prefix, because an
+      XML ID may not start with a digit and YouTube video IDs can.
+    - "toc.ncx" gets the fixed id "toc-ncx" so the OPF spine's toc="toc-ncx"
+      attribute (which must reference the NCX by its manifest id) resolves
+      instead of dangling -- splitting the extension off "toc.ncx" the way
+      every other file is handled would otherwise collapse it to "toc".
+    """
+    if href.startswith("images/"):
+        return "img-" + os.path.splitext(os.path.basename(href))[0]
+    if href == "toc.ncx":
+        return "toc-ncx"
+    stem = os.path.splitext(os.path.basename(href))[0]
+    if stem.startswith("chapter-"):
+        return "chap-" + stem[len("chapter-"):]
+    return stem.replace(".", "-")
+
+
+def _transcript_paragraphs(text):
+    """Cut a raw transcript into readable paragraphs.
+
+    Transcripts arrive as one long blob; blank lines are honoured where they
+    exist, otherwise every 12 lines become a paragraph so an e-reader has
+    something to break pages on. Invalid XML characters are stripped up
+    front for the same reason xhtmlify() strips them: raw transcript text
+    goes straight into an XHTML document via autoescaping, which escapes
+    "&"/"<"/">" but not control characters that ET.fromstring() would still
+    reject.
+    """
+    text = _INVALID_XML_CHAR_RE.sub("", text)
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
+    if len(blocks) > 1:
+        return [" ".join(b.split()) for b in blocks]
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    return [" ".join(lines[i:i + 12]) for i in range(0, len(lines), 12)]
+
+
+def _chapter_href_for(parts, video_id):
+    """Where a transcript page links back to: chapter file plus video anchor."""
+    for part in parts:
+        for week in part["weeks"]:
+            if any(v["video_id"] == video_id for v in week["videos"]):
+                return "%s#v-%s" % (week["href"], video_id)
+    return "nav.xhtml"
+
+
+def build_epub(parts, output_path, title, lang, strings, images=None,
+                transcripts=None, book_id=None):
+    """Write the EPUB 3 archive.
+
+    Order matters: 'mimetype' must be the first entry and stored uncompressed,
+    otherwise readers refuse the file.
+    """
+    images = images or {}
+    transcripts = transcripts or {}
+    env = _env()
+    generated = datetime.now(tz=timezone.utc).replace(microsecond=0).isoformat()
+    book_id = book_id or "urn:uuid:" + str(uuid.uuid4())
+
+    files = {}  # href inside OEBPS -> str | bytes
+    with open(os.path.join(TEMPLATE_DIR, "book.css"), encoding="utf-8") as f:
+        files["book.css"] = f.read()
+    files["title.xhtml"] = env.get_template("title.xhtml.j2").render(
+        title=title, lang=lang, t=strings, generated=generated[:10], parts=parts)
+
+    image_hrefs = {}
+    for video_id, blob in images.items():
+        href = "images/%s.jpg" % video_id
+        files[href] = blob
+        image_hrefs[video_id] = href
+
+    for part in parts:
+        for week in part["weeks"]:
+            href = "chapter-%s.xhtml" % week["anchor"]
+            week["href"] = href
+            files[href] = render_chapter(week, strings, lang, image_hrefs, set(transcripts))
+
+    for video_id, text in transcripts.items():
+        files["transcript-%s.xhtml" % video_id] = env.get_template("transcript.xhtml.j2").render(
+            video_id=video_id, paragraphs=_transcript_paragraphs(text), lang=lang, t=strings,
+            back_href=_chapter_href_for(parts, video_id))
+
+    files["nav.xhtml"] = env.get_template("nav.xhtml.j2").render(
+        parts=parts, lang=lang, t=strings, title=title)
+    files["toc.ncx"] = env.get_template("toc.ncx.j2").render(
+        parts=parts, book_id=book_id, title=title, t=strings)
+    files["content.opf"] = env.get_template("content.opf.j2").render(
+        parts=parts, title=title, lang=lang, book_id=book_id, generated=generated,
+        items=sorted(files.keys()), transcripts=sorted(transcripts.keys()), t=strings)
+
+    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip", zipfile.ZIP_STORED)
+        z.writestr("META-INF/container.xml", CONTAINER_XML)
+        for href, payload in files.items():
+            z.writestr("OEBPS/" + href, payload)

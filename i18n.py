@@ -29,6 +29,8 @@ STRINGS: dict[str, dict] = {
         "book_week": "KW",
         "book_watch": "Auf YouTube ansehen",
         "book_transcript": "Transkript",
+        "book_contents": "Inhalt",
+        "book_back": "Zurück zum Kapitel",
     },
     "en": {
         "lang_attr": "en",
@@ -58,6 +60,8 @@ STRINGS: dict[str, dict] = {
         "book_week": "Week",
         "book_watch": "Watch on YouTube",
         "book_transcript": "Transcript",
+        "book_contents": "Contents",
+        "book_back": "Back to chapter",
     },
 }
 
