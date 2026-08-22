@@ -168,6 +168,19 @@ decoded first, so a search never misses a match hiding in a page that hasn't loa
 browsers, `--no-compress` embeds one plain `{index, summaries}` JavaScript object instead — no chunking,
 no `DecompressionStream` required, but the whole archive loads up front.
 
+### Sharing a single video
+
+Append `?v=VIDEO_ID` to the archive URL — e.g. `https://example.com/yt.html?v=dQw4w9WgXcQ` — and the page
+shows only that one video, with its summary fully expanded and a bar offering "Alle Videos anzeigen" to
+return to the whole archive (this only rewrites the URL, no reload). Each card carries a "Link kopieren"
+button that puts exactly this URL on the clipboard; where the clipboard API is unavailable (a `file://`
+archive, or plain http) the URL is offered in a prompt to copy by hand.
+
+Because a large archive loads its summaries in chunks, the shared video is usually neither pre-rendered
+nor decoded when the page paints. The view therefore shows a "Video … wird geladen" note from the very
+first paint, and only reports "ist nicht in diesem Archiv" once the metadata index has been decoded and
+the ID is genuinely absent.
+
 ### "New videos" banner
 
 Every export also writes a small manifest next to the HTML file — `full_archive.html` gets

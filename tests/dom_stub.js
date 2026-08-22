@@ -54,6 +54,7 @@ function __el(id) {
       getAttribute: function (k) { return k in this.attrs ? this.attrs[k] : null; },
       querySelector: function () { return __el(id + '-child'); },
       querySelectorAll: function () { return []; },
+      nextElementSibling: null,
       remove: function () {},
     };
   }
@@ -79,6 +80,7 @@ globalThis.document = {
   body: __el('body'),
 };
 globalThis.window = {
+  prompt: function () { return null; },
   location: {protocol: 'https:', hostname: 'example.com', origin: 'https://example.com',
              pathname: '/x.html', search: '', hash: '', href: 'https://example.com/x.html'},
   addEventListener: function () {},
@@ -86,6 +88,7 @@ globalThis.window = {
 globalThis.location = globalThis.window.location;
 globalThis.navigator = {languages: ['de']};
 globalThis.alert = function () {};
+globalThis.prompt = function () { return null; };
 globalThis.fetch = function () { return Promise.reject(new Error('no network in tests')); };
 globalThis.requestAnimationFrame = function (cb) { setTimeout(cb, 0); };
 globalThis.requestIdleCallback = function (cb) { setTimeout(cb, 0); };

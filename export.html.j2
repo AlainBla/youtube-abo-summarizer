@@ -415,6 +415,31 @@
       padding: 0 0.2rem;
     }
     .update-banner .update-dismiss:hover { background: none; color: #cfe6cf; }
+    /* ── Single-video view (?v=ID) ── */
+    .single-bar {
+      max-width: 900px;
+      margin: 0 auto 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.9rem;
+      color: #aaa;
+    }
+    .single-bar button {
+      margin-left: auto;
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      color: #ccc;
+      font-size: 0.85rem;
+      padding: 0.3rem 0.7rem;
+      cursor: pointer;
+    }
+    .single-bar button:hover { background: #333; color: #fff; }
   </style>
 </head>
 <body>
@@ -433,6 +458,7 @@
 <div class="video-actions">
 <button class="read-btn" onclick="toggleRead('{{ v.video_id|esch }}')">{{ t.read_btn }}</button>
 <button class="bookmark-btn" onclick="toggleBookmark('{{ v.video_id|esch }}')">{{ t.bookmark_btn }}</button>
+<button class="share-btn" onclick="shareVideo('{{ v.video_id|esch }}', this)">{{ t.share_btn }}</button>
 </div>
 <a class="video-title" href="https://www.youtube.com/watch?v={{ v.video_id|esch }}" target="_blank" rel="noopener">{{ v.title|esch }}</a>
 <div class="video-meta"><span class="channel-link" onclick="setChannelFilter('{{ v.channel_id|esch }}')">{{ v.channel_title|esch }}</span> &middot; {{ v.published_at_display|esch }}{% if v.duration %} &middot; {{ v.duration|esch }}{% endif %}{% if v.summary_model %}<span class="model-badge">{{ v.summary_model|esch }}</span>{% endif %}</div>
@@ -453,6 +479,11 @@
 </div>
 </article>
 {%- endmacro -%}
+
+<div class="single-bar" id="single-bar" style="display:none">
+  <span id="single-text"></span>
+  <button id="single-show-all" onclick="clearSingleVideo()"></button>
+</div>
 
 <div class="update-banner" id="update-banner" style="display:none">
   <span id="update-text"></span>
@@ -696,6 +727,12 @@ const I18N = {
     updateGeneric: 'Archiv aktualisiert',
     updateReload: 'Neu laden',
     updateDismiss: 'Hinweis schließen',
+    shareBtn: 'Link kopieren',
+    shareCopied: 'Kopiert',
+    singleVideo: 'Einzelnes Video',
+    singleShowAll: 'Alle Videos anzeigen',
+    singleLoading: function(id) { return 'Video ' + id + ' wird geladen\u2026'; },
+    singleNotFound: function(id) { return 'Video ' + id + ' ist nicht in diesem Archiv.'; },
   },
   en: {
     pageTitle: 'YouTube Export',
@@ -765,6 +802,12 @@ const I18N = {
     updateGeneric: 'Archive updated',
     updateReload: 'Reload',
     updateDismiss: 'Dismiss',
+    shareBtn: 'Copy link',
+    shareCopied: 'Copied',
+    singleVideo: 'Single video',
+    singleShowAll: 'Show all videos',
+    singleLoading: function(id) { return 'Loading video ' + id + '\u2026'; },
+    singleNotFound: function(id) { return 'Video ' + id + ' is not in this archive.'; },
   }
 };
 
@@ -1309,6 +1352,98 @@ function startUpdatePolling() {
   });
 }
 
+// ── Single-video deep link (?v=ID) ───────────────────────────────────────────
+// Shares one video out of a large archive. The wanted video is almost never
+// among the pre-rendered cards and its summary usually sits in a chunk that
+// has not been decoded yet, so the view goes through three explicit states:
+// loading (set before the data blob is even parsed), found, or not in archive
+// -- the last one only ever decided against the fully decoded index.
+var singleVideoId = null;
+
+function readVideoParam() {
+  try {
+    return new URLSearchParams(location.search).get('v') || null;
+  } catch (e) {
+    return null;  // no URLSearchParams (very old browser) -- behave as before
+  }
+}
+
+function singleVideoUrl(id) {
+  var base = location.href.split('#')[0].split('?')[0];
+  return base + '?v=' + encodeURIComponent(id);
+}
+
+function setSingleChrome(on) {
+  var bar = document.getElementById('single-bar');
+  if (bar) bar.style.display = on ? '' : 'none';
+  var controls = document.querySelector('.controls-bar');
+  if (controls) controls.style.display = on ? 'none' : '';
+  var pag = document.getElementById('pagination');
+  if (pag) pag.style.display = on ? 'none' : '';
+}
+
+function renderSingleBar() {
+  if (!singleVideoId) return;
+  var s = I18N[currentLang] || I18N[EMBEDDED_DEFAULT];
+  document.getElementById('single-text').textContent = s.singleVideo;
+  document.getElementById('single-show-all').textContent = s.singleShowAll;
+}
+
+function enterSingleVideoView(id) {
+  singleVideoId = id;
+  setSingleChrome(true);
+  renderSingleBar();
+  var s = I18N[currentLang] || I18N[EMBEDDED_DEFAULT];
+  // Runs before the index is decoded: the pre-rendered cards are almost
+  // certainly other videos, so replace them with a note rather than let the
+  // visitor stare at a page full of the wrong content.
+  document.getElementById('grid').innerHTML =
+    '<p class="no-videos" id="single-loading">' + escHtml(s.singleLoading(id)) + '</p>';
+}
+
+function clearSingleVideo() {
+  singleVideoId = null;
+  setSingleChrome(false);
+  try {
+    var params = new URLSearchParams(location.search);
+    params.delete('v');
+    var qs = params.toString();
+    history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+  } catch (e) {}  // file:// may throw SecurityError
+  applyFiltersAndSort(1);
+}
+
+function expandSingleSummary() {
+  var grid = document.getElementById('grid');
+  if (!grid) return;
+  var toggles = grid.querySelectorAll('.summary-toggle');
+  for (var i = 0; i < toggles.length; i++) {
+    var details = toggles[i].nextElementSibling;
+    if (details && details.hidden !== false) toggleSummary(toggles[i]);
+  }
+}
+
+function shareVideo(id, btn) {
+  var s = I18N[currentLang] || I18N[EMBEDDED_DEFAULT];
+  var url = singleVideoUrl(id);
+  function confirmCopy() {
+    if (!btn) return;
+    var original = btn.textContent;
+    btn.textContent = s.shareCopied;
+    setTimeout(function () { btn.textContent = original; }, 1500);
+  }
+  function fallback() {
+    // The clipboard API needs a secure context; file:// and plain http land
+    // here, where the visitor can still copy the URL out of the prompt.
+    if (typeof window.prompt === 'function') window.prompt(s.shareBtn, url);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(confirmCopy, fallback);
+  } else {
+    fallback();
+  }
+}
+
 // ── Apply language ─────────────────────────────────────────────────────────────
 function applyLang(lang) {
   currentLang = lang;
@@ -1371,6 +1506,7 @@ function applyLang(lang) {
   })();
   {% endif %}
   renderUpdateBanner();
+  renderSingleBar();
   applyFiltersAndSort();
 }
 
@@ -1497,6 +1633,7 @@ function buildCard(v) {
     + '<div class="video-actions">'
     + '<button class="' + readBtnClass + '" onclick="toggleRead(\'' + escHtml(v.video_id) + '\')">' + s.readBtn + '</button>'
     + '<button class="' + bookmarkBtnClass + '" onclick="toggleBookmark(\'' + escHtml(v.video_id) + '\')">' + s.bookmarkBtn + '</button>'
+    + '<button class="share-btn" onclick="shareVideo(\'' + escHtml(v.video_id) + '\', this)">' + s.shareBtn + '</button>'
     + '</div>'
     + '<a class="video-title" href="https://www.youtube.com/watch?v=' + escHtml(v.video_id) + '" target="_blank" rel="noopener">' + escHtml(v.title) + '</a>'
     + '<div class="video-meta"><span class="channel-link" onclick="setChannelFilter(\'' + escHtml(v.channel_id) + '\')">' + escHtml(v.channel_title) + '</span> &middot; ' + escHtml(v.published_at_display) + metaExtras + '</div>'
@@ -1532,6 +1669,15 @@ function applyFiltersAndSort(page) {
   // bootstrap's own applyLang()/applyFiltersAndSort() call (once dataReady
   // flips true) picks it up and renders exactly what the user chose.
   if (!dataReady) return;
+
+  // A deep link shows exactly one video; every other control is hidden while
+  // it is active, so there is nothing to combine it with.
+  if (singleVideoId) {
+    filtered = VIDEOS.filter(function (v) { return v.video_id === singleVideoId; });
+    focusedIndex = -1;
+    renderPage(1);
+    return;
+  }
 
   const q = document.getElementById('search').value.trim().toLowerCase();
   // A text search reads summary text, which lives in the chunks. Matching on a
@@ -1650,8 +1796,13 @@ function renderPage(page, skipScroll) {
   if (!slice.length || !renderPageInPlace(slice)) {
     document.getElementById('grid').innerHTML = slice.length
       ? slice.map(buildCard).join('')
-      : '<p class="no-videos">' + s.noVideos + '</p>';
+      : '<p class="no-videos">'
+        + (singleVideoId ? escHtml(s.singleNotFound(singleVideoId)) : s.noVideos)
+        + '</p>';
   }
+
+  // A shared link should show the whole summary, not the "more" teaser.
+  if (singleVideoId) expandSingleSummary();
 
   // Restore focused highlight after re-render
   if (focusedIndex >= 0) {
@@ -1893,6 +2044,11 @@ async function bootstrap() {
 }
 
 startUpdatePolling();
+
+(function () {
+  var deepLink = readVideoParam();
+  if (deepLink) enterSingleVideoView(deepLink);
+})();
 
 {% if sync_url %}
 setTimeout(warnIfInsecure, 0);
