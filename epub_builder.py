@@ -141,10 +141,9 @@ def render_chapter(week, strings, lang, images, transcripts):
 
 def _media_type(href):
     ext = os.path.splitext(href)[1]
-    try:
-        return MEDIA_TYPES[ext]
-    except KeyError:
-        raise ValueError(f"unsupported EPUB asset type: {href}") from None
+    if ext not in MEDIA_TYPES:
+        raise ValueError(f"unsupported EPUB asset type: {href}")
+    return MEDIA_TYPES[ext]
 
 
 def _item_id(href):

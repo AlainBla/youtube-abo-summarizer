@@ -46,3 +46,17 @@ def test_non_https_urls_are_never_fetched(tmp_path):
         raise AssertionError("must not be called")
     images, failed = ebook.collect_thumbnails([v], str(tmp_path), fetch=fetch)
     assert images == {} and failed == 1
+
+
+def test_non_https_urls_never_reach_the_fetcher(tmp_path):
+    # test_non_https_urls_are_never_fetched above proves this via an
+    # AssertionError raised from fetch() -- but AssertionError is caught by
+    # the same `except Exception` that handles real fetch failures, so that
+    # test cannot actually fail if the scheme check moved after the fetch
+    # call. This counts calls instead, so it fails regardless of how the
+    # skip is implemented.
+    calls = []
+    v = video("v1", "2026-01-01T00:00:00Z", thumbnail_url="http://example.com/a.jpg")
+    images, failed = ebook.collect_thumbnails(
+        [v], str(tmp_path), fetch=lambda url: calls.append(url) or b"\xff\xd8x")
+    assert calls == [] and images == {} and failed == 1
