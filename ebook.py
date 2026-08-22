@@ -10,10 +10,20 @@ import os
 import sqlite3
 import sys
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+import epub_builder
+import i18n as i18n_module
+import store
 
 DEFAULT_LIMIT = 100
 DEFAULT_SYNC_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sync-server", "sync.db")
+# __file__-relative, matching store.py's DATA_DIR -- a cwd-relative path here
+# would write thumbnails somewhere other than the rest of data/ whenever this
+# is invoked from outside the repo root (e.g. cron), silently defeating the
+# on-disk cache (collect_thumbnails() would never see a hit).
+THUMBNAIL_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "thumbnails")
+PART_TITLE_KEYS = {"unread": "book_part_unread", "read": "book_part_read", "all": "book_part_all"}
 
 
 def select_videos(entries, channel=None, videos=None, tag=None, limit=DEFAULT_LIMIT):
@@ -127,6 +137,20 @@ def collect_thumbnails(videos, cache_dir, fetch=None, max_bytes=2_000_000):
     return images, failed
 
 
+def _limit_type(value):
+    """argparse type for --limit: reject negatives.
+
+    select_videos() does `picked[:limit]`; a negative limit would slice from
+    the wrong end (`picked[:-5]` drops the newest videos instead of keeping
+    them), silently building the wrong book. Fail fast at the CLI boundary
+    instead.
+    """
+    n = int(value)
+    if n < 0:
+        raise argparse.ArgumentTypeError("--limit must not be negative")
+    return n
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Build an EPUB ebook from stored summaries.")
     window = parser.add_mutually_exclusive_group()
@@ -135,7 +159,7 @@ def parse_args(argv=None):
     parser.add_argument("--channel", help="restrict to one channel ID")
     parser.add_argument("--videos", help="comma-separated video IDs")
     parser.add_argument("--tag", help="restrict to videos carrying this tag")
-    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
+    parser.add_argument("--limit", type=_limit_type, default=DEFAULT_LIMIT,
                         help="keep only the N newest videos (0 = no limit)")
     parser.add_argument("--user", help="email whose read state is taken from the sync database")
     parser.add_argument("--sync-db", default=DEFAULT_SYNC_DB, help="path to the sync server database")
@@ -148,3 +172,62 @@ def parse_args(argv=None):
     parser.add_argument("--output", help="output file (default: ebook_YYYY-MM-DD_HH-MM.epub)")
     parser.add_argument("--lang", choices=["de", "en"], default="de")
     return parser.parse_args(argv)
+
+
+def main():
+    args = parse_args()
+    lang = i18n_module.resolve_lang(args.lang)
+    strings = i18n_module.get_strings(lang)
+
+    if args.hours:
+        since = datetime.now(tz=timezone.utc) - timedelta(hours=args.hours)
+        entries = store.get_videos_since(since, with_transcripts=False)
+    else:
+        entries = store.get_all_videos(with_transcripts=False)
+
+    video_ids = [v.strip() for v in args.videos.split(",")] if args.videos else None
+    selected = select_videos(entries, channel=args.channel, videos=video_ids,
+                              tag=args.tag, limit=args.limit)
+    if not selected:
+        print("No videos to put in the book.")
+        sys.exit(0)
+
+    read_ids = load_read_ids(args.sync_db, args.user) if args.user else set()
+    parts = []
+    for key, videos in partition_by_read(selected, read_ids, args.read):
+        parts.append({
+            "key": key,
+            "title": strings[PART_TITLE_KEYS[key]],
+            "weeks": epub_builder.group_by_week(videos),
+        })
+
+    if not parts:
+        # Every selected video was filtered out by --read (e.g. --read drop
+        # with nothing unread left). build_epub() would otherwise emit an
+        # EPUB with an empty NCX navMap, which is invalid per the DTD -- a
+        # book nobody can open, produced silently. Bail out instead.
+        print("No videos left after applying --read — nothing to build.")
+        sys.exit(0)
+
+    images, failed = ({}, 0)
+    if args.thumbnails:
+        images, failed = collect_thumbnails(selected, THUMBNAIL_CACHE_DIR)
+        if failed:
+            print(f"{failed} thumbnail(s) could not be fetched — building without them.")
+
+    transcripts = {}
+    if args.transcripts:
+        for v in selected:
+            path = store.get_llm_transcript_path(v["video_id"])
+            if path:
+                transcripts[v["video_id"]] = path.read_text(encoding="utf-8")
+
+    output = args.output or f"ebook_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.epub"
+    print(f"Building {output} — {len(selected)} video(s), {len(parts)} part(s).")
+    epub_builder.build_epub(parts, output, strings["book_title"], lang, strings,
+                            images=images, transcripts=transcripts)
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()

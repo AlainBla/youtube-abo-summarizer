@@ -59,6 +59,25 @@ def test_non_https_urls_are_never_fetched(tmp_path):
     assert images == {} and failed == 1
 
 
+def test_a_zero_byte_cache_entry_is_treated_as_a_miss_and_refetched(tmp_path):
+    # A 0-byte "<video_id>.jpg" can only be debris from a killed write (real
+    # downloads are validated non-empty before being written). It must not
+    # be trusted as a cache hit -- that would silently embed b"" as a
+    # "thumbnail" forever. Pre-seed one and confirm collect_thumbnails()
+    # refetches instead of returning the empty bytes.
+    (tmp_path / "v1.jpg").write_bytes(b"")
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        return b"\xff\xd8jpegdata"
+
+    images, failed = ebook.collect_thumbnails(
+        [video("v1", "2026-01-01T00:00:00Z")], str(tmp_path), fetch=fetch)
+    assert images["v1"] == b"\xff\xd8jpegdata" and failed == 0
+    assert calls, "a 0-byte cache entry must not be trusted as a hit"
+
+
 def test_non_https_urls_never_reach_the_fetcher(tmp_path):
     # test_non_https_urls_are_never_fetched above proves this via an
     # AssertionError raised from fetch() -- but AssertionError is caught by

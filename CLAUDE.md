@@ -120,6 +120,34 @@ Every export also writes `<output>.meta.json` next to the HTML — e.g. `full_ar
 
 The first `EXPORT_FIRST_PAGE` (20) cards are pre-rendered as static HTML directly into the document (by a Jinja macro that must stay markup-identical to the JS `buildCard()`, see the `export.html.j2` row below), so the page paints before any embedded data blob is decoded. Embedded data itself is split by `_split_export_data()` into a summary-free `index` (metadata driving filter/sort/dropdowns; a lowercased `search_text` field is computed lazily in the browser on first search, not precomputed server-side) and a series of summary "chunks" (`EXPORT_CHUNK_SIZE` = 50 videos each, in the same newest-first order as the index). The index and each chunk are gzip+base64 embedded separately and decompressed in-browser via the native `DecompressionStream('gzip')` API (Chrome 80+/FF 113+/Safari 16.4+); `bootstrap()` decodes the index plus chunk 0 (which covers the pre-rendered first page) up front, then decodes further chunks on demand as later pages are viewed (`ensureChunk`/`ensureChunks`/`getSummary`) and prefetches the rest during idle time. A full-text search waits for every chunk to be decoded before filtering, so it can never miss a match sitting in an undecoded chunk. `--no-compress` embeds one plain `{index, summaries}` JS object literal instead — no chunking, no `DecompressionStream` needed, but the whole archive loads up front. Preview iframes are click-to-load facades (thumbnail + play button) that swap in the YouTube embed only on click.
 
+## Ebook export
+
+`ebook.py` renders stored videos into a single EPUB 3 archive — one chapter per ISO calendar week, with each week's videos as sections (summary, optional thumbnail, optional transcript). Like `export.py`, it only reads from `data/` (and, for `--user`, the sync server's SQLite database) — no YouTube or LLM calls.
+
+```bash
+python ebook.py --all                                   # newest 100 videos (DEFAULT_LIMIT), no window
+python ebook.py --all --limit 0                          # all videos, no cap
+python ebook.py --hours 48                                # only the last 48 hours
+python ebook.py --all --channel UC123abc                  # restrict to one channel
+python ebook.py --all --tag Rust                          # restrict to one tag
+python ebook.py --all --videos abc,def,ghi                # explicit video IDs
+python ebook.py --all --no-thumbnails --no-transcripts    # smaller file, faster build
+python ebook.py --all --user you@example.com               # split into Unread / Read parts
+python ebook.py --all --user you@example.com --read drop   # keep unread videos only
+python ebook.py --all --lang en                            # embedded UI language
+```
+
+- `--hours` / `--all` are mutually exclusive, mirroring `export.py`.
+- `select_videos()` filters (by `--channel`/`--videos`/`--tag`), sorts newest-first, then cuts to `--limit` (default `DEFAULT_LIMIT` = 100; `0` = no limit) — the cut happens before grouping into weeks, so "the newest 100" means exactly that, not "100 per week". `--limit` rejects negative values at the argparse layer (`_limit_type`): `picked[:limit]` would otherwise slice from the wrong end and silently drop the newest videos instead of the oldest.
+- `--user EMAIL` reads that user's read state from the sync database (`--sync-db`, default `sync-server/sync.db`) via `load_read_ids()`; an unknown email is a hard error. `--read` controls what happens with it: `split` (default) produces an "Unread" part followed by a "Read" part; `drop` keeps only unread videos; `ignore` puts everything into one "Videos" part regardless of `--user`. Empty parts are dropped; `partition_by_read()` in `ebook.py`.
+- `main()` exits 0 with a message — without touching the filesystem — both when the selection is empty (`select_videos()` returned nothing) and when every part ends up empty after `--read` (e.g. `--read drop` with nothing unread left): building an EPUB from zero parts would emit an NCX with an empty `navMap`, which is invalid per the EPUB DTD, so that case is caught before `build_epub()` is ever called.
+- `collect_thumbnails()` downloads (or reuses from disk) each selected video's thumbnail as raw JPEG, caching under `data/thumbnails/<video_id>.jpg`; a 0-byte cache file (debris from a killed write) is treated as a miss and refetched, never trusted as a hit. Writes land via a temp file + `os.replace()` so a killed write can never leave a truncated file for a later run to load. A failed/oversized/non-https thumbnail is skipped, not fatal — a book missing one thumbnail is still a book.
+- Transcripts (unless `--no-transcripts`) come from `store.get_llm_transcript_path()` (same de→en→stored-lang→plain priority used for LLM input) and get their own XHTML page per video, linked back to the chapter.
+- `epub_builder.build_epub()` does the actual packaging: `group_by_week()` buckets by ISO `(year, week)` (never the week number alone — ISO week 1 can start in December); `xhtmlify()` guarantees every fragment parses as XML, falling back to stripped-and-escaped plain text if a stored summary contains malformed markup; the ZIP is written with `mimetype` as the first, uncompressed entry (`zipfile.ZIP_STORED`) as EPUB readers require.
+- `ebook/` holds the Jinja templates and stylesheet: `book.css`, `chapter.xhtml.j2`, `nav.xhtml.j2`, `content.opf.j2`, `toc.ncx.j2`, `title.xhtml.j2`, `transcript.xhtml.j2`.
+- `i18n.py` carries `book_title`, `book_week`, `book_watch`, `book_transcript`, `book_contents`, `book_back`, and the per-part titles `book_part_unread`/`book_part_read`/`book_part_all`, in both `de` and `en`.
+- The resulting `.epub` can be delivered to a Kindle via Amazon's Send-to-Kindle (email attachment or app) — no conversion needed, it's a spec-valid EPUB 3 file.
+
 ## Sync server (optional)
 
 `sync-server/` is a standalone Flask service for syncing read/bookmark state across browsers.
@@ -199,7 +227,10 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `export.py` | Export CLI (also writes the `<output>.meta.json` update manifest via `renderer`): renders a self-contained HTML archive with client-side search, channel/tag/read/bookmark filters, sort (publish date, date added, channel, title), and pagination; passes each video's `collected_at` into the embedded index so the "date added" sort works; `--thumbnail` for static images, `--sync-url` to embed the sync server, `--show-model` for LLM badge, `--no-compress` to embed data uncompressed |
 | `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries |
 | `recover_from_export.py` | Restore store entries from a previously exported HTML file; inserts missing DB rows and summary files; leaves existing entries untouched; supports `--dry-run` |
-| `store.py` | SQLite + file store: `data/videos.db` (metadata, including `tags TEXT` column storing JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
+| `store.py` | SQLite + file store: `data/videos.db` (metadata, including `tags TEXT` column storing JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html`; `get_all_videos()`/`get_videos_since()` accept `with_transcripts: bool = True` — pass `False` to skip reading transcript files from disk when a caller (e.g. `ebook.py`) only needs metadata/summaries, cheaper against a store holding thousands of videos; `get_llm_transcript_path()` returns the best transcript `Path` for LLM/ebook input (de → en → stored `transcript_lang` → plain `<id>.txt`), or `None` |
+| `ebook.py` | Ebook CLI: `select_videos()` (filter/sort/limit), `load_read_ids()` (read state from the sync DB), `partition_by_read()` (Unread/Read/all split), `collect_thumbnails()` (cached JPEG downloads), `main()` — wires them together, reads only from `store.py`, writes an `.epub` via `epub_builder.build_epub()` |
+| `epub_builder.py` | Builds the EPUB 3 archive from selected videos: `group_by_week()` (ISO `(year, week)` buckets), `xhtmlify()` (guarantees every emitted fragment parses as XML, escaping to plain text on malformed input), `render_chapter()`, `build_epub()` (writes the ZIP with `mimetype` first and uncompressed, as EPUB readers require) |
+| `ebook/` | Jinja templates + stylesheet for the EPUB: `book.css`, `chapter.xhtml.j2`, `nav.xhtml.j2`, `content.opf.j2`, `toc.ncx.j2`, `title.xhtml.j2`, `transcript.xhtml.j2` |
 | `summarize.py` | Legacy all-in-one CLI (fetch + render in one pass, no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (auth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language priority via `TRANSCRIPT_LANGS` (default: de,en); handles ip_blocked / rate_limited / country_blocked errors; on `ip_blocked` retries once via the configured proxy; `VideoUnplayable` is only classified as `country_blocked` when the reason mentions "country"/"region" — on `country_blocked`, retries once with a country-pinned Webshare proxy (`PROXY_FALLBACK_COUNTRY`, default: DE) if `WEBSHARE_PROXY_URL` is set; other `VideoUnplayable` causes fall to `unavailable` (retryable); `requests.exceptions.ProxyError` and `ConnectionError` are caught and mapped to `unavailable`; logs proxy configuration on startup |

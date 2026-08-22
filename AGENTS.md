@@ -12,6 +12,8 @@ Two-phase pipeline: `collect.py` fetches new YouTube videos, transcripts, and LL
 collect.py              # collect-phase CLI
 report.py               # report-phase CLI
 export.py               # export-archive CLI
+ebook.py                # EPUB ebook CLI
+epub_builder.py         # EPUB 3 archive builder (used by ebook.py)
 repair.py               # gap-repair CLI
 recover_from_export.py  # restore store entries from an exported HTML file
 summarize.py            # legacy all-in-one CLI (no store)
@@ -25,6 +27,7 @@ send_mail.py            # standalone SMTP sender
 youtube_client.py       # YouTube Data API v3 wrapper
 template.html.j2        # report template
 export.html.j2          # export archive template
+ebook/                  # EPUB templates + stylesheet (book.css, chapter/nav/opf/ncx/title/transcript .j2)
 ingest_worker.sh        # cron script: drains INGEST_QUEUE via collect.py
 sync-server/
   sync_server.py        # Flask sync service
@@ -76,6 +79,13 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 - `export.html.j2`: tag chips and channel names on cards are both clickable — they call `setTagFilter()` / `setChannelFilter()` to toggle the corresponding filter
 - `export.html.j2`: with `sync_url` set, `warnIfInsecure()` shows one localized `alert()` on load when `loginRedirectAccepted()` is false. That check mirrors the server's `_valid_redirect_uri()`: any `file://` URI passes, otherwise `window.location.origin` must equal the `SYNC_URL` origin. `loginRedirectUri()` is the single source of the redirect URI — `syncRequestLink()` sends exactly what the check evaluates, so keep them together
 - `export.html.j2`: toggling read/bookmark only re-renders the affected card (via `updateCardInPlace()`) unless the current read/bookmark filter would exclude it, in which case `applyFiltersAndSort()` is called instead
+
+### Ebook export (`ebook.py`, `epub_builder.py`, `ebook/`)
+
+Two traps that will produce a book that looks fine in a permissive reader but fails validation or refuses to open elsewhere:
+
+- **Every generated file must parse as XML.** Stored summaries and transcripts are HTML, not XML — an unclosed tag or a bare `&` that would be tolerated by a browser is a fatal parse error for a strict EPUB reader. `epub_builder.xhtmlify()` is the guard: every fragment that goes into a chapter or transcript page passes through it first. It tries a real XML parse (`ET.fromstring()`) and only falls back to stripping tags and HTML-escaping the plain text if that fails — so the guarantee ("this fragment parses as XML") holds even for garbage input. Any new template or code path that emits summary/transcript text into the EPUB must route it through `xhtmlify()` (or a filter that already does, like the `xhtml` Jinja filter registered in `epub_builder._env()`) — writing raw HTML directly breaks the guarantee.
+- **`mimetype` must be the first ZIP entry and stored uncompressed.** `epub_builder.build_epub()` writes it first via `zipfile.ZipInfo("mimetype")` + `zipfile.ZIP_STORED`, before `META-INF/container.xml` or anything else. This is how e-readers cheaply recognise a `.zip` as an EPUB without parsing the whole archive; a compressed or reordered `mimetype` entry makes some readers reject the file outright even though it is still a well-formed ZIP. Never build the archive by iterating a dict/list of files first and writing `mimetype` as "just another entry" — it has to be the literal first `writestr()` call, with `ZIP_STORED` passed explicitly (the ZipFile-level default is `ZIP_DEFLATED`, which would compress it).
 
 ### Sync server (`sync-server/sync_server.py`)
 | Endpoint | Method | Description |

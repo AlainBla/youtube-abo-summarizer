@@ -26,11 +26,15 @@ STRINGS: dict[str, dict] = {
             "verf\u00fcgbar (Geoblocking)."
         ),
         "transcript_unavailable": "Kein Transkript f\u00fcr dieses Video verf\u00fcgbar.",
+        "book_title": "YouTube Zusammenfassungen",
         "book_week": "KW",
         "book_watch": "Auf YouTube ansehen",
         "book_transcript": "Transkript",
         "book_contents": "Inhalt",
         "book_back": "Zur\u00fcck zum Kapitel",
+        "book_part_unread": "Ungelesen",
+        "book_part_read": "Gelesen",
+        "book_part_all": "Videos",
     },
     "en": {
         "lang_attr": "en",
@@ -57,11 +61,15 @@ STRINGS: dict[str, dict] = {
             "regions (geo-blocking)."
         ),
         "transcript_unavailable": "No transcript available for this video.",
+        "book_title": "YouTube Summaries",
         "book_week": "Week",
         "book_watch": "Watch on YouTube",
         "book_transcript": "Transcript",
         "book_contents": "Contents",
         "book_back": "Back to chapter",
+        "book_part_unread": "Unread",
+        "book_part_read": "Read",
+        "book_part_all": "Videos",
     },
 }
 
