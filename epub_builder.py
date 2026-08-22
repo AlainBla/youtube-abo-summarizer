@@ -63,15 +63,33 @@ def _published_date(entry):
     return datetime.fromisoformat(raw).date()
 
 
-def group_by_week(videos, newest_first=True):
+SORT_MODES = ("date-desc", "date-asc", "added-desc")
+
+
+def sort_key(order):
+    """Ranking key for one video under the given --sort mode.
+
+    "added-desc" ranks by when the video entered the store, falling back to
+    the publish date for rows predating the collected_at column -- a video
+    ingested on demand today can carry a publish date from months ago, and
+    that is exactly the case this mode exists for.
+    """
+    if order == "added-desc":
+        return lambda v: (v.get("collected_at") or v.get("published_at") or "",
+                          v.get("published_at") or "", v.get("video_id") or "")
+    return lambda v: (v.get("published_at") or "", v.get("video_id") or "")
+
+
+def group_by_week(videos, order="date-desc"):
     """Group videos into ISO calendar weeks, newest week first by default.
 
     The key is (iso_year, iso_week), never the week number alone: ISO week 1
     can start in December, so two different "week 1"s would otherwise merge.
 
-    A digest is read starting with what just came in, so both the weeks and
-    the videos inside them run newest to oldest. Pass newest_first=False for
-    chronological order, e.g. when a book is meant to be read as a history.
+    Weeks are a publish-date property, so every mode keeps the same grouping
+    and only changes the ranking: "date-desc" (default) reads newest first,
+    "date-asc" chronologically, and "added-desc" by arrival in the store --
+    there a week is placed by its freshest arrival, not by its dates.
     """
     buckets = {}
     for v in videos:
@@ -88,10 +106,17 @@ def group_by_week(videos, newest_first=True):
         })
         bucket["videos"].append(v)
 
-    weeks = [buckets[k] for k in sorted(buckets, reverse=newest_first)]
-    for w in weeks:
-        w["videos"].sort(key=lambda v: (v.get("published_at") or "", v.get("video_id") or ""),
-                         reverse=newest_first)
+    key = sort_key(order)
+    newest_first = order != "date-asc"
+    for w in buckets.values():
+        w["videos"].sort(key=key, reverse=newest_first)
+
+    if order == "added-desc":
+        # Rank a week by its freshest arrival; its videos are already sorted,
+        # so that is simply the first one.
+        weeks = sorted(buckets.values(), key=lambda w: key(w["videos"][0]), reverse=True)
+    else:
+        weeks = [buckets[k] for k in sorted(buckets, reverse=newest_first)]
     return weeks
 
 

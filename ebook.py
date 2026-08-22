@@ -169,6 +169,12 @@ def parse_args(argv=None):
                         help="keep only the N newest videos that survive the read filter (0 = no limit)")
     parser.add_argument("--user", help="email whose read state is taken from the sync database")
     parser.add_argument("--sync-db", default=DEFAULT_SYNC_DB, help="path to the sync server database")
+    parser.add_argument("--include-untranscribed", action="store_true",
+                        help="also include videos with no summary (their transcript could "
+                             "not be fetched); left out by default")
+    parser.add_argument("--sort", choices=list(epub_builder.SORT_MODES), default="date-desc",
+                        help="order of the book: newest publish date first (default), "
+                             "chronological, or most recently added to the store first")
     parser.add_argument("--read", choices=["split", "drop", "ignore"], default="split",
                         help="read videos: move to the back, drop them, or ignore the state")
     parser.add_argument("--no-thumbnails", dest="thumbnails", action="store_false",
@@ -205,6 +211,17 @@ def main():
         print("No videos to put in the book.")
         sys.exit(0)
 
+    # A video whose transcript could not be fetched has no summary either, so
+    # its chapter would be nothing but a "no transcript" notice. Filter here,
+    # before --read and --limit, so the limit counts real chapters.
+    if not args.include_untranscribed:
+        with_summary = [v for v in selected if v.get("summary")]
+        if not with_summary:
+            print("No videos with a summary to put in the book "
+                  "(pass --include-untranscribed to include the rest).")
+            sys.exit(0)
+        selected = with_summary
+
     # Store rows carry the raw ISO-8601 duration ("PT1H2M3S") -- chapter.xhtml.j2
     # just prints it, so format it the same way export.py does before it ever
     # reaches the template. Copy each dict rather than mutate the row in
@@ -225,8 +242,10 @@ def main():
     # videos that actually end up in the book.
     surviving = [v for _, videos in partition_by_read(selected, read_ids, read_mode)
                  for v in videos]
-    surviving.sort(key=lambda v: ((v.get("published_at") or ""), v.get("video_id") or ""),
-                   reverse=True)
+    # Sort before cutting, so --limit keeps the top N of the chosen order:
+    # with --sort added-desc that is the most recently added videos, not the
+    # most recently published ones.
+    surviving.sort(key=epub_builder.sort_key(args.sort), reverse=args.sort != "date-asc")
     if args.limit:
         surviving = surviving[:args.limit]
 
@@ -237,7 +256,7 @@ def main():
         parts.append({
             "key": key,
             "title": strings[PART_TITLE_KEYS[key]],
-            "weeks": epub_builder.group_by_week(videos),
+            "weeks": epub_builder.group_by_week(videos, order=args.sort),
         })
         kept.extend(videos)
 

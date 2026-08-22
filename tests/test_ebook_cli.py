@@ -198,3 +198,85 @@ def test_limit_still_counts_everything_under_read_split(tmp_path, monkeypatch):
     ebook.main()
     # split keeps read videos, so the newest two overall are v5 (read) and v4.
     assert sorted(_chapter_video_ids(out)) == ["v4", "v5"]
+
+
+def test_sort_defaults_to_newest_publish_date_and_accepts_the_three_modes():
+    assert ebook.parse_args([]).sort == "date-desc"
+    for mode in ("date-desc", "date-asc", "added-desc"):
+        assert ebook.parse_args(["--sort", mode]).sort == mode
+    with pytest.raises(SystemExit):
+        ebook.parse_args(["--sort", "channel"])
+
+
+def test_limit_follows_the_chosen_sort(tmp_path, monkeypatch):
+    # --sort added-desc --limit 1 must keep the most recently *added* video,
+    # not the most recently published one.
+    videos = [
+        video("published-later", "2026-08-20T00:00:00Z", collected_at="2026-08-20T00:00:00Z"),
+        video("added-later", "2026-08-10T00:00:00Z", collected_at="2026-08-25T00:00:00Z"),
+    ]
+    _stub_store(monkeypatch, videos)
+    out = tmp_path / "book.epub"
+    monkeypatch.setattr(sys, "argv", ["ebook.py", "--all", "--limit", "1",
+                                      "--sort", "added-desc", "--no-thumbnails",
+                                      "--no-transcripts", "--output", str(out)])
+    ebook.main()
+    assert _chapter_video_ids(out) == ["added-later"]
+
+
+# ── Videos without a summary ────────────────────────────────────────────────
+# A video whose transcript could not be fetched has no summary either, so its
+# chapter is nothing but a "no transcript" notice. Those are excluded by
+# default and only come along with --include-untranscribed.
+
+def _mixed_store(monkeypatch):
+    _stub_store(monkeypatch, [
+        video("good", "2026-08-19T10:00:00Z"),
+        video("blocked", "2026-08-20T10:00:00Z", summary=None,
+              transcript_error="country_blocked"),
+    ])
+
+
+def test_videos_without_a_summary_are_left_out_by_default(tmp_path, monkeypatch):
+    _mixed_store(monkeypatch)
+    out = tmp_path / "book.epub"
+    monkeypatch.setattr(sys, "argv", ["ebook.py", "--all", "--no-thumbnails",
+                                      "--no-transcripts", "--output", str(out)])
+    ebook.main()
+    assert _chapter_video_ids(out) == ["good"]
+
+
+def test_include_untranscribed_brings_them_back(tmp_path, monkeypatch):
+    _mixed_store(monkeypatch)
+    out = tmp_path / "book.epub"
+    monkeypatch.setattr(sys, "argv", ["ebook.py", "--all", "--include-untranscribed",
+                                      "--no-thumbnails", "--no-transcripts",
+                                      "--output", str(out)])
+    ebook.main()
+    assert sorted(_chapter_video_ids(out)) == ["blocked", "good"]
+
+
+def test_a_book_of_nothing_but_untranscribed_videos_exits_instead_of_building(tmp_path, monkeypatch, capsys):
+    _stub_store(monkeypatch, [video("blocked", "2026-08-20T10:00:00Z", summary=None,
+                                    transcript_error="unavailable")])
+    out = tmp_path / "book.epub"
+    monkeypatch.setattr(sys, "argv", ["ebook.py", "--all", "--no-thumbnails",
+                                      "--no-transcripts", "--output", str(out)])
+    with pytest.raises(SystemExit) as exc:
+        ebook.main()
+    assert exc.value.code == 0
+    assert not out.exists()
+    assert "--include-untranscribed" in capsys.readouterr().out
+
+
+def test_the_limit_counts_only_videos_that_have_a_summary(tmp_path, monkeypatch):
+    videos = [video("v%d" % i, "2026-08-%02dT00:00:00Z" % (i + 1)) for i in range(4)]
+    videos[3]["summary"] = None          # the newest one is untranscribed
+    videos[3]["transcript_error"] = "unavailable"
+    _stub_store(monkeypatch, videos)
+    out = tmp_path / "book.epub"
+    monkeypatch.setattr(sys, "argv", ["ebook.py", "--all", "--limit", "2",
+                                      "--no-thumbnails", "--no-transcripts",
+                                      "--output", str(out)])
+    ebook.main()
+    assert sorted(_chapter_video_ids(out)) == ["v1", "v2"]

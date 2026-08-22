@@ -156,6 +156,10 @@ python export.py --all --sync-url https://sync.example.com --output archive.html
 ```
 
 `--hours` and `--all` are mutually exclusive. The default output filename is `export_YYYY-MM-DD_HH-MM.html`.
+
+`--sort` picks the order: `date-desc` (default, newest publish date first), `date-asc` (chronological) or `added-desc` (most recently added to the store first — a video ingested on demand today ranks first even if it was published months ago). Weeks stay the grouping level in every mode; under `added-desc` a week is placed by its freshest arrival. The sort runs before `--limit`, so `--sort added-desc --limit 50` gives the 50 most recently added videos.
+
+Videos whose transcript could not be fetched have no summary, so their chapter would be nothing but a notice — they are **left out by default**. Pass `--include-untranscribed` to keep them.
 The LLM model badge is hidden by default; use `--show-model` to display it.
 
 The embedded video data is split into a lightweight metadata index (everything needed for filtering,

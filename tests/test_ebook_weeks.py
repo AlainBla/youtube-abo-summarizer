@@ -61,10 +61,50 @@ def test_newest_video_comes_first_within_a_week():
     assert [v["video_id"] for v in weeks[0]["videos"]] == ["c", "b", "a"]
 
 
-def test_oldest_first_is_still_available_explicitly():
+def test_chronological_order_is_available_explicitly():
     weeks = epub_builder.group_by_week([
         video("older", "2026-08-12T10:00:00Z"),
         video("newer", "2026-08-19T10:00:00Z"),
-    ], newest_first=False)
+    ], order="date-asc")
     assert [w["iso_week"] for w in weeks] == [33, 34]
     assert [v["video_id"] for v in weeks[0]["videos"]] == ["older"]
+
+
+# ── --sort added-desc ───────────────────────────────────────────────────────
+# The store stamps collected_at when a video enters it, so a video ingested
+# on demand today can carry a publish date from months ago. Ordering by that
+# stamp keeps the week grouping (weeks are a publish-date property) but ranks
+# both the weeks and their videos by when they arrived.
+
+def test_added_desc_ranks_videos_by_collection_time():
+    weeks = epub_builder.group_by_week([
+        video("early-publish", "2026-08-17T10:00:00Z", collected_at="2026-08-22T00:00:00Z"),
+        video("late-publish", "2026-08-21T10:00:00Z", collected_at="2026-08-21T00:00:00Z"),
+    ], order="added-desc")
+    assert [v["video_id"] for v in weeks[0]["videos"]] == ["early-publish", "late-publish"]
+
+
+def test_added_desc_puts_the_week_with_the_freshest_arrival_first():
+    weeks = epub_builder.group_by_week([
+        video("old-week-fresh", "2026-08-12T10:00:00Z", collected_at="2026-08-23T00:00:00Z"),
+        video("new-week-stale", "2026-08-19T10:00:00Z", collected_at="2026-08-20T00:00:00Z"),
+    ], order="added-desc")
+    assert [w["iso_week"] for w in weeks] == [33, 34]
+
+
+def test_added_desc_falls_back_to_publish_date_without_collected_at():
+    # Archives predating the collected_at column must still sort sensibly.
+    weeks = epub_builder.group_by_week([
+        video("a", "2026-08-17T10:00:00Z"),
+        video("b", "2026-08-19T10:00:00Z"),
+    ], order="added-desc")
+    assert [v["video_id"] for v in weeks[0]["videos"]] == ["b", "a"]
+
+
+def test_date_asc_and_date_desc_stay_publish_ordered():
+    vids = [
+        video("a", "2026-08-17T10:00:00Z", collected_at="2026-08-30T00:00:00Z"),
+        video("b", "2026-08-19T10:00:00Z", collected_at="2026-08-01T00:00:00Z"),
+    ]
+    assert [v["video_id"] for v in epub_builder.group_by_week(vids, order="date-desc")[0]["videos"]] == ["b", "a"]
+    assert [v["video_id"] for v in epub_builder.group_by_week(vids, order="date-asc")[0]["videos"]] == ["a", "b"]
