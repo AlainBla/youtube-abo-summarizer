@@ -214,7 +214,8 @@ def test_the_spine_lists_every_video_in_reading_order(tmp_path):
         opf = ET.fromstring(z.read("OEBPS/content.opf"))
     ids = [i.get("idref") for i in opf.findall(".//opf:spine/opf:itemref", OPF_NS)]
     assert ids[0] == "title"
-    assert ids[1:4] == ["video-v1", "video-v2", "video-v3"]
+    # newest first: v3 is a week ahead of v2 and v1
+    assert ids[1:4] == ["video-v3", "video-v2", "video-v1"]
 
 
 def test_the_contents_keep_part_week_video_as_three_levels(tmp_path):

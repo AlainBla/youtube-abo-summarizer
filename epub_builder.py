@@ -63,11 +63,15 @@ def _published_date(entry):
     return datetime.fromisoformat(raw).date()
 
 
-def group_by_week(videos):
-    """Group videos into ISO calendar weeks, oldest week first.
+def group_by_week(videos, newest_first=True):
+    """Group videos into ISO calendar weeks, newest week first by default.
 
     The key is (iso_year, iso_week), never the week number alone: ISO week 1
     can start in December, so two different "week 1"s would otherwise merge.
+
+    A digest is read starting with what just came in, so both the weeks and
+    the videos inside them run newest to oldest. Pass newest_first=False for
+    chronological order, e.g. when a book is meant to be read as a history.
     """
     buckets = {}
     for v in videos:
@@ -84,9 +88,10 @@ def group_by_week(videos):
         })
         bucket["videos"].append(v)
 
-    weeks = [buckets[k] for k in sorted(buckets)]
+    weeks = [buckets[k] for k in sorted(buckets, reverse=newest_first)]
     for w in weeks:
-        w["videos"].sort(key=lambda v: (v.get("published_at") or "", v.get("video_id") or ""))
+        w["videos"].sort(key=lambda v: (v.get("published_at") or "", v.get("video_id") or ""),
+                         reverse=newest_first)
     return weeks
 
 

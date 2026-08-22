@@ -197,7 +197,7 @@ never polls, exactly as before.
 
 ## Usage — ebook export
 
-`ebook.py` renders stored videos into a single EPUB 3 file for reading offline on an e-reader or the Kindle app — one chapter per video, grouped by ISO calendar week in the table of contents, each with its summary, thumbnail (optional) and transcript (optional). Every video is its own document, so the reader's next-chapter jump moves video by video and each one starts on a fresh page; a small line above the title names the calendar week it belongs to. Like `export.py`, it only reads from `data/`: no YouTube API calls and no LLM calls. The title page shows the book's covered date range (earliest to latest video) alongside the video counts and generation date; a video whose transcript couldn't be fetched shows the matching localized notice instead of an empty section.
+`ebook.py` renders stored videos into a single EPUB 3 file for reading offline on an e-reader or the Kindle app — one chapter per video, newest first, grouped by ISO calendar week in the table of contents, each with its summary, thumbnail (optional) and transcript (optional). Every video is its own document, so the reader's next-chapter jump moves video by video and each one starts on a fresh page; a small line above the title names the calendar week it belongs to. Like `export.py`, it only reads from `data/`: no YouTube API calls and no LLM calls. The title page shows the book's covered date range (earliest to latest video) alongside the video counts and generation date; a video whose transcript couldn't be fetched shows the matching localized notice instead of an empty section.
 
 ```bash
 # Last 100 videos in the store (the default)

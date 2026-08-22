@@ -84,7 +84,8 @@ def test_each_video_document_is_well_formed_and_self_contained():
         video("v2", "2026-08-20T10:00:00Z"),
     ])[0]
     strings = i18n.get_strings("de")
-    for index, marker in ((0, "Quote"), (1, "Title v2")):
+    # newest first: v2 (Aug 20) precedes v1 (Aug 19)
+    for index, marker in ((1, "Quote"), (0, "Title v2")):
         xhtml = epub_builder.render_video(week["videos"][index], week, strings, "de", {}, set())
         root = ET.fromstring(xhtml)             # must parse as XML, escaping and all
         heading = root.find(".//{http://www.w3.org/1999/xhtml}h1")
