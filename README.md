@@ -197,7 +197,7 @@ never polls, exactly as before.
 
 ## Usage — ebook export
 
-`ebook.py` renders stored videos into a single EPUB 3 file for reading offline on an e-reader or the Kindle app — one chapter per ISO calendar week, with each video's summary, thumbnail (optional) and transcript (optional). Like `export.py`, it only reads from `data/`: no YouTube API calls and no LLM calls.
+`ebook.py` renders stored videos into a single EPUB 3 file for reading offline on an e-reader or the Kindle app — one chapter per ISO calendar week, with each video's summary, thumbnail (optional) and transcript (optional). Like `export.py`, it only reads from `data/`: no YouTube API calls and no LLM calls. The title page shows the book's covered date range (earliest to latest video) alongside the video counts and generation date; a video whose transcript couldn't be fetched shows the matching localized notice instead of an empty section.
 
 ```bash
 # Last 100 videos in the store (the default)
@@ -236,7 +236,7 @@ python ebook.py --all --user you@example.com --read drop     # omit read videos 
 python ebook.py --all --user you@example.com --read ignore   # single part, read state not applied
 ```
 
-`--read split` (the default) produces two parts, "Unread" first and "Read" second — the natural reading order. `--read drop` keeps only unread videos. `--read ignore` puts everything in a single part regardless of `--user`. An email with no matching sync user is an error; if every video ends up filtered out (e.g. `--read drop` with nothing unread), `ebook.py` exits 0 with a message instead of writing an unreadable, empty book.
+`--read` only takes effect together with `--user` — without `--user` the book is always one undivided "Videos" part, since there is no read state to split by. With `--user` set: `--read split` (the default) produces two parts, "Unread" first and "Read" second — the natural reading order; `--read drop` keeps only unread videos; `--read ignore` puts everything in a single part despite `--user` being given. An email with no matching sync user is an error; if every video ends up filtered out (e.g. `--read drop` with nothing unread), `ebook.py` exits 0 with a message instead of writing an unreadable, empty book.
 
 ### Reading on a Kindle
 
