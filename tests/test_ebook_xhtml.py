@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -116,3 +117,39 @@ def test_chapter_links_thumbnail_and_transcript_only_when_present():
     assert 'src="images/v1.jpg"' in rich
     assert "transcript-v1.xhtml" in rich
     assert "A &#183; B" in rich                  # tag separator must not be double-escaped
+
+
+# ── Summaries go through the same sanitizer as the HTML render path ─────────
+# Stored summaries are raw LLM output: about one in ten nests a list inside a
+# paragraph, which is well-formed XML but invalid XHTML content -- epubcheck
+# rejects it with RSC-005. nh3's HTML5 tree builder re-nests it correctly, and
+# it also repairs mismatched tags that would otherwise cost a summary all its
+# markup via xhtmlify()'s escape fallback.
+
+def _summary_of(chapter_xhtml: str) -> str:
+    m = re.search(r'<div class="summary">(.*?)</div>', chapter_xhtml, re.S)
+    assert m, "no summary div in chapter"
+    return m.group(1)
+
+
+def _chapter_with_summary(summary: str) -> str:
+    week = epub_builder.group_by_week([video("v1", "2026-08-19T10:00:00Z", summary=summary)])[0]
+    return epub_builder.render_chapter(week, i18n.get_strings("de"), "de", {}, set())
+
+
+def test_a_list_nested_in_a_paragraph_is_re_nested():
+    out = _summary_of(_chapter_with_summary("<p>Einleitung<ul><li>Punkt</li></ul></p>"))
+    assert "<ul>" in out and "<li>Punkt</li>" in out
+    # No <ul> may open while a <p> is still unclosed.
+    assert not re.search(r"<p>(?:(?!</p>).)*?<ul\b", out, re.S), out
+
+
+def test_a_mismatched_tag_no_longer_costs_the_summary_its_markup():
+    out = _summary_of(_chapter_with_summary("<h3>Titel</h3><p>Text<b>fett</p>"))
+    assert "<h3>Titel</h3>" in out, out
+    assert "&lt;h3&gt;" not in out
+
+
+def test_disallowed_markup_is_still_removed():
+    out = _summary_of(_chapter_with_summary('<p>ok</p><script>alert(1)</script>'))
+    assert "script" not in out.lower()

@@ -79,6 +79,17 @@ def _sanitize_summary(html: str | None) -> str | None:
     return cleaned if cleaned else None
 
 
+def sanitize_summary(html: str | None) -> str | None:
+    """Public entry point for the summary sanitizer (see _sanitize_summary).
+
+    The ebook export must run stored summaries through exactly the same
+    allowlist and repair pass as the HTML render path: raw LLM output nests
+    lists inside paragraphs often enough that an unsanitised book fails
+    epubcheck, and nh3's HTML5 tree builder is what re-nests them.
+    """
+    return _sanitize_summary(html)
+
+
 def _report_meta(lang: str, generated_date: str, total_videos: int, num_channels: int) -> str:
     if lang == "de":
         vids = f"{total_videos} Video{'s' if total_videos != 1 else ''}"

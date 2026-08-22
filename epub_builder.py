@@ -10,6 +10,8 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 
 from jinja2 import Environment, FileSystemLoader
+
+import renderer
 from markupsafe import Markup
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "ebook")
@@ -138,7 +140,7 @@ def xhtmlify(fragment):
 @functools.lru_cache(maxsize=1)
 def _env():
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
-    env.filters["xhtml"] = lambda s: Markup(xhtmlify(s))
+    env.filters["xhtml"] = lambda s: Markup(xhtmlify(renderer.sanitize_summary(s)))
     env.globals.update(item_id=_item_id, media_type=_media_type)
     return env
 
