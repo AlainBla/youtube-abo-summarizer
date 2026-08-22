@@ -7,6 +7,7 @@ for a user's read state) -- no YouTube and no LLM calls.
 
 import argparse
 import os
+import sqlite3
 import sys
 from datetime import datetime
 
@@ -34,6 +35,44 @@ def select_videos(entries, channel=None, videos=None, tag=None, limit=DEFAULT_LI
         reverse=True,
     )
     return picked[:limit] if limit else picked
+
+
+def load_read_ids(sync_db, email):
+    """Video IDs this user has marked as read, straight from the sync database.
+
+    Read-only. An unknown email is an error rather than an empty set -- a typo
+    would otherwise silently produce a book in which nothing is marked read.
+    """
+    if not os.path.exists(sync_db):
+        sys.exit(f"Error: sync database not found: {sync_db}")
+    db = sqlite3.connect(f"file:{sync_db}?mode=ro", uri=True)
+    try:
+        row = db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+        if row is None:
+            sys.exit(f"Error: no sync user with email '{email}'.")
+        rows = db.execute(
+            "SELECT video_id FROM video_state WHERE user_id = ? AND type = 'read' AND value = 1",
+            (row[0],),
+        ).fetchall()
+    finally:
+        db.close()
+    return {r[0] for r in rows}
+
+
+def partition_by_read(videos, read_ids, mode):
+    """Split into (part_key, videos) pairs according to --read.
+
+    "ignore" always yields a single "all" part. Otherwise videos are split
+    into "unread" and "read" (in that order); "drop" mode omits the "read"
+    part entirely. Empty parts are always dropped from the result.
+    """
+    if mode == "ignore":
+        parts = [("all", videos)]
+    else:
+        unread = [v for v in videos if v["video_id"] not in read_ids]
+        read = [v for v in videos if v["video_id"] in read_ids]
+        parts = [("unread", unread)] if mode == "drop" else [("unread", unread), ("read", read)]
+    return [(key, vs) for key, vs in parts if vs]
 
 
 def parse_args(argv=None):
