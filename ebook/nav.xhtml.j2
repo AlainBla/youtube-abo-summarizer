@@ -5,7 +5,7 @@
 <body>
 <nav epub:type="toc" id="toc"><h1>{{ t.book_contents }}</h1>
 <ol>
-{% for part in parts %}  <li>{{ part.title }}
+{% for part in parts %}  <li><span>{{ part.title }}</span>
     <ol>
 {% for week in part.weeks %}      <li><a href="{{ week.href }}">{{ t.book_week }} {{ week.iso_week }} &#183; {{ week.start.strftime('%d.%m.%Y') }}</a></li>
 {% endfor %}    </ol>

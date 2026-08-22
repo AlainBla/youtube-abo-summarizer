@@ -202,7 +202,10 @@ def build_epub(parts, output_path, title, lang, strings, images=None,
     images = images or {}
     transcripts = transcripts or {}
     env = _env()
-    generated = datetime.now(tz=timezone.utc).replace(microsecond=0).isoformat()
+    # EPUB 3 requires dcterms:modified in the exact "CCYY-MM-DDThh:mm:ssZ"
+    # form -- isoformat()'s "+00:00" offset is well-formed XML (so it would
+    # slip past a well-formedness check) but fails epubcheck (RSC-005).
+    generated = datetime.now(tz=timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
     book_id = book_id or "urn:uuid:" + str(uuid.uuid4())
 
     files = {}  # href inside OEBPS -> str | bytes

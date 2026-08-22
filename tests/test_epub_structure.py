@@ -72,3 +72,32 @@ def test_container_points_at_the_package_document(tmp_path):
         container = ET.fromstring(z.read("META-INF/container.xml"))
     rootfile = container.find(".//{urn:oasis:names:tc:opendocument:xmlns:container}rootfile")
     assert rootfile.get("full-path") == "OEBPS/content.opf"
+
+
+def test_image_item_id_is_prefixed_so_a_digit_leading_video_id_stays_valid():
+    # XML IDs may not start with a digit; YouTube video IDs can.
+    assert epub_builder._item_id("images/9abcDEF012.jpg") == "img-9abcDEF012"
+
+
+def test_ncx_item_id_matches_the_spine_toc_attribute():
+    assert epub_builder._item_id("toc.ncx") == "toc-ncx"
+
+
+def test_book_with_images_and_transcripts_manifests_and_spines_them(tmp_path):
+    out = _book(
+        tmp_path,
+        images={"v1": b"\xff\xd8\xff\xe0fakejpeg"},
+        transcripts={"v1": "line one\n" * 30},
+    )
+    with zipfile.ZipFile(out) as z:
+        names = set(z.namelist())
+        opf = ET.fromstring(z.read("OEBPS/content.opf"))
+        hrefs = {i.get("href") for i in opf.findall(".//opf:manifest/opf:item", OPF_NS)}
+        ids = {i.get("id") for i in opf.findall(".//opf:manifest/opf:item", OPF_NS)}
+        for href in hrefs:
+            assert "OEBPS/" + href in names, href
+        assert "OEBPS/images/v1.jpg" in names
+        assert "img-v1" in ids
+        assert "OEBPS/transcript-v1.xhtml" in names
+        spine_ids = [i.get("idref") for i in opf.findall(".//opf:spine/opf:itemref", OPF_NS)]
+        assert "transcript-v1" in spine_ids

@@ -30,7 +30,7 @@ STRINGS: dict[str, dict] = {
         "book_watch": "Auf YouTube ansehen",
         "book_transcript": "Transkript",
         "book_contents": "Inhalt",
-        "book_back": "Zurück zum Kapitel",
+        "book_back": "Zur\u00fcck zum Kapitel",
     },
     "en": {
         "lang_attr": "en",
