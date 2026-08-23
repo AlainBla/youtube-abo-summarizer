@@ -152,6 +152,22 @@ def _limit_type(value):
     return n
 
 
+def drop_excluded_channels(videos, excluded):
+    """Remove videos whose channel is excluded, by ID or by exact name.
+
+    Names are matched case-insensitively so the caller can write the channel
+    the way it appears in the book instead of looking up a UC... string.
+    """
+    if not excluded:
+        return videos
+    wanted = {e.strip().lower() for entry in excluded for e in entry.split(",") if e.strip()}
+    if not wanted:
+        return videos
+    return [v for v in videos
+            if (v.get("channel_id") or "").lower() not in wanted
+            and (v.get("channel_title") or "").lower() not in wanted]
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Build an EPUB ebook from stored summaries. "
@@ -165,6 +181,9 @@ def parse_args(argv=None):
     parser.add_argument("--channel", help="restrict to one channel ID")
     parser.add_argument("--videos", help="comma-separated video IDs")
     parser.add_argument("--tag", help="restrict to videos carrying this tag")
+    parser.add_argument("--exclude-channel", action="append", default=[], metavar="CHANNEL",
+                        help="leave a channel out of the book: its ID or its exact name, "
+                             "comma-separated and repeatable")
     parser.add_argument("--limit", type=_limit_type, default=DEFAULT_LIMIT,
                         help="keep only the N newest videos that survive the read filter (0 = no limit)")
     parser.add_argument("--user", help="email whose read state is taken from the sync database")
@@ -210,6 +229,14 @@ def main():
     if not selected:
         print("No videos to put in the book.")
         sys.exit(0)
+
+    excluded = drop_excluded_channels(selected, args.exclude_channel)
+    if len(excluded) != len(selected):
+        print(f"{len(selected) - len(excluded)} video(s) dropped by --exclude-channel.")
+    if not excluded:
+        print("Every selected video belongs to a channel excluded via --exclude-channel.")
+        sys.exit(0)
+    selected = excluded
 
     # A video whose transcript could not be fetched has no summary either, so
     # its chapter would be nothing but a "no transcript" notice. Filter here,

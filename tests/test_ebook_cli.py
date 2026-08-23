@@ -283,3 +283,72 @@ def test_the_limit_counts_only_videos_that_have_a_summary(tmp_path, monkeypatch)
                                       "--output", str(out)])
     ebook.main()
     assert sorted(_chapter_video_ids(out)) == ["v1", "v2"]
+
+
+# ── Excluding channels ──────────────────────────────────────────────────────
+# Some subscriptions are worth collecting but not worth a chapter -- music
+# loops, livestream re-uploads. They are excluded by ID or by exact channel
+# name, so the caller does not have to look up a UC... string first.
+
+def _two_channel_store(monkeypatch):
+    _stub_store(monkeypatch, [
+        video("keep", "2026-08-19T10:00:00Z", channel_id="UCkeep", channel_title="Behalten"),
+        video("skip", "2026-08-20T10:00:00Z", channel_id="UCskip", channel_title="Musikloops"),
+    ])
+
+
+def _build(tmp_path, monkeypatch, *extra):
+    out = tmp_path / "book.epub"
+    monkeypatch.setattr(sys, "argv", ["ebook.py", "--all", "--no-thumbnails",
+                                      "--no-transcripts", "--output", str(out), *extra])
+    ebook.main()
+    return out
+
+
+def test_a_channel_can_be_excluded_by_id(tmp_path, monkeypatch):
+    _two_channel_store(monkeypatch)
+    out = _build(tmp_path, monkeypatch, "--exclude-channel", "UCskip")
+    assert _chapter_video_ids(out) == ["keep"]
+
+
+def test_a_channel_can_be_excluded_by_name(tmp_path, monkeypatch):
+    _two_channel_store(monkeypatch)
+    out = _build(tmp_path, monkeypatch, "--exclude-channel", "musikloops")   # case-insensitive
+    assert _chapter_video_ids(out) == ["keep"]
+
+
+def test_several_channels_can_be_excluded_at_once(tmp_path, monkeypatch):
+    _stub_store(monkeypatch, [
+        video("a", "2026-08-19T10:00:00Z", channel_id="UC1", channel_title="Eins"),
+        video("b", "2026-08-20T10:00:00Z", channel_id="UC2", channel_title="Zwei"),
+        video("c", "2026-08-21T10:00:00Z", channel_id="UC3", channel_title="Drei"),
+    ])
+    out = _build(tmp_path, monkeypatch, "--exclude-channel", "UC1,Drei")
+    assert _chapter_video_ids(out) == ["b"]
+
+
+def test_the_flag_can_be_repeated(tmp_path, monkeypatch):
+    _two_channel_store(monkeypatch)
+    out = _build(tmp_path, monkeypatch, "--exclude-channel", "UCskip",
+                 "--exclude-channel", "does-not-exist")
+    assert _chapter_video_ids(out) == ["keep"]
+
+
+def test_excluding_everything_exits_instead_of_building(tmp_path, monkeypatch, capsys):
+    _two_channel_store(monkeypatch)
+    out = tmp_path / "book.epub"
+    monkeypatch.setattr(sys, "argv", ["ebook.py", "--all", "--no-thumbnails", "--no-transcripts",
+                                      "--exclude-channel", "UCkeep,UCskip", "--output", str(out)])
+    with pytest.raises(SystemExit) as exc:
+        ebook.main()
+    assert exc.value.code == 0
+    assert not out.exists()
+    assert "--exclude-channel" in capsys.readouterr().out
+
+
+def test_the_limit_counts_what_is_left_after_excluding(tmp_path, monkeypatch):
+    videos = [video("v%d" % i, "2026-08-%02dT00:00:00Z" % (i + 1),
+                    channel_id="UCnoisy" if i >= 2 else "UCkeep") for i in range(4)]
+    _stub_store(monkeypatch, videos)
+    out = _build(tmp_path, monkeypatch, "--exclude-channel", "UCnoisy", "--limit", "2")
+    assert sorted(_chapter_video_ids(out)) == ["v0", "v1"]

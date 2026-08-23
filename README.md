@@ -159,6 +159,8 @@ python export.py --all --sync-url https://sync.example.com --output archive.html
 
 `--sort` picks the order: `added-desc` (default, most recently added to the store first), `date-desc` (newest publish date first) or `date-asc` (chronological). Under `added-desc` a video ingested on demand today ranks first even if it was published months ago). Weeks stay the grouping level in every mode; under `added-desc` a week is placed by its freshest arrival. The sort runs before `--limit`, so `--sort added-desc --limit 50` gives the 50 most recently added videos.
 
+`--exclude-channel` leaves a channel out of the book — give its ID or its exact name (case-insensitive), comma-separated and repeatable, e.g. `--exclude-channel "The Daily Show" --exclude-channel UCskip,Musikloops`. The exclusion runs before `--limit`, so the limit counts the chapters that remain, and a run that excludes everything exits without writing a book.
+
 Videos whose transcript could not be fetched have no summary, so their chapter would be nothing but a notice — they are **left out by default**. Pass `--include-untranscribed` to keep them.
 The LLM model badge is hidden by default; use `--show-model` to display it.
 
