@@ -230,10 +230,30 @@ def _normalize_lists(fragment):
     return out[len("<div>"):-len("</div>")] if out.startswith("<div>") else out
 
 
+def published_display(iso):
+    """Release date and time as "2026-08-19 14:22", in local time.
+
+    The store keeps the publish timestamp in UTC, the way the YouTube API
+    returns it, but a reader compares the time against the clock on the wall
+    -- so it is converted to the local zone of the machine building the book.
+    Anything unparseable falls back to the bare date rather than losing it.
+    """
+    if not iso:
+        return ""
+    try:
+        stamp = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return iso[:10]
+    if stamp.tzinfo is not None:
+        stamp = stamp.astimezone()
+    return stamp.strftime("%Y-%m-%d %H:%M")
+
+
 @functools.lru_cache(maxsize=1)
 def _env():
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
     env.filters["xhtml"] = lambda s: Markup(_normalize_lists(xhtmlify(renderer.sanitize_summary(s))))
+    env.filters["published"] = published_display
     env.globals.update(item_id=_item_id, media_type=_media_type)
     return env
 

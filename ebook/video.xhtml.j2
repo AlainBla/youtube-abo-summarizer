@@ -5,7 +5,7 @@
 <body>
 <p class="kicker">{{ t.book_week }} {{ week.iso_week }} &#183; {{ week.start.strftime('%d.%m.%Y') }}&#8211;{{ week.end.strftime('%d.%m.%Y') }}</p>
 <h1>{{ v.title }}</h1>
-<p class="meta">{{ v.channel_title }} &#183; {{ v.published_at[:10] }}{% if v.duration %} &#183; {{ v.duration }}{% endif %}</p>
+<p class="meta">{{ v.channel_title }} &#183; {{ v.published_at|published }}{% if v.duration %} &#183; {{ v.duration }}{% endif %}</p>
 {% if images.get(v.video_id) %}<p class="thumb"><img src="{{ images[v.video_id] }}" alt="{{ v.title }}"/></p>{% endif %}
 {% if v.tags %}<p class="tags">{% for tag in v.tags %}{{ tag }}{% if not loop.last %} &#183; {% endif %}{% endfor %}</p>{% endif %}
 <div class="summary">

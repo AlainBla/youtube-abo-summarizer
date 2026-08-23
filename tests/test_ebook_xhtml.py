@@ -208,3 +208,37 @@ def test_a_paragraph_inside_an_unclosed_heading_is_hoisted_out():
         '<p>Der eigentliche Absatz.</p>'))
     assert "Der eigentliche Absatz." in out
     assert not re.search(r"<h3\b[^>]*>(?:(?!</h3>).)*?<p\b", out, re.S), out
+
+
+# ── Release time ────────────────────────────────────────────────────────────
+# The meta line carries the release time next to the date. The store keeps
+# UTC, the way the YouTube API returns it, but a reader compares against the
+# clock on the wall, so it is shown in local time.
+
+def test_published_display_shows_date_and_time_in_local_time():
+    from datetime import datetime, timezone
+    iso = "2026-08-19T10:00:00Z"
+    expected = datetime(2026, 8, 19, 10, 0, tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
+    assert epub_builder.published_display(iso) == expected
+
+
+def test_published_display_handles_an_explicit_offset():
+    from datetime import datetime, timezone, timedelta
+    iso = "2026-08-19T12:00:00+02:00"
+    expected = datetime(2026, 8, 19, 12, 0,
+                        tzinfo=timezone(timedelta(hours=2))).astimezone().strftime("%Y-%m-%d %H:%M")
+    assert epub_builder.published_display(iso) == expected
+
+
+def test_published_display_falls_back_to_the_bare_date():
+    assert epub_builder.published_display("kaputt-2026-08-19") == "kaputt-202"  # first 10 chars
+    assert epub_builder.published_display("") == ""
+    assert epub_builder.published_display(None) == ""
+
+
+def test_the_meta_line_carries_the_release_time():
+    week = epub_builder.group_by_week([video("v1", "2026-08-19T10:00:00Z")])[0]
+    xhtml = epub_builder.render_video(week["videos"][0], week, i18n.get_strings("de"),
+                                      "de", {}, set())
+    meta = re.search(r'<p class="meta">(.*?)</p>', xhtml, re.S).group(1)
+    assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", meta), meta
