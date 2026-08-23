@@ -18,6 +18,14 @@ import i18n as i18n_module
 import store
 
 DEFAULT_LIMIT = 100
+# Standing configuration for books, read only by this CLI: the HTML export and
+# the mail digests deliberately keep showing every channel. cron.env is the
+# same gitignored file the cron scripts source; reading it here means a manual
+# run honours the list too, even though a sourced shell variable would never
+# reach a child process.
+CRON_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cron.env")
+EXCLUDE_CHANNELS_VAR = "EBOOK_EXCLUDE_CHANNELS"
+
 DEFAULT_SYNC_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sync-server", "sync.db")
 # __file__-relative, matching store.py's DATA_DIR -- a cwd-relative path here
 # would write thumbnails somewhere other than the rest of data/ whenever this
@@ -152,6 +160,24 @@ def _limit_type(value):
     return n
 
 
+def configured_exclusions():
+    """The standing exclusion list, environment first, then cron.env.
+
+    Returns a list with at most one entry (the raw, comma-separated value);
+    splitting is drop_excluded_channels()' job, so both sources and the CLI
+    flag go through exactly one parser.
+    """
+    from_env = os.environ.get(EXCLUDE_CHANNELS_VAR)
+    if from_env:
+        return [from_env]
+    try:
+        from dotenv import dotenv_values
+        configured = dotenv_values(CRON_ENV_PATH).get(EXCLUDE_CHANNELS_VAR)
+    except Exception:
+        return []
+    return [configured] if configured else []
+
+
 def drop_excluded_channels(videos, excluded):
     """Remove videos whose channel is excluded, by ID or by exact name.
 
@@ -230,11 +256,14 @@ def main():
         print("No videos to put in the book.")
         sys.exit(0)
 
-    excluded = drop_excluded_channels(selected, args.exclude_channel)
+    # Both sources say "leave this out", so they add up rather than override.
+    exclusions = configured_exclusions() + args.exclude_channel
+    excluded = drop_excluded_channels(selected, exclusions)
     if len(excluded) != len(selected):
-        print(f"{len(selected) - len(excluded)} video(s) dropped by --exclude-channel.")
+        print(f"{len(selected) - len(excluded)} video(s) dropped by channel exclusion.")
     if not excluded:
-        print("Every selected video belongs to a channel excluded via --exclude-channel.")
+        print("Every selected video belongs to an excluded channel "
+                  f"(--exclude-channel / {EXCLUDE_CHANNELS_VAR}).")
         sys.exit(0)
     selected = excluded
 

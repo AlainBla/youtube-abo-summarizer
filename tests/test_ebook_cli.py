@@ -352,3 +352,41 @@ def test_the_limit_counts_what_is_left_after_excluding(tmp_path, monkeypatch):
     _stub_store(monkeypatch, videos)
     out = _build(tmp_path, monkeypatch, "--exclude-channel", "UCnoisy", "--limit", "2")
     assert sorted(_chapter_video_ids(out)) == ["v0", "v1"]
+
+
+# ── Excluded channels from cron.env ─────────────────────────────────────────
+# A standing exclusion list belongs in configuration, not in every cron line.
+# EBOOK_EXCLUDE_CHANNELS is read only by ebook.py -- the HTML export and the
+# mail digests keep showing every channel.
+
+def test_the_exclusion_list_is_read_from_cron_env(tmp_path, monkeypatch):
+    (tmp_path / "cron.env").write_text('EBOOK_EXCLUDE_CHANNELS="Musikloops,UCskip"\n')
+    monkeypatch.setattr(ebook, "CRON_ENV_PATH", str(tmp_path / "cron.env"))
+    monkeypatch.delenv("EBOOK_EXCLUDE_CHANNELS", raising=False)
+    assert ebook.configured_exclusions() == ["Musikloops,UCskip"]
+
+
+def test_the_environment_wins_over_cron_env(tmp_path, monkeypatch):
+    (tmp_path / "cron.env").write_text("EBOOK_EXCLUDE_CHANNELS=aus-der-datei\n")
+    monkeypatch.setattr(ebook, "CRON_ENV_PATH", str(tmp_path / "cron.env"))
+    monkeypatch.setenv("EBOOK_EXCLUDE_CHANNELS", "aus-der-umgebung")
+    assert ebook.configured_exclusions() == ["aus-der-umgebung"]
+
+
+def test_no_configuration_means_no_exclusions(tmp_path, monkeypatch):
+    monkeypatch.setattr(ebook, "CRON_ENV_PATH", str(tmp_path / "absent.env"))
+    monkeypatch.delenv("EBOOK_EXCLUDE_CHANNELS", raising=False)
+    assert ebook.configured_exclusions() == []
+
+
+def test_configured_and_command_line_exclusions_add_up(tmp_path, monkeypatch):
+    _stub_store(monkeypatch, [
+        video("a", "2026-08-19T10:00:00Z", channel_id="UC1", channel_title="Eins"),
+        video("b", "2026-08-20T10:00:00Z", channel_id="UC2", channel_title="Zwei"),
+        video("c", "2026-08-21T10:00:00Z", channel_id="UC3", channel_title="Drei"),
+    ])
+    (tmp_path / "cron.env").write_text("EBOOK_EXCLUDE_CHANNELS=Eins\n")
+    monkeypatch.setattr(ebook, "CRON_ENV_PATH", str(tmp_path / "cron.env"))
+    monkeypatch.delenv("EBOOK_EXCLUDE_CHANNELS", raising=False)
+    out = _build(tmp_path, monkeypatch, "--exclude-channel", "UC3")
+    assert _chapter_video_ids(out) == ["b"], "cron.env and the flag must both apply"
