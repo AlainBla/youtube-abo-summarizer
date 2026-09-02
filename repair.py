@@ -72,7 +72,8 @@ def parse_args():
     parser.add_argument(
         "--fix-links",
         action="store_true",
-        help="Repair broken markup in stored summaries (wrong t= offsets, broken "
+        help="Repair broken markup in stored summaries (JSON-wrapped summaries, "
+             "wrong t= offsets, broken "
              "anchor tags, missing ts-link class, </p> closed mid-sentence). "
              "No LLM calls. Combine with --dry-run.",
     )

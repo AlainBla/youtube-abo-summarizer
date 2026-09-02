@@ -1,6 +1,7 @@
 """OpenRouter API client for video summarization."""
 
 import os
+import json
 import re
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -156,12 +157,14 @@ def _drop_stray_paragraph_ends(html: str) -> str:
 def repair_summary_html(html: str) -> str:
     """Run every purely textual repair over a summary fragment. No API calls.
 
-    Order matters: timestamp links are repaired first (that pass consumes the
-    wrong closing tags), stray paragraph ends next, and deduplication last —
+    Order matters: a JSON-wrapped response is unwrapped first (its escaped
+    newlines would otherwise look like text to the paragraph pass), timestamp
+    links next (that pass consumes the wrong closing tags), stray paragraph ends
+    after that, and deduplication last —
     its block regex would otherwise stop at a stray </p> and miss duplicate
     links in the rest of the paragraph.
     """
-    return _dedup_timestamps(_drop_stray_paragraph_ends(_fix_timestamp_links(html)))
+    return _dedup_timestamps(_drop_stray_paragraph_ends(_fix_timestamp_links(_unwrap_json_response(html))))
 
 
 def _dedup_timestamps(html: str) -> str:
@@ -186,6 +189,42 @@ def _dedup_timestamps(html: str) -> str:
         return ts_re.sub(keep_first, m.group(0))
 
     return re.sub(r'<(?:p|li)\b[^>]*>.*?</(?:p|li)>', dedup_block, html, flags=re.DOTALL)
+
+
+# A response that is a JSON object rather than the requested HTML fragment:
+# {"summary": "<div>...", "tags": [...]}. Matched leniently, because the tag
+# extraction in _parse_tags() cuts the response at the <!-- tags: --> comment
+# and takes the object's closing quote and brace with it.
+_JSON_SUMMARY_RE = re.compile(r'\A\s*\{\s*"summary"\s*:\s*"(?P<body>.*)\Z', re.DOTALL)
+
+
+def _unwrap_json_response(content: str) -> str:
+    """Return the HTML fragment from a model response wrapped in a JSON object.
+
+    Stored unwrapped, such a summary keeps every quote and newline backslash-
+    escaped, so the sanitizer sees one long text node instead of markup and the
+    card renders as literal source. Anything that is not a JSON object with a
+    "summary" string is returned unchanged.
+    """
+    stripped = content.strip()
+    if not stripped.startswith("{"):
+        return content
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        summary = parsed.get("summary")
+        return summary if isinstance(summary, str) else content
+    m = _JSON_SUMMARY_RE.match(stripped)
+    if not m:
+        return content
+    # Truncated object: drop a closing quote and brace if they survived, then
+    # decode the escapes by hand — json.loads() needs a complete string literal.
+    body = re.sub(r'"\s*,?\s*\}?\s*\Z', "", m.group("body"))
+    for escape, char in (("\\n", "\n"), ("\\t", "\t"), ("\\r", "\r"), ('\\"', '"'), ("\\/", "/")):
+        body = body.replace(escape, char)
+    return body.replace("\\\\", "\\")
 
 
 def _parse_tags(content: str) -> tuple[str, list[str]]:
@@ -231,12 +270,15 @@ def _validate_summary(html: str, finish_reason: str | None) -> None:
 def _clean_response(content: str) -> tuple[str, list[str]]:
     """Turn a raw model response into (summary_html, tags).
 
-    Tags are extracted first: some models put the <!-- tags: ... --> comment
+    A response wrapped in a JSON object is unwrapped first, so the tag comment
+    and the fences below are looked for in the HTML itself.
+
+    Tags are extracted next: some models put the <!-- tags: ... --> comment
     *after* the closing code fence, others inside it. Opening and closing fence
     are therefore stripped independently — extracting the tags may already have
     taken the closing fence with it.
     """
-    html, tags = _parse_tags(content.strip())
+    html, tags = _parse_tags(_unwrap_json_response(content).strip())
     html = re.sub(r"^```[a-zA-Z]*\s*\n?", "", html)
     html = re.sub(r"\n?```\s*$", "", html)
     return html.strip(), tags
