@@ -87,6 +87,34 @@ def _repair_broken_ts_links(html: str) -> str:
     return _BROKEN_TS_LINK_RE.sub(repair, html)
 
 
+# A timestamp anchor with no timestamp in it: the model used the sentence's
+# period as the link text, or left the text empty. Beyond looking wrong, such an
+# anchor keeps whatever the model wrote into t= — often the M:SS value, which
+# YouTube ignores, so the link jumps to the start of the video. The href is the
+# only source for the label here, which reverses the rule _fix_timestamp_links()
+# follows (there a real label beats a wrong t=); with no label there is nothing
+# to prefer.
+_UNLABELLED_TS_LINK_RE = re.compile(
+    r'<a\s+href="(?P<url>https?://[^"<>\s]*?t=)(?P<time>\d+(?::\d{2}){0,2})"[^>]*>'
+    r'\s*(?P<punct>[.,;:!?]*)\s*</a>'
+)
+
+
+def _relabel_unlabelled_ts_links(html: str) -> str:
+    """Give timestamp anchors that show a period (or nothing) their label back.
+
+    The punctuation the model put inside the anchor is the sentence's, so it is
+    written after the closing tag where it belongs.
+    """
+    def relabel(m: re.Match) -> str:
+        seconds = _colon_time_to_seconds(m.group("time"))
+        return (
+            f'<a href="{m.group("url")}{seconds}" class="ts-link">'
+            f'{_seconds_to_label(seconds)}</a>{m.group("punct")}'
+        )
+    return _UNLABELLED_TS_LINK_RE.sub(relabel, html)
+
+
 # Attribute assignments the model JSON-escaped: href=\\"https://..\\". An HTML
 # parser reads the backslash-quote as part of the value, so the link breaks in
 # every output (and epubcheck rejects the ebook with RSC-020). Anchored on the
@@ -113,7 +141,9 @@ def _sanitize_summary(html: str | None) -> str | None:
 
     Four-stage sanitization:
     1. Broken-timestamp-anchor repair — rebuilds <a href="...t=M:SS</a> tags
-       that the LLM emitted without the closing quote and link text.
+       that the LLM emitted without the closing quote and link text, and gives
+       anchors whose text is the sentence's period (or nothing) their timestamp
+       label back.
     2. nh3.clean() — allowlist-based HTML sanitizer; removes all tags/attributes
        not on the allowlist, strips javascript: URIs, and cleans event handlers.
     3. Trailing-tag fix — removes any trailing '<...' left by LLM truncation so
@@ -122,7 +152,9 @@ def _sanitize_summary(html: str | None) -> str | None:
     if not html:
         return html
     # Stage 1: repair LLM-truncated timestamp anchors and JSON-escaped quotes
-    repaired = _repair_broken_ts_links(_repair_escaped_attr_quotes(html))
+    repaired = _relabel_unlabelled_ts_links(
+        _repair_broken_ts_links(_repair_escaped_attr_quotes(html))
+    )
     # Stage 2: allowlist-based XSS sanitization
     cleaned = nh3.clean(
         repaired,
