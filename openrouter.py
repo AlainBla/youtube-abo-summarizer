@@ -6,6 +6,8 @@ import re
 from openai import OpenAI
 from dotenv import load_dotenv
 
+import renderer
+
 load_dotenv()
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -158,13 +160,20 @@ def repair_summary_html(html: str) -> str:
     """Run every purely textual repair over a summary fragment. No API calls.
 
     Order matters: a JSON-wrapped response is unwrapped first (its escaped
-    newlines would otherwise look like text to the paragraph pass), timestamp
-    links next (that pass consumes the wrong closing tags), stray paragraph ends
-    after that, and deduplication last —
+    newlines would otherwise look like text to the paragraph pass), then anchors
+    whose href the model never closed are rebuilt — until they are, the text
+    they swallowed is still inside an attribute value and invisible to every
+    pass below. Timestamp links come next (that pass consumes the wrong closing
+    tags), stray paragraph ends after that, and deduplication last —
     its block regex would otherwise stop at a stray </p> and miss duplicate
     links in the rest of the paragraph.
     """
-    return _dedup_timestamps(_drop_stray_paragraph_ends(_fix_timestamp_links(_unwrap_json_response(html))))
+    unwrapped = _unwrap_json_response(html)
+    return _dedup_timestamps(
+        _drop_stray_paragraph_ends(
+            _fix_timestamp_links(renderer._repair_broken_ts_links(unwrapped))
+        )
+    )
 
 
 def _dedup_timestamps(html: str) -> str:

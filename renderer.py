@@ -24,13 +24,22 @@ _ALLOWED_ATTRS: dict[str, set[str]] = {"a": {"href", "class"}}
 _ALLOWED_URL_SCHEMES: frozenset[str] = frozenset({"https"})
 
 # Matches timestamp anchors the LLM emitted with the M:SS (or H:MM:SS) value
-# baked into the href and no closing quote or link text before </a>, e.g.
+# baked into the href and no closing quote, e.g.
 # <a href="https://www.youtube.com/watch?v=VID&t=1:04</a>. The unclosed href
 # attribute would otherwise consume all following markup up to the next '"',
 # hiding entire paragraphs. Also tolerates the ampersand already being encoded
 # as &amp; in case nh3.clean has already touched the input.
+#
+# What follows the timestamp varies. Sometimes nothing does and the sentence
+# simply runs on ("...&t=1:02. Zweiter Satz"); sometimes the model terminates
+# the tag with a closer carrying the attributes it forgot, followed by the
+# sentence's period and a real </a> ("...&t=1:34</p class="ts-link">.</a>").
+# Both forms are consumed here, and the trailing text is kept after the rebuilt
+# anchor. A properly closed href — the quote right after the value — is not a
+# match at all.
 _BROKEN_TS_LINK_RE = re.compile(
-    r'<a\s+href="(https?://[^"<>\s]*?t=)(\d+(?::\d{2}){1,2})</a>',
+    r'<a\s+href="(?P<url>https?://[^"<>\s]*?t=)(?P<display>\d+(?::\d{2}){1,2})(?!")'
+    r'(?:</[a-zA-Z]+\b[^>]*>(?P<tail>[^<]{0,4})</a>|</a>)?',
     re.IGNORECASE,
 )
 
@@ -43,11 +52,20 @@ def _colon_time_to_seconds(t: str) -> int:
 
 
 def _repair_broken_ts_links(html: str) -> str:
-    """Rebuild timestamp anchors truncated to `<a href="...t=M:SS</a>`."""
+    """Rebuild timestamp anchors whose href the model never closed.
+
+    The M:SS value in the href is the link text the model meant to write, so it
+    becomes both: the href gets it as a second count, the anchor gets it as its
+    label. Text the model stranded inside the broken closer (the sentence's
+    period, as a rule) is put back after the anchor.
+    """
     def repair(m: re.Match) -> str:
-        url_prefix = m.group(1)
-        display = m.group(2)
-        return f'<a href="{url_prefix}{_colon_time_to_seconds(display)}" class="ts-link">{display}</a>'
+        display = m.group("display")
+        tail = m.group("tail") or ""
+        return (
+            f'<a href="{m.group("url")}{_colon_time_to_seconds(display)}"'
+            f' class="ts-link">{display}</a>{tail}'
+        )
     return _BROKEN_TS_LINK_RE.sub(repair, html)
 
 
