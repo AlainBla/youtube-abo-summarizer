@@ -411,7 +411,7 @@ python repair.py --fix-links
 |---|---|
 | `--video ID,ID,...` | Restrict to specific video IDs (comma-separated) |
 | `--force-summarize` | Re-summarize even if a summary already exists; also re-generates tags |
-| `--fix-links` | Repair timestamp links in stored summaries: wrong `t=` offsets, anchors the model left open, missing `ts-link` class. No LLM calls — back up `data/summaries/` first, the rewrite is in place |
+| `--fix-links` | Repair broken markup in stored summaries: wrong `t=` offsets, anchors the model left open, missing `ts-link` class, `</p>` tags closed mid-sentence. No LLM calls — back up `data/summaries/` first, the rewrite is in place |
 | `--model MODEL_ID` | Override the model from `LLM_MODEL` / `OPENROUTER_MODEL` |
 | `--dry-run` | Print what would be done without writing anything |
 

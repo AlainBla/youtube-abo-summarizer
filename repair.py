@@ -21,7 +21,7 @@ Usage:
   # Re-summarize all videos that have a transcript (fresh run with new model)
   python repair.py --force-summarize
 
-  # Repair broken timestamp links in stored summaries (no LLM calls)
+  # Repair broken markup in stored summaries: timestamp links, stray </p> (no LLM calls)
   python repair.py --fix-links --dry-run
   python repair.py --fix-links
 """
@@ -72,8 +72,9 @@ def parse_args():
     parser.add_argument(
         "--fix-links",
         action="store_true",
-        help="Repair timestamp links in stored summaries (wrong t= offsets, broken "
-             "anchor tags, missing ts-link class). No LLM calls. Combine with --dry-run.",
+        help="Repair broken markup in stored summaries (wrong t= offsets, broken "
+             "anchor tags, missing ts-link class, </p> closed mid-sentence). "
+             "No LLM calls. Combine with --dry-run.",
     )
     return parser.parse_args()
 
@@ -82,7 +83,8 @@ def fix_links(entries, dry_run: bool) -> None:
     """Rewrite stored summaries through openrouter's timestamp-link repair.
 
     Purely textual: recomputes each t= from its visible label, closes anchors the
-    model left open, and adds the missing ts-link class. No API calls.
+    model left open, adds the missing ts-link class, and drops </p> tags the
+    model placed mid-sentence. No API calls.
     """
     n_changed = 0
     for entry in entries:
@@ -90,7 +92,7 @@ def fix_links(entries, dry_run: bool) -> None:
         if not path.exists():
             continue
         before = path.read_text(encoding="utf-8")
-        after = openrouter._dedup_timestamps(openrouter._fix_timestamp_links(before))
+        after = openrouter.repair_summary_html(before)
         if after == before:
             continue
         n_changed += 1
@@ -120,7 +122,7 @@ def main():
         return
 
     if args.fix_links:
-        print(f"Scanning {len(entries)} video(s) for broken timestamp links")
+        print(f"Scanning {len(entries)} video(s) for broken summary markup")
         if args.dry_run:
             print("  (dry-run — no changes will be written)")
         fix_links(entries, args.dry_run)

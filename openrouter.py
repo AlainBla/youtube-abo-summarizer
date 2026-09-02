@@ -120,6 +120,50 @@ def _fix_timestamp_links(html: str) -> str:
     return _TS_LINK_RE.sub(fix, html)
 
 
+# A </p> that is followed by running text instead of another block element or
+# the end of the fragment. Models sometimes close the paragraph right after a
+# timestamp link, before the sentence-final period; the browser then ends the
+# paragraph there and every following sentence becomes its own block starting
+# with a dot.
+_STRAY_P_END_RE = re.compile(r"[ \t]*</p>(?P<gap>\s*)(?=(?P<next>[^\s<]))")
+
+# Two or more paragraph ends in a row: the browser turns the extras into empty
+# paragraphs, which show up as stray vertical gaps between cards' sections.
+_REPEATED_P_END_RE = re.compile(r"</p>(?:\s*</p>)+")
+
+
+def _drop_stray_paragraph_ends(html: str) -> str:
+    """Remove </p> tags that close a paragraph in the middle of a sentence.
+
+    A paragraph end is genuine when the next thing in the fragment is another
+    tag or nothing at all. Anything else — a period, a comma, the next word —
+    means the model closed too early, so the tag is dropped and the sentence
+    stays in one paragraph. Whitespace around the dropped tag is kept, except
+    before punctuation, where it would leave an orphaned space. A run of
+    consecutive </p> tags collapses to one — paragraphs cannot nest, so the
+    extras only produce empty paragraphs in the browser.
+
+    Must run after `_fix_timestamp_links()`, which relies on a trailing </p> to
+    recognise an anchor the model closed with the wrong tag.
+    """
+
+    def drop(m: re.Match) -> str:
+        return "" if m.group("next") in ".,;:!?)" else m.group("gap")
+
+    return _REPEATED_P_END_RE.sub("</p>", _STRAY_P_END_RE.sub(drop, html))
+
+
+def repair_summary_html(html: str) -> str:
+    """Run every purely textual repair over a summary fragment. No API calls.
+
+    Order matters: timestamp links are repaired first (that pass consumes the
+    wrong closing tags), stray paragraph ends next, and deduplication last —
+    its block regex would otherwise stop at a stray </p> and miss duplicate
+    links in the rest of the paragraph.
+    """
+    return _dedup_timestamps(_drop_stray_paragraph_ends(_fix_timestamp_links(html)))
+
+
 def _dedup_timestamps(html: str) -> str:
     """Within each <p> and <li>, remove duplicate timestamp links with the same t= value.
 
@@ -127,7 +171,9 @@ def _dedup_timestamps(html: str) -> str:
     multiple sentences in a paragraph, producing repeated identical links. Only
     the first occurrence of each t= value within a block element is kept.
     """
-    ts_re = re.compile(r'<a\b[^>]*\bt=(\d+)[^>]*>.*?</a>', re.DOTALL)
+    # The leading whitespace goes with the link: dropping the anchor but keeping
+    # its space would leave "... erreichen . Es wird" behind.
+    ts_re = re.compile(r'[ \t]*<a\b[^>]*\bt=(\d+)[^>]*>.*?</a>', re.DOTALL)
 
     def dedup_block(m):
         seen: set[str] = set()
@@ -368,4 +414,4 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> t
     _validate_summary(html, getattr(choice, "finish_reason", None))
     # Repair links before deduping — dedup compares t= values, which are only
     # meaningful once they have been recomputed from the labels.
-    return _dedup_timestamps(_fix_timestamp_links(html)), tags
+    return repair_summary_html(html), tags
