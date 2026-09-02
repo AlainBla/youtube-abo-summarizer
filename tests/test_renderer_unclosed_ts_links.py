@@ -56,3 +56,41 @@ def test_swallowed_prose_survives_sanitizing():
     out = sanitize_summary(html)
     assert "Diese Prosa wurde bisher verschluckt" in out
     assert out.count('class="ts-link"') == 2
+
+
+def test_closed_hour_length_href_is_not_split():
+    """Regression: the display group must not backtrack out of a closed href.
+
+    Giving back one ':SS' repetition would let the lookahead pass mid-value and
+    leak the rest of the attribute onto the card as text.
+    """
+    html = f'<p>Ein Satz <a href="{URL}1:02:03" class="ts-link">.</a></p>'
+    assert repair(html) == html
+
+
+def test_unclosed_href_with_plain_seconds():
+    """Same defect, seconds instead of M:SS — the label is derived from them."""
+    html = f'<p>Ein Satz <a href="{URL}93</a class="ts-link">.</a></p>'
+    assert repair(html) == f'<p>Ein Satz <a href="{URL}93" class="ts-link">1:33</a>.</p>'
+
+
+def test_unclosed_href_with_plain_seconds_over_an_hour():
+    html = f'<p>Ein Satz <a href="{URL}3723. Weiter.</p>'
+    assert repair(html) == f'<p>Ein Satz <a href="{URL}3723" class="ts-link">1:02:03</a>. Weiter.</p>'
+
+
+def test_closed_href_with_junk_in_the_value_is_untouched():
+    """`t=4800S4000"` is a typo inside a *closed* href, not an unclosed one.
+
+    Rebuilding it would strand the rest of the attribute as visible text.
+    """
+    html = f'<p>Ein Satz <a href="{URL}4800S4000" class="ts-link">80:00</a>.</p>'
+    assert repair(html) == html
+
+
+def test_unclosed_href_followed_by_quoted_prose_is_left_alone():
+    """Whether a quote closes the attribute cannot be told apart from a quote in
+    the prose, so the ambiguous case keeps its markup rather than risking a
+    mangled one."""
+    html = f'<p>Ein Satz <a href="{URL}1:02. Er sagte "Hallo" und ging.</p>'
+    assert repair(html) == html

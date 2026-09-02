@@ -303,12 +303,8 @@ def _transcript_duration(transcript: str) -> int | None:
 
 
 def _format_duration(seconds: int) -> str:
-    h = seconds // 3600
-    m = (seconds % 3600) // 60
-    s = seconds % 60
-    if h:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
+    """Same M:SS / H:MM:SS shape the timestamp labels use."""
+    return renderer._seconds_to_label(seconds)
 
 
 _CONTEXT_LIMIT = 131_072   # model's hard context-window limit (tokens)

@@ -30,6 +30,14 @@ _ALLOWED_URL_SCHEMES: frozenset[str] = frozenset({"https"})
 # hiding entire paragraphs. Also tolerates the ampersand already being encoded
 # as &amp; in case nh3.clean has already touched the input.
 #
+# The value is written both ways, "1:34" and plain seconds. Two lookaheads keep
+# closed hrefs out: the first rejects a digit or colon, or the value would
+# backtrack out of a well-formed href ("t=1:02:03\"" matching only "1:02"); the
+# second rejects anything with a quote still ahead of it inside the tag, which
+# is what a typo in an otherwise closed value looks like ("t=4800S4000\""). Both
+# leak the rest of the attribute onto the card when they slip through. The cost
+# is that an unclosed href followed by quoted prose keeps its broken markup.
+#
 # What follows the timestamp varies. Sometimes nothing does and the sentence
 # simply runs on ("...&t=1:02. Zweiter Satz"); sometimes the model terminates
 # the tag with a closer carrying the attributes it forgot, followed by the
@@ -38,7 +46,7 @@ _ALLOWED_URL_SCHEMES: frozenset[str] = frozenset({"https"})
 # anchor. A properly closed href — the quote right after the value — is not a
 # match at all.
 _BROKEN_TS_LINK_RE = re.compile(
-    r'<a\s+href="(?P<url>https?://[^"<>\s]*?t=)(?P<display>\d+(?::\d{2}){1,2})(?!")'
+    r'<a\s+href="(?P<url>https?://[^"<>\s]*?t=)(?P<display>\d+(?::\d{2}){0,2})(?![\d:"])(?![^<>]*")'
     r'(?:</[a-zA-Z]+\b[^>]*>(?P<tail>[^<]{0,4})</a>|</a>)?',
     re.IGNORECASE,
 )
@@ -51,20 +59,30 @@ def _colon_time_to_seconds(t: str) -> int:
     return seconds
 
 
+def _seconds_to_label(seconds: int) -> str:
+    """Format a second count as the M:SS / H:MM:SS label a timestamp link shows."""
+    h, m, sec = seconds // 3600, (seconds % 3600) // 60, seconds % 60
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
 def _repair_broken_ts_links(html: str) -> str:
     """Rebuild timestamp anchors whose href the model never closed.
 
     The M:SS value in the href is the link text the model meant to write, so it
     becomes both: the href gets it as a second count, the anchor gets it as its
-    label. Text the model stranded inside the broken closer (the sentence's
+    label. Where the model wrote plain seconds instead, the label is derived
+    from them. Text the model stranded inside the broken closer (the sentence's
     period, as a rule) is put back after the anchor.
     """
     def repair(m: re.Match) -> str:
-        display = m.group("display")
+        raw = m.group("display")
+        seconds = _colon_time_to_seconds(raw)
+        # A model that wrote plain seconds gives no label to reuse; derive one.
+        label = raw if ":" in raw else _seconds_to_label(seconds)
         tail = m.group("tail") or ""
         return (
-            f'<a href="{m.group("url")}{_colon_time_to_seconds(display)}"'
-            f' class="ts-link">{display}</a>{tail}'
+            f'<a href="{m.group("url")}{seconds}"'
+            f' class="ts-link">{label}</a>{tail}'
         )
     return _BROKEN_TS_LINK_RE.sub(repair, html)
 
