@@ -163,8 +163,8 @@ def repair_summary_html(html: str) -> str:
     newlines would otherwise look like text to the paragraph pass), then anchors
     whose href the model never closed are rebuilt — until they are, the text
     they swallowed is still inside an attribute value and invisible to every
-    pass below, and anchors the model left without a label get one from their
-    href. Timestamp links come next (that pass consumes the wrong closing
+    pass below; the same holds for a tag that never reaches its '>'. Anchors
+    the model left without a label then get one from their href. Timestamp links come next (that pass consumes the wrong closing
     tags), stray paragraph ends after that, and deduplication last —
     its block regex would otherwise stop at a stray </p> and miss duplicate
     links in the rest of the paragraph.
@@ -174,7 +174,9 @@ def repair_summary_html(html: str) -> str:
         _drop_stray_paragraph_ends(
             _fix_timestamp_links(
                 renderer._relabel_unlabelled_ts_links(
-                    renderer._repair_broken_ts_links(unwrapped)
+                    renderer._close_unterminated_ts_tags(
+                        renderer._repair_broken_ts_links(unwrapped)
+                    )
                 )
             )
         )

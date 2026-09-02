@@ -87,6 +87,58 @@ def _repair_broken_ts_links(html: str) -> str:
     return _BROKEN_TS_LINK_RE.sub(repair, html)
 
 
+# An <a> tag that never reaches its '>': the model closed the href but forgot
+# the bracket, pasted a second URL into the class attribute, or simply stopped
+# mid-attribute. Everything up to the next tag is read as attributes, so the
+# sentence disappears from the card. The run is bounded by the next '<', which
+# is where the parser would have started making sense of the document again.
+_UNTERMINATED_TAG_RE = re.compile(r"<a\s(?P<body>[^<>]*)(?=<)")
+
+# The timestamp inside such a tag. The '=' is optional because "…&t7:53" happens.
+_TAG_T_VALUE_RE = re.compile(
+    r'(?P<url>https?://[^"\s<>]*?[?&]t)=?(?P<time>\d+(?::\d{2}){0,2})'
+)
+
+# Attribute leftovers to drop before what remains is treated as prose. Only real
+# attribute names, so a sentence like "Fazit: Das war es" survives.
+_ATTR_LEFTOVER_RE = re.compile(
+    r'\A\s*(?:class|href|rel|target|style|id|title)\s*[:=]\s*(?:"[^"]*"?|[^\s<>"]*)'
+)
+
+# The label the model wrote where the '>' should have been, e.g. `": 93:00"`.
+_ORPHAN_LABEL_RE = re.compile(r"\A\s*[:.]?\s*\d{1,2}:\d{2}(?::\d{2})?")
+
+
+def _close_unterminated_ts_tags(html: str) -> str:
+    """Close <a> tags the model never terminated, keeping the prose they ate.
+
+    The timestamp in the href gives the anchor its href and its label; attribute
+    debris between the value and the next tag is dropped, and whatever is left
+    is the sentence, put back after the anchor. A tag carrying no timestamp is
+    left alone — there is nothing to rebuild it from.
+    """
+    def close(m: re.Match) -> str:
+        body = m.group("body")
+        t = _TAG_T_VALUE_RE.search(body)
+        if not t:
+            return m.group(0)
+        seconds = _colon_time_to_seconds(t.group("time"))
+        rest = body[t.end():]
+        if rest.startswith('"'):
+            rest = rest[1:]
+        while True:
+            stripped = _ATTR_LEFTOVER_RE.sub("", rest)
+            if stripped == rest:
+                break
+            rest = stripped
+        rest = _ORPHAN_LABEL_RE.sub("", rest)
+        return (
+            f'<a href="{t.group("url")}={seconds}" class="ts-link">'
+            f'{_seconds_to_label(seconds)}</a>{rest}'
+        )
+    return _UNTERMINATED_TAG_RE.sub(close, html)
+
+
 # A timestamp anchor with no timestamp in it: the model used the sentence's
 # period as the link text, or left the text empty. Beyond looking wrong, such an
 # anchor keeps whatever the model wrote into t= — often the M:SS value, which
@@ -153,7 +205,9 @@ def _sanitize_summary(html: str | None) -> str | None:
         return html
     # Stage 1: repair LLM-truncated timestamp anchors and JSON-escaped quotes
     repaired = _relabel_unlabelled_ts_links(
-        _repair_broken_ts_links(_repair_escaped_attr_quotes(html))
+        _close_unterminated_ts_tags(
+            _repair_broken_ts_links(_repair_escaped_attr_quotes(html))
+        )
     )
     # Stage 2: allowlist-based XSS sanitization
     cleaned = nh3.clean(
