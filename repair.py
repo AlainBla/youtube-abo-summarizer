@@ -27,6 +27,7 @@ Usage:
 """
 
 import argparse
+import collections
 import os
 import time
 
@@ -34,6 +35,7 @@ from dotenv import load_dotenv
 
 import openrouter
 import store
+import tags as tag_vocab
 import transcripts as tr
 
 load_dotenv()
@@ -78,6 +80,12 @@ def parse_args():
              "anchor tags, missing ts-link class, </p> closed mid-sentence). "
              "No LLM calls. Combine with --dry-run.",
     )
+    parser.add_argument(
+        "--remap-tags",
+        action="store_true",
+        help="Rewrite stored tags through the controlled vocabulary in tags.py "
+             "and tag_aliases.json. No LLM calls. Combine with --dry-run.",
+    )
     return parser.parse_args()
 
 
@@ -105,14 +113,45 @@ def fix_links(entries, dry_run: bool) -> None:
     print(f"\nDone.  {n_changed} of {len(entries)} summaries {verb}.")
 
 
+def remap_tags(entries, dry_run: bool) -> None:
+    """Rewrite stored tags through the controlled vocabulary. No API calls.
+
+    Rejected old tags are deliberately not logged as candidates: the log exists
+    to show what the model asks for now, and 10 700 historical inventions would
+    bury that signal.
+    """
+    changed = 0
+    emptied = 0
+    distribution: collections.Counter[str] = collections.Counter()
+    for entry in entries:
+        before = entry.get("tags") or []
+        if not before:
+            continue
+        after, _rejected = tag_vocab.canonicalize(before)
+        distribution.update(after)
+        if after == before:
+            continue
+        changed += 1
+        if not after:
+            emptied += 1
+            print(f"  [remap-tags] ohne Tag: {entry.get('title', '')[:60]}  ({entry['video_id']})")
+        if not dry_run:
+            store.update_tags(entry["video_id"], after)
+    verb = "würden geändert" if dry_run else "geändert"
+    print(f"\n{changed} von {len(entries)} Videos {verb}, davon {emptied} ohne Tag.")
+    print(f"{len(distribution)} verschiedene Tags im Einsatz, häufigste:")
+    for tag, count in distribution.most_common(15):
+        print(f"  {count:5d}  {tag}")
+
+
 def main():
     args = parse_args()
-    if not args.fix_links:
+    if not (args.fix_links or args.remap_tags):
         tr.log_proxy_config(no_proxy=args.no_proxy)
     model = args.model or os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
     video_filter = {v.strip() for v in args.video.split(",") if v.strip()} if args.video else None
 
-    entries = store.get_all_videos()
+    entries = store.get_all_videos(with_transcripts=not args.remap_tags)
     if video_filter:
         entries = [e for e in entries if e["video_id"] in video_filter]
         not_found = video_filter - {e["video_id"] for e in entries}
@@ -121,6 +160,13 @@ def main():
 
     if not entries:
         print("No videos to process.")
+        return
+
+    if args.remap_tags:
+        print(f"Scanning {len(entries)} video(s) for tags outside the vocabulary")
+        if args.dry_run:
+            print("  (dry-run — no changes will be written)")
+        remap_tags(entries, args.dry_run)
         return
 
     if args.fix_links:
