@@ -58,3 +58,14 @@ def test_unparseable_output_gives_an_empty_mapping():
 def test_duplicate_targets_collapse():
     text = '{"Valve": ["Steam", "Steam"]}'
     assert tags.parse_alias_response(text, BATCH) == {"Valve": ["Steam"]}
+
+
+def test_build_aliases_queues_a_case_insensitive_duplicate_only_once(tmp_path, monkeypatch, capsys):
+    """Two store spellings of the same tag ('AI' and 'ai') must not both be
+    queued — the later one written would silently overwrite the earlier one
+    once sort_keys=True picks a winner."""
+    monkeypatch.setattr(tags, "ALIASES_PATH", tmp_path / "tag_aliases.json")
+    monkeypatch.setattr(tags, "stored_tags", lambda: ["AI", "ai", "ML", "AI"])
+    tags.build_aliases(None, True, "some-model")
+    out = capsys.readouterr().out
+    assert "2 unzugeordnete Tags in 1 Stapel(n) à 100" in out

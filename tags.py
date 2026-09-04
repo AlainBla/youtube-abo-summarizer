@@ -366,7 +366,20 @@ Für jeden vorgelegten Tag nennst du die Vokabular-Einträge, die dasselbe Thema
 höchstens zwei, und ausschließlich Einträge, die unten wörtlich vorkommen.
 Ein Eigenname (Spieltitel, Firma, Person, einzelner Ort) wird dem allgemeinen Thema
 zugeordnet, zu dem er gehört: ein Spieltitel seinem Genre, eine Firma ihrem Feld, ein
-Ort der Region oder dem Konflikt. Passt nichts, antworte mit einer leeren Liste.
+Ort der Region oder dem Konflikt.
+
+Die leere Liste ist das letzte Mittel, nicht die sichere Standardantwort. Geh das
+ganze Vokabular durch, bevor du dich für eine leere Liste entscheidest — für die
+meisten Tags gibt es einen thematisch passenden Eintrag, auch wenn kein Wort
+übereinstimmt. Nur ein Tag ganz ohne inhaltlichen Bezug zu irgendeinem Eintrag
+bleibt leer.
+
+Beispiele:
+- Firma zu ihrem Feld: "Valve" -> ["Spielebranche"]
+- Spieltitel zu seinem Genre: "Bloodborne" -> ["Soulslike"]
+- Veranstaltung zur News-Kategorie: "Gamescom" -> ["Gaming-News"]
+- Rollenbezeichnung zu ihrer Disziplin: "AI Product Management" -> ["Produktmanagement"]
+- echter Nicht-Treffer (Kanalname ohne Themenbezug): "Rocket Beans" -> []
 
 Antworte mit genau einem JSON-Objekt: {{"alter Tag": ["Vokabular-Tag", ...], ...}}
 Kein Prosatext, kein Code-Fence, keine Erklärung.
@@ -420,7 +433,14 @@ def build_aliases(limit: int | None, dry_run: bool, model: str) -> None:
     import openrouter          # local import: openrouter imports this module
 
     known = {key.lower() for key in _read_aliases_raw()}
-    todo = [t for t in stored_tags() if t not in ALL_TAGS and t.lower() not in known]
+    todo: list[str] = []
+    queued: set[str] = set()
+    for t in stored_tags():
+        lower = t.lower()
+        if t in ALL_TAGS or lower in known or lower in queued:
+            continue
+        todo.append(t)
+        queued.add(lower)
     if limit:
         todo = todo[:limit]
     batches = [todo[i : i + ALIAS_BATCH] for i in range(0, len(todo), ALIAS_BATCH)]
