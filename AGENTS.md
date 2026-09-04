@@ -18,6 +18,7 @@ repair.py               # gap-repair CLI
 recover_from_export.py  # restore store entries from an exported HTML file
 summarize.py            # legacy all-in-one CLI (no store)
 store.py                # SQLite + file store (data/)
+tags.py                 # controlled German tag vocabulary + canonicalize() gate
 transcripts.py          # youtube-transcript-api wrapper
 openrouter.py           # LLM client (OpenRouter / Ollama)
 renderer.py             # Jinja2 HTML renderer
@@ -41,12 +42,14 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 ### Store
 - `data/videos.db` — SQLite; schema in `store.py`; `tags` column is a JSON array (`TEXT`)
 - `store.get_video(video_id)` returns a dict with `has_transcript` and `has_summary` flags (file-existence checks)
-- `store.add_video()` and `store.update_video_with_summary()` accept a `tags=` list kwarg
+- `store.add_video()` and `store.update_video_with_summary()` accept a `tags=` list kwarg; `store.update_tags()` writes only the tags column (the other two would also reset `transcript_error`/`summary_model`)
 - All store read helpers deserialise `tags` to `list[str]` (empty list when `NULL`)
 
 ### LLM client
 - `openrouter.summarize_video()` returns `(summary_html: str, tags: list[str])`
 - Tags come from a `<!-- tags: ... -->` HTML comment appended by the model; `_parse_tags()` strips it
+- Tags are not free-form: `tags.py` holds a fixed German vocabulary (161 entries, 10 groups), the prompt carries it via `tags.prompt_block()` and asks for 3–5, and `summarize_video()` runs every suggestion through `tags.canonicalize()` — exact hit, case-only difference, or a `tag_aliases.json` alias, everything else rejected; results are deduplicated and capped at `tags.MAX_TAGS` (5). Rejected suggestions are counted in `data/tag_candidates.json` via `tags.record_candidates()`, not stored
+- `repair.py --remap-tags` re-applies the vocabulary and aliases to the whole store (no LLM calls); `tags.py --build-aliases` is what built `tag_aliases.json` in the first place
 - `max_tokens=16384`; raises `ValueError` if the model returns `null` content
 
 ### Transcripts

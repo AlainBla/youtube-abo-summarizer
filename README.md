@@ -10,7 +10,7 @@ Fetches new videos from your YouTube subscriptions (or an explicit channel list)
 - **Two source modes**: OAuth-based subscription list or explicit channel IDs/handles
 - **Incremental runs**: Tracks the last-checked timestamp per channel in `last_run.json`; only fetches videos published since the last run
 - **Transcript fetching**: Configurable language priority (`TRANSCRIPT_LANGS`, default: `de,en`); falls back to any available language
-- **AI summarization**: Generates structured HTML summaries written as flowing prose (bullet points only for genuine enumerations); sections are in chronological order and scaled to video length (2–3 sections for short videos, up to 6–10 for long ones); each section contains clickable timestamp links placed inline after the relevant sentence; output language configurable via `SUMMARY_LANG` (default: German). The same LLM call also extracts 3–7 concise English topic tags, stored alongside the summary
+- **AI summarization**: Generates structured HTML summaries written as flowing prose (bullet points only for genuine enumerations); sections are in chronological order and scaled to video length (2–3 sections for short videos, up to 6–10 for long ones); each section contains clickable timestamp links placed inline after the relevant sentence; output language configurable via `SUMMARY_LANG` (default: German). The same LLM call also extracts 3–5 tags from a fixed German vocabulary (`tags.py`, 161 entries in ten groups), enforced by `tags.canonicalize()` and stored alongside the summary
 - **Transcript and summary storage**: Transcripts and summaries are cached to `data/`. On subsequent runs, videos that already have both a transcript and a summary are skipped entirely — no redundant YouTube or LLM calls. If only the transcript is missing it is fetched; if only the summary is missing the stored transcript is re-used and only the LLM call is made
 - **Dark-theme HTML report**: Self-contained, mobile-responsive, with per-channel sections and video cards
 - **Browsable archive export**: Single portable HTML file with client-side search, date filter (published after), channel filter, tag filter, read/bookmark filter, sort (publish date, date added, channel, title), and pagination — works fully offline; each filter and sort control has a visible label; tag chips and channel names on cards are clickable and toggle their respective filters directly
@@ -117,6 +117,30 @@ python report.py --lang en
 ```
 
 No YouTube API calls or LLM calls happen here — it reads only from `data/`.
+
+## Tags
+
+Tags come from a fixed German vocabulary in `tags.py` — 161 entries in ten
+groups. The summarize prompt carries the list, and `tags.canonicalize()`
+enforces it: what is not on the list is not stored, but counted in
+`data/tag_candidates.json`.
+
+```bash
+python tags.py --list                    # the vocabulary by group
+python tags.py --candidates --min 3      # rejected suggestions seen 3+ times
+python tags.py --build-aliases --dry-run # what the alias builder would map
+python repair.py --remap-tags --dry-run  # what a store migration would change
+```
+
+The vocabulary grows deliberately: `--candidates` shows what the model keeps
+asking for, and adding an entry is a commit in `tags.py`. Nothing at runtime can
+extend it — that is what produced roughly 10 700 distinct tags before.
+
+`tag_aliases.json` maps old or off-list tags onto the vocabulary. It was built
+once by `--build-aliases` for the English tag history and stays in service as a
+net for the model's misses. `repair.py --remap-tags` applies vocabulary and
+aliases to the whole store; back up `data/videos.db` first, the write is in
+place and `data/` is gitignored.
 
 ## Usage — export archive
 
@@ -414,6 +438,7 @@ python repair.py --fix-links
 | `--fix-links` | Repair broken markup in stored summaries: summaries stored as a JSON object, unclosed hrefs and tags that swallow whole sentences, links showing a period instead of their timestamp, wrong `t=` offsets, anchors the model left open, missing `ts-link` class, `</p>` tags closed mid-sentence. No LLM calls — back up `data/summaries/` first, the rewrite is in place |
 | `--model MODEL_ID` | Override the model from `LLM_MODEL` / `OPENROUTER_MODEL` |
 | `--dry-run` | Print what would be done without writing anything |
+| `--remap-tags` | Rewrite stored tags through the controlled vocabulary in `tags.py` and `tag_aliases.json`. No LLM calls — back up `data/videos.db` first, the rewrite is in place |
 
 `country_blocked` videos are never re-fetched (permanent restriction).
 
@@ -485,13 +510,14 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 | `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
 | `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel/tag/read/bookmark filters, sort (publish date, date added, channel, title), and pagination |
-| `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries (also re-generates tags with `--force-summarize`) |
+| `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries (also re-generates tags with `--force-summarize`); `--remap-tags` rewrites stored tags through the controlled vocabulary and `tag_aliases.json`, no LLM calls |
 | `recover_from_export.py` | Restores store entries from a previously exported HTML file; inserts missing DB rows and summary files; leaves existing entries untouched; supports `--dry-run` |
-| `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html` |
+| `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html`; `update_tags()` writes only the tags column |
+| `tags.py` | Controlled German tag vocabulary (161 tags in ten groups) and the gate that enforces it: `canonicalize()` accepts an exact hit, a case-only difference, or a `tag_aliases.json` alias, rejects everything else, deduplicates and caps at `MAX_TAGS` (5); CLI: `--list`, `--candidates [--min N]`, `--build-aliases [--limit N] [--dry-run]` |
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling; on `ip_blocked` retries via proxy; on `country_blocked` retries with country-pinned proxy; `requests.exceptions.ProxyError` / `ConnectionError` caught and mapped to `unavailable`; logs proxy config on startup |
-| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns `(summary_html, tags)` tuple — structured HTML with chronological sections, proportional depth, and timestamp links, plus 3–7 English topic tags extracted from a `<!-- tags: ... -->` comment appended by the model; `max_tokens=16384`; rejects unusable output (`SummaryRejected`) when the response was truncated at the output cap or degenerated into a repetition loop, so the video is stored without a summary instead of with garbage; repairs timestamp links whose `t=` offset does not match the visible `MM:SS` label and anchors the model closed with the wrong tag |
+| `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns `(summary_html, tags)` tuple — structured HTML with chronological sections, proportional depth, and timestamp links, plus 3–5 tags extracted from a `<!-- tags: ... -->` comment appended by the model and run through `tags.canonicalize()`, so only entries from the controlled vocabulary are ever stored; `max_tokens=16384`; rejects unusable output (`SummaryRejected`) when the response was truncated at the output cap or degenerated into a repetition loop, so the video is stored without a summary instead of with garbage; repairs timestamp links whose `t=` offset does not match the visible `MM:SS` label and anchors the model closed with the wrong tag |
 | `renderer.py` | Jinja2 renderer; writes the final HTML report; accepts `lang=` kwarg; sanitizes summaries at render time to strip any trailing incomplete HTML tag (guards against LLM output truncated mid-tag) |
 | `i18n.py` | UI string dicts for `de` (default) and `en`; `get_strings()` and `resolve_lang()` helpers used by the renderer |
 | `template.html.j2` | Self-contained dark-theme HTML report template; read/bookmark buttons with state persisted in browser `localStorage`; all UI strings sourced from `i18n.py` via `{{ t.xxx }}` |
