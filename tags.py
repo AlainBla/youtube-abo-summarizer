@@ -15,6 +15,7 @@ filter time, where a tag is just a tag.
 import argparse
 import functools
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 VOCABULARY: dict[str, tuple[str, ...]] = {
@@ -264,6 +265,47 @@ def canonicalize(raw: list[str]) -> tuple[list[str], list[str]]:
     return kept[:MAX_TAGS], rejected
 
 
+CANDIDATES_PATH = Path(__file__).parent / "data" / "tag_candidates.json"
+
+
+def load_candidates() -> dict[str, dict]:
+    """Read the candidate log; an absent or damaged file reads as empty."""
+    if not CANDIDATES_PATH.exists():
+        return {}
+    try:
+        data = json.loads(CANDIDATES_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def record_candidates(rejected: list[str]) -> None:
+    """Count rejected tag suggestions so the vocabulary's gaps become visible.
+
+    Best effort on purpose: a summarize run must not fail because a log file
+    cannot be written. Written through a temp file so a killed process cannot
+    leave a truncated log behind.
+    """
+    if not rejected:
+        return
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    data = load_candidates()
+    for tag in rejected:
+        entry = data.setdefault(tag, {"count": 0, "last_seen": now})
+        entry["count"] += 1
+        entry["last_seen"] = now
+    try:
+        CANDIDATES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = CANDIDATES_PATH.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        tmp.replace(CANDIDATES_PATH)
+    except OSError:
+        pass
+
+
 def prompt_block() -> str:
     """Render the vocabulary for the system prompt: one line per group.
 
@@ -285,7 +327,33 @@ def _print_vocabulary() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Controlled German tag vocabulary.")
     parser.add_argument("--list", action="store_true", help="Print the vocabulary by group.")
+    parser.add_argument(
+        "--candidates",
+        action="store_true",
+        help="Print rejected tag suggestions by frequency (from data/tag_candidates.json).",
+    )
+    parser.add_argument(
+        "--min",
+        type=int,
+        default=1,
+        metavar="N",
+        help="With --candidates: only show suggestions seen at least N times (default 1).",
+    )
     args = parser.parse_args()
+    if args.candidates:
+        entries = [
+            (name, meta.get("count", 0), meta.get("last_seen", ""))
+            for name, meta in load_candidates().items()
+            if meta.get("count", 0) >= args.min
+        ]
+        if not entries:
+            print("Keine abgelehnten Vorschläge protokolliert.")
+            return
+        entries.sort(key=lambda e: (-e[1], e[0]))
+        for name, count, last_seen in entries:
+            print(f"{count:5d}  {name}  (zuletzt {last_seen})")
+        print(f"\n{len(entries)} Vorschläge, {sum(c for _, c, _ in entries)} Nennungen")
+        return
     if args.list:
         _print_vocabulary()
         return
