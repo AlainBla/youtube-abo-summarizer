@@ -44,3 +44,19 @@ def test_injected_transcript_cannot_close_delimiter_early():
     # Full transcript content must be enclosed
     assert "Legitimate start" in msg
     assert "INJECTED" in msg
+
+
+# ── SYSTEM_PROMPT must carry the controlled vocabulary ──────────────────────
+
+def test_prompt_contains_the_whole_vocabulary():
+    import tags
+    for tag in tags.ALL_TAGS:
+        assert tag in openrouter.SYSTEM_PROMPT
+
+
+def test_prompt_asks_for_three_to_five_tags_from_the_list():
+    assert "3–5" in openrouter.SYSTEM_PROMPT
+
+
+def test_prompt_no_longer_asks_for_english_tags():
+    assert "English topic tags" not in openrouter.SYSTEM_PROMPT

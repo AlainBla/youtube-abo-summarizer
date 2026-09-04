@@ -7,6 +7,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 import renderer
+import tags as tag_vocab
 
 load_dotenv()
 
@@ -48,9 +49,14 @@ seconds (e.g. [1:23] → t=83).
 
 After the HTML summary, append exactly one line in this format:
 <!-- tags: Tag1, Tag2, Tag3 -->
-List 3–7 concise English topic tags that best describe the video content.
-Use title case. No hashtags, no quotes. Always write this line in English,
-regardless of the summary language."""
+Choose 3–5 tags for the video and take them **only** from the list below. Write each
+one exactly as it appears there — same wording, same spelling, German. Never invent a
+tag, never translate one, never add a variation, no hashtags, no quotes. Prefer the
+general entry over none: a game title belongs under its genre, a company under its
+field. If fewer than three entries fit, name fewer. If none fits, leave the line empty
+after "tags:".
+
+{tag_vocab.prompt_block()}"""
 
 
 def build_client() -> OpenAI:
@@ -464,8 +470,12 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> t
     if choice.message.content is None:
         finish_reason = getattr(choice, "finish_reason", "unknown")
         raise ValueError(f"Model returned no content (finish_reason={finish_reason!r})")
-    html, tags = _clean_response(choice.message.content)
+    html, raw_tags = _clean_response(choice.message.content)
     _validate_summary(html, getattr(choice, "finish_reason", None))
+    # The prompt asks for vocabulary tags; canonicalize() is what enforces it.
+    # What the model still invents is counted for review, never stored.
+    kept_tags, rejected_tags = tag_vocab.canonicalize(raw_tags)
+    tag_vocab.record_candidates(rejected_tags)
     # Repair links before deduping — dedup compares t= values, which are only
     # meaningful once they have been recomputed from the labels.
-    return repair_summary_html(html), tags
+    return repair_summary_html(html), kept_tags
