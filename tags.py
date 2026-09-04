@@ -12,6 +12,8 @@ Groups exist for readability and for the prompt; they carry no meaning at
 filter time, where a tag is just a tag.
 """
 
+import argparse
+
 VOCABULARY: dict[str, tuple[str, ...]] = {
     "Spiele-Genres": (
         "Rollenspiel",
@@ -197,3 +199,35 @@ VOCABULARY: dict[str, tuple[str, ...]] = {
 }
 
 ALL_TAGS: frozenset[str] = frozenset(t for group in VOCABULARY.values() for t in group)
+
+
+def prompt_block() -> str:
+    """Render the vocabulary for the system prompt: one line per group.
+
+    Grouping costs a few tokens and buys the model a map of the space, which
+    makes it pick a neighbouring tag instead of inventing one.
+    """
+    return "\n".join(
+        f"{group}: {', '.join(entries)}" for group, entries in VOCABULARY.items()
+    )
+
+
+def _print_vocabulary() -> None:
+    for group, entries in VOCABULARY.items():
+        print(f"\n{group} ({len(entries)})")
+        print("  " + " · ".join(entries))
+    print(f"\n{len(ALL_TAGS)} Tags in {len(VOCABULARY)} Gruppen")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Controlled German tag vocabulary.")
+    parser.add_argument("--list", action="store_true", help="Print the vocabulary by group.")
+    args = parser.parse_args()
+    if args.list:
+        _print_vocabulary()
+        return
+    parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
