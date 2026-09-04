@@ -13,6 +13,9 @@ filter time, where a tag is just a tag.
 """
 
 import argparse
+import functools
+import json
+from pathlib import Path
 
 VOCABULARY: dict[str, tuple[str, ...]] = {
     "Spiele-Genres": (
@@ -199,6 +202,66 @@ VOCABULARY: dict[str, tuple[str, ...]] = {
 }
 
 ALL_TAGS: frozenset[str] = frozenset(t for group in VOCABULARY.values() for t in group)
+
+
+MAX_TAGS = 5
+
+ALIASES_PATH = Path(__file__).parent / "tag_aliases.json"
+
+# Lookup for tags that differ from a vocabulary entry only in case.
+_LOWER_INDEX: dict[str, str] = {t.lower(): t for t in ALL_TAGS}
+
+
+@functools.lru_cache(maxsize=1)
+def load_aliases() -> dict[str, list[str]]:
+    """Read the alias table: old tag (lowercased) → canonical tags.
+
+    Targets that are not in the vocabulary are dropped here rather than
+    trusted, so a stale or hand-edited table can never smuggle a tag in. A
+    missing file is normal — before the migration there is none.
+    """
+    if not ALIASES_PATH.exists():
+        return {}
+    try:
+        raw = json.loads(ALIASES_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    clean: dict[str, list[str]] = {}
+    for old, targets in raw.items():
+        if isinstance(targets, list):
+            clean[old.lower()] = [t for t in targets if t in ALL_TAGS]
+    return clean
+
+
+def canonicalize(raw: list[str]) -> tuple[list[str], list[str]]:
+    """Reduce raw tag suggestions to the controlled vocabulary.
+
+    Returns (kept, rejected). Kept tags are deduplicated, keep the order of
+    their first appearance and are cut at MAX_TAGS. Rejected raw tags are
+    handed back for the candidate log — an alias that deliberately maps to
+    nothing is not among them.
+    """
+    aliases = load_aliases()
+    kept: list[str] = []
+    rejected: list[str] = []
+    for tag in raw:
+        cleaned = tag.strip()
+        if not cleaned:
+            continue
+        lower = cleaned.lower()
+        if cleaned in ALL_TAGS:
+            targets = [cleaned]
+        elif lower in _LOWER_INDEX:
+            targets = [_LOWER_INDEX[lower]]
+        elif lower in aliases:
+            targets = aliases[lower]
+        else:
+            rejected.append(cleaned)
+            continue
+        for target in targets:
+            if target not in kept:
+                kept.append(target)
+    return kept[:MAX_TAGS], rejected
 
 
 def prompt_block() -> str:
