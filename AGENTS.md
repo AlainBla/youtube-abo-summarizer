@@ -42,7 +42,7 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 ### Store
 - `data/videos.db` — SQLite; schema in `store.py`; `tags` column is a JSON array (`TEXT`)
 - `store.get_video(video_id)` returns a dict with `has_transcript` and `has_summary` flags (file-existence checks)
-- `store.add_video()` and `store.update_video_with_summary()` accept a `tags=` list kwarg; `store.update_tags()` writes only the tags column (the other two would also reset `transcript_error`/`summary_model`)
+- `store.add_video()` and `store.update_video_with_summary()` accept a `tags=` list kwarg; `store.update_tags()` writes only the tags column (`update_video_with_summary()` would also overwrite `transcript_error`/`summary_model`)
 - All store read helpers deserialise `tags` to `list[str]` (empty list when `NULL`)
 
 ### LLM client

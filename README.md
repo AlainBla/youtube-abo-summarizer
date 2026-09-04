@@ -134,7 +134,7 @@ python repair.py --remap-tags --dry-run  # what a store migration would change
 
 The vocabulary grows deliberately: `--candidates` shows what the model keeps
 asking for, and adding an entry is a commit in `tags.py`. Nothing at runtime can
-extend it — that is what produced roughly 10 700 distinct tags before.
+extend it — that is what produced 10 700 distinct tags before.
 
 `tag_aliases.json` maps old or off-list tags onto the vocabulary. It was built
 once by `--build-aliases` for the English tag history and stays in service as a
@@ -513,7 +513,7 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 | `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries (also re-generates tags with `--force-summarize`); `--remap-tags` rewrites stored tags through the controlled vocabulary and `tag_aliases.json`, no LLM calls |
 | `recover_from_export.py` | Restores store entries from a previously exported HTML file; inserts missing DB rows and summary files; leaves existing entries untouched; supports `--dry-run` |
 | `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html`; `update_tags()` writes only the tags column |
-| `tags.py` | Controlled German tag vocabulary (161 tags in ten groups) and the gate that enforces it: `canonicalize()` accepts an exact hit, a case-only difference, or a `tag_aliases.json` alias, rejects everything else, deduplicates and caps at `MAX_TAGS` (5); CLI: `--list`, `--candidates [--min N]`, `--build-aliases [--limit N] [--dry-run]` |
+| `tags.py` | Controlled German tag vocabulary (161 tags in ten groups) and the gate that enforces it: `canonicalize()` accepts an exact hit, a case-only difference, or a `tag_aliases.json` alias, rejects everything else, deduplicates and caps at `MAX_TAGS` (5); CLI: `--list`, `--candidates [--min N]`, `--build-aliases [--limit N] [--model M] [--dry-run]` |
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling; on `ip_blocked` retries via proxy; on `country_blocked` retries with country-pinned proxy; `requests.exceptions.ProxyError` / `ConnectionError` caught and mapped to `unavailable`; logs proxy config on startup |
