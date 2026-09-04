@@ -13,10 +13,17 @@ filter time, where a tag is just a tag.
 """
 
 import argparse
+import collections
 import functools
 import json
+import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 VOCABULARY: dict[str, tuple[str, ...]] = {
     "Spiele-Genres": (
@@ -317,6 +324,133 @@ def prompt_block() -> str:
     )
 
 
+ALIAS_BATCH = 100
+
+# At most two vocabulary entries per old tag: three or more turn every video
+# into a wall of chips and defeat the point of a small vocabulary.
+_MAX_ALIAS_TARGETS = 2
+
+
+def parse_alias_response(text: str, batch: list[str]) -> dict[str, list[str]]:
+    """Read one batch's mapping out of the model's answer.
+
+    Everything unverifiable is dropped rather than trusted: targets outside the
+    vocabulary, keys that were not asked for, values that are not lists. A term
+    the model skipped is simply absent from the result, which leaves it in the
+    queue for a later run instead of silently marking it unmappable.
+    """
+    cleaned = re.sub(r"^```[a-zA-Z]*\s*\n?", "", text.strip())
+    cleaned = re.sub(r"\n?```\s*$", "", cleaned).strip()
+    try:
+        raw = json.loads(cleaned)
+    except ValueError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    asked = set(batch)
+    mapping: dict[str, list[str]] = {}
+    for old, targets in raw.items():
+        if old not in asked or not isinstance(targets, list):
+            continue
+        seen: list[str] = []
+        for target in targets:
+            if isinstance(target, str) and target in ALL_TAGS and target not in seen:
+                seen.append(target)
+        mapping[old] = seen[:_MAX_ALIAS_TARGETS]
+    return mapping
+
+
+_ALIAS_SYSTEM_PROMPT = """Du ordnest alte, frei erfundene Video-Tags einem festen deutschen Tag-Vokabular zu.
+
+Für jeden vorgelegten Tag nennst du die Vokabular-Einträge, die dasselbe Thema bezeichnen —
+höchstens zwei, und ausschließlich Einträge, die unten wörtlich vorkommen.
+Ein Eigenname (Spieltitel, Firma, Person, einzelner Ort) wird dem allgemeinen Thema
+zugeordnet, zu dem er gehört: ein Spieltitel seinem Genre, eine Firma ihrem Feld, ein
+Ort der Region oder dem Konflikt. Passt nichts, antworte mit einer leeren Liste.
+
+Antworte mit genau einem JSON-Objekt: {{"alter Tag": ["Vokabular-Tag", ...], ...}}
+Kein Prosatext, kein Code-Fence, keine Erklärung.
+
+Vokabular:
+{vocabulary}"""
+
+
+def stored_tags() -> list[str]:
+    """Every distinct tag currently in the store, most frequent first.
+
+    Frequent terms first means a run cut short by --limit has mapped the tags
+    that matter for the most videos.
+    """
+    import store
+
+    counter: collections.Counter[str] = collections.Counter()
+    for entry in store.get_all_videos(with_transcripts=False):
+        counter.update(entry.get("tags") or [])
+    return [tag for tag, _count in counter.most_common()]
+
+
+def _read_aliases_raw() -> dict[str, list[str]]:
+    """The alias file as written, original spelling of the keys preserved."""
+    if not ALIASES_PATH.exists():
+        return {}
+    try:
+        data = json.loads(ALIASES_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_aliases(mapping: dict[str, list[str]]) -> None:
+    tmp = ALIASES_PATH.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps(mapping, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    tmp.replace(ALIASES_PATH)
+    load_aliases.cache_clear()
+
+
+def build_aliases(limit: int | None, dry_run: bool, model: str) -> None:
+    """Extend tag_aliases.json by mapping unmapped store tags onto the vocabulary.
+
+    Maps the vocabulary, not the videos: one pass over the distinct old tags
+    instead of 5209 summarize runs. Writes after every batch, so an abort costs
+    nothing and the next run continues where this one stopped.
+    """
+    import openrouter          # local import: openrouter imports this module
+
+    known = {key.lower() for key in _read_aliases_raw()}
+    todo = [t for t in stored_tags() if t not in ALL_TAGS and t.lower() not in known]
+    if limit:
+        todo = todo[:limit]
+    batches = [todo[i : i + ALIAS_BATCH] for i in range(0, len(todo), ALIAS_BATCH)]
+    print(f"{len(todo)} unzugeordnete Tags in {len(batches)} Stapel(n) à {ALIAS_BATCH}")
+    if dry_run:
+        print("(dry-run — keine Modellaufrufe, keine Änderungen)")
+        return
+    if not todo:
+        return
+
+    client = openrouter.build_client()
+    system = _ALIAS_SYSTEM_PROMPT.format(vocabulary=prompt_block())
+    mapping = _read_aliases_raw()
+    for number, batch in enumerate(batches, start=1):
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": "\n".join(batch)},
+            ],
+            max_tokens=4096,
+        )
+        content = response.choices[0].message.content or ""
+        result = parse_alias_response(content, batch)
+        mapping.update(result)
+        _write_aliases(mapping)
+        print(f"  Stapel {number}/{len(batches)}: {len(result)} von {len(batch)} zugeordnet")
+    print(f"\nFertig. {len(mapping)} Einträge in {ALIASES_PATH.name}.")
+
+
 def _print_vocabulary() -> None:
     for group, entries in VOCABULARY.items():
         print(f"\n{group} ({len(entries)})")
@@ -339,7 +473,38 @@ def main() -> None:
         metavar="N",
         help="With --candidates: only show suggestions seen at least N times (default 1).",
     )
+    parser.add_argument(
+        "--build-aliases",
+        action="store_true",
+        help="Map unmapped store tags onto the vocabulary via the LLM and write tag_aliases.json.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="With --build-aliases: only process the N most frequent unmapped tags.",
+    )
+    parser.add_argument(
+        "--model",
+        metavar="MODEL_ID",
+        default=None,
+        help="With --build-aliases: model to use (defaults to LLM_MODEL / OPENROUTER_MODEL).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --build-aliases: report what would be sent without calling the model.",
+    )
     args = parser.parse_args()
+    if args.build_aliases:
+        model = (
+            args.model
+            or os.environ.get("LLM_MODEL")
+            or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
+        )
+        build_aliases(args.limit, args.dry_run, model)
+        return
     if args.candidates:
         entries = [
             (name, meta.get("count", 0), meta.get("last_seen", ""))
