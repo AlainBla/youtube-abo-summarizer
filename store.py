@@ -118,7 +118,7 @@ def add_video(entry: dict) -> bool:
         tags (list[str]|None), collected_at (ISO str).
     """
     tags = entry.get("tags")
-    tags_json = json.dumps(tags) if tags else None
+    tags_json = json.dumps(tags, ensure_ascii=False) if tags else None
     with _conn() as c:
         try:
             c.execute(
@@ -164,7 +164,7 @@ def update_video_with_summary(
     Callers that have a lang_code should always pass transcript_lang= to ensure the
     lang-suffixed file is written and _resolve_transcript_path returns fresh content.
     """
-    tags_json = json.dumps(tags) if tags else None
+    tags_json = json.dumps(tags, ensure_ascii=False) if tags else None
     with _conn() as c:
         c.execute(
             """UPDATE videos
@@ -179,6 +179,20 @@ def update_video_with_summary(
         (TRANSCRIPTS_DIR / fname).write_text(transcript, encoding="utf-8")
     if summary is not None:
         (SUMMARIES_DIR / f"{video_id}.html").write_text(summary, encoding="utf-8")
+
+
+def update_tags(video_id: str, tags: list[str]) -> None:
+    """Replace a video's tags and nothing else.
+
+    update_video_with_summary() cannot serve here: it writes transcript_error
+    and summary_model unconditionally, so a tags-only call would reset both
+    columns to NULL.
+    """
+    with _conn() as c:
+        c.execute(
+            "UPDATE videos SET tags = ? WHERE video_id = ?",
+            (json.dumps(tags, ensure_ascii=False) if tags else None, video_id),
+        )
 
 
 def get_videos_since(since: datetime, with_transcripts: bool = True) -> list[dict]:
