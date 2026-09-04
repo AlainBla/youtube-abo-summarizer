@@ -24,6 +24,10 @@ Usage:
   # Repair broken markup in stored summaries: timestamp links, stray </p> (no LLM calls)
   python repair.py --fix-links --dry-run
   python repair.py --fix-links
+
+  # Rewrite stored tags through the controlled vocabulary (no LLM calls)
+  python repair.py --remap-tags --dry-run
+  python repair.py --remap-tags
 """
 
 import argparse
