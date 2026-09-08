@@ -180,8 +180,10 @@ def repair_summary_html(html: str) -> str:
         _drop_stray_paragraph_ends(
             _fix_timestamp_links(
                 renderer._relabel_unlabelled_ts_links(
-                    renderer._close_unterminated_ts_tags(
-                        renderer._repair_broken_ts_links(unwrapped)
+                    renderer._close_labelless_ts_links(
+                        renderer._close_unterminated_ts_tags(
+                            renderer._repair_broken_ts_links(unwrapped)
+                        )
                     )
                 )
             )

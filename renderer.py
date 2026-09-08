@@ -139,6 +139,36 @@ def _close_unterminated_ts_tags(html: str) -> str:
     return _UNTERMINATED_TAG_RE.sub(close, html)
 
 
+# An anchor the model opened and never closed: the tag itself is complete, but
+# no label and no </a> follow — the sentence simply runs on. An HTML parser then
+# ends the link at the next tag, so whole sentences render in link styling. The
+# two lookaheads spare the anchors other passes own: one whose content already
+# reads as a timestamp label is either fine or closed with the wrong tag, which
+# is _fix_timestamp_links()' business, and an empty or punctuation label that
+# does close belongs to _relabel_unlabelled_ts_links().
+_LABELLESS_TS_LINK_RE = re.compile(
+    r'<a\s+href="(?P<url>https?://[^"<>\s]*?t=)(?P<time>\d+(?::\d{2}){0,2})"'
+    r'(?P<attrs>[^>]*)>'
+    r'(?!\s*\[?\d{1,2}:\d{2}(?::\d{2})?\]?\s*<)'
+    r'(?![^<]{0,40}</a>)'
+)
+
+
+def _close_labelless_ts_links(html: str) -> str:
+    """Give an anchor that was opened and left open its label and closing tag.
+
+    The timestamp in the href is the label the model owed, so the anchor closes
+    right where it should have, and the sentence that followed stays prose.
+    """
+    def close(m: re.Match) -> str:
+        seconds = _colon_time_to_seconds(m.group("time"))
+        return (
+            f'<a href="{m.group("url")}{seconds}" class="ts-link">'
+            f'{_seconds_to_label(seconds)}</a>'
+        )
+    return _LABELLESS_TS_LINK_RE.sub(close, html)
+
+
 # A timestamp anchor with no timestamp in it: the model used the sentence's
 # period as the link text, or left the text empty. Beyond looking wrong, such an
 # anchor keeps whatever the model wrote into t= — often the M:SS value, which
@@ -195,7 +225,7 @@ def _sanitize_summary(html: str | None) -> str | None:
     1. Broken-timestamp-anchor repair — rebuilds <a href="...t=M:SS</a> tags
        that the LLM emitted without the closing quote and link text, and gives
        anchors whose text is the sentence's period (or nothing) their timestamp
-       label back.
+       label back, and closes anchors that were opened and left open.
     2. nh3.clean() — allowlist-based HTML sanitizer; removes all tags/attributes
        not on the allowlist, strips javascript: URIs, and cleans event handlers.
     3. Trailing-tag fix — removes any trailing '<...' left by LLM truncation so
@@ -205,8 +235,10 @@ def _sanitize_summary(html: str | None) -> str | None:
         return html
     # Stage 1: repair LLM-truncated timestamp anchors and JSON-escaped quotes
     repaired = _relabel_unlabelled_ts_links(
-        _close_unterminated_ts_tags(
-            _repair_broken_ts_links(_repair_escaped_attr_quotes(html))
+        _close_labelless_ts_links(
+            _close_unterminated_ts_tags(
+                _repair_broken_ts_links(_repair_escaped_attr_quotes(html))
+            )
         )
     )
     # Stage 2: allowlist-based XSS sanitization

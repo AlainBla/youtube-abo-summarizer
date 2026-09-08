@@ -435,7 +435,7 @@ python repair.py --fix-links
 |---|---|
 | `--video ID,ID,...` | Restrict to specific video IDs (comma-separated) |
 | `--force-summarize` | Re-summarize even if a summary already exists; also re-generates tags |
-| `--fix-links` | Repair broken markup in stored summaries: summaries stored as a JSON object, unclosed hrefs and tags that swallow whole sentences, links showing a period instead of their timestamp, wrong `t=` offsets, anchors the model left open, missing `ts-link` class, `</p>` tags closed mid-sentence. No LLM calls — back up `data/summaries/` first, the rewrite is in place |
+| `--fix-links` | Repair broken markup in stored summaries: summaries stored as a JSON object, unclosed hrefs and tags that swallow whole sentences, anchors left open so a sentence renders as a link, links showing a period instead of their timestamp, wrong `t=` offsets, anchors the model left open, missing `ts-link` class, `</p>` tags closed mid-sentence. No LLM calls — back up `data/summaries/` first, the rewrite is in place |
 | `--model MODEL_ID` | Override the model from `LLM_MODEL` / `OPENROUTER_MODEL` |
 | `--dry-run` | Print what would be done without writing anything |
 | `--remap-tags` | Rewrite stored tags through the controlled vocabulary in `tags.py` and `tag_aliases.json`. No LLM calls — back up `data/videos.db` first, the rewrite is in place |
