@@ -212,7 +212,7 @@ VOCABULARY: dict[str, tuple[str, ...]] = {
 ALL_TAGS: frozenset[str] = frozenset(t for group in VOCABULARY.values() for t in group)
 
 
-MAX_TAGS = 5
+MAX_TAGS = 3
 
 ALIASES_PATH = Path(__file__).parent / "tag_aliases.json"
 

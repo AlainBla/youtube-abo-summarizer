@@ -54,8 +54,15 @@ def test_prompt_contains_the_whole_vocabulary():
         assert tag in openrouter.SYSTEM_PROMPT
 
 
-def test_prompt_asks_for_three_to_five_tags_from_the_list():
-    assert "3–5" in openrouter.SYSTEM_PROMPT
+def test_prompt_asks_for_at_most_three_tags_from_the_list():
+    assert "2–3" in openrouter.SYSTEM_PROMPT
+
+
+def test_prompt_and_gate_agree_on_the_cap():
+    """A prompt that asks for more than canonicalize() keeps would have the cut
+    decide, not the model."""
+    import tags
+    assert tags.MAX_TAGS == 3
 
 
 def test_prompt_no_longer_asks_for_english_tags():

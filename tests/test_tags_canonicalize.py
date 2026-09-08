@@ -73,7 +73,7 @@ def test_duplicates_collapse_and_keep_first_order(aliases):
     )
 
 
-def test_more_than_five_tags_are_cut(aliases):
+def test_more_tags_than_the_cap_are_cut(aliases):
     raw = ["Gaming", "Indie-Spiele", "Retro-Gaming", "Spieletest", "Nintendo", "Steam"]
     kept, rejected = tags.canonicalize(raw)
     assert kept == raw[: tags.MAX_TAGS]

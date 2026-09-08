@@ -49,12 +49,13 @@ seconds (e.g. [1:23] → t=83).
 
 After the HTML summary, append exactly one line in this format:
 <!-- tags: Tag1, Tag2, Tag3 -->
-Choose 3–5 tags for the video and take them **only** from the list below. Write each
+Choose 2–3 tags for the video and take them **only** from the list below. Write each
 one exactly as it appears there — same wording, same spelling, German. Never invent a
-tag, never translate one, never add a variation, no hashtags, no quotes. Prefer the
-general entry over none: a game title belongs under its genre, a company under its
-field. If fewer than three entries fit, name fewer. If none fits, leave the line empty
-after "tags:".
+tag, never translate one, never add a variation, no hashtags, no quotes. Name the
+entries that describe what the video is about, most fitting first — only three are
+kept. Prefer the general entry over none: a game title belongs under its genre, a
+company under its field. If only one entry fits, name one. If none fits, leave the
+line empty after "tags:".
 
 {tag_vocab.prompt_block()}"""
 
