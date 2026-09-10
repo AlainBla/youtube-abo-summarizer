@@ -290,6 +290,15 @@ def _validate_summary(html: str, finish_reason: str | None) -> None:
         raise SummaryRejected(
             f"Summary degenerated into a repetition loop ({m.group(1)!r} repeated)"
         )
+    # A well-formed summary is a sequence of <p>/<h3> blocks and always ends on
+    # a closing '>'. A model that stops mid-sentence (finish_reason "stop", not
+    # "length" — e.g. 0AZv6Jp4LmQ, gemma-3-27b-it) leaves trailing prose after
+    # the last tag, which the length check above does not catch.
+    stripped = html.rstrip()
+    if stripped and not stripped.endswith(">"):
+        raise SummaryRejected(
+            "Summary ends mid-sentence, not on a closing tag — looks truncated"
+        )
 
 
 def _clean_response(content: str) -> tuple[str, list[str]]:

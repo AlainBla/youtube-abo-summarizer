@@ -45,3 +45,20 @@ def test_real_degenerate_summary_shape_is_rejected():
     """The exact shape that broke T0oY6gr5oHM and B870YxMs-Gs."""
     with pytest.raises(SummaryRejected):
         openrouter._validate_summary(("our " * 16384).strip(), "length")
+
+
+def test_mid_sentence_cutoff_is_rejected():
+    """The shape that broke 0AZv6Jp4LmQ: finish_reason 'stop', but the model
+    stopped generating mid-sentence rather than hitting the output cap."""
+    with pytest.raises(SummaryRejected, match="truncated"):
+        openrouter._validate_summary(
+            "<h3>A</h3>\n<p>Ein Satz, der einfach mittendrin aufhört und das",
+            "stop",
+        )
+
+
+def test_summary_ending_on_closing_tag_passes():
+    openrouter._validate_summary(
+        '<p>Satz mit <a href="https://x/y&t=0" class="ts-link">00:00</a>.</p>',
+        "stop",
+    )
