@@ -73,3 +73,47 @@ def test_both_export_scripts_warn_when_sync_url_is_unset():
         sh = _read(name)
         assert 'if [ -z "$SYNC_URL" ]' in sh, name
         assert "WARNING: SYNC_URL is unset" in sh, name
+
+
+def test_collect_sh_skips_oauth_without_a_token():
+    """build_service() opens a browser flow when the token is gone, and that
+    blocks forever under cron. The script must not even start that run."""
+    sh = _read("collect.sh")
+    assert 'if [ -f "$REPO/token.pickle" ]' in sh
+    assert "EXIT_AUTH_FAILED=11" in sh, "collect.sh must pin the code it falls back on"
+
+
+def test_collect_sh_falls_back_to_the_channel_list():
+    sh = _read("collect.sh")
+    fallback = [ln for ln in sh.splitlines() if "collect.py --file" in ln]
+    assert fallback, "collect.sh no longer has a channel-file fallback"
+    line = fallback[0]
+    assert '"$CHANNELS_FILE"' in line, "the fallback path belongs in cron.env, not in the script"
+    # Under `set -e` an unguarded non-zero exit kills the script before the export.
+    assert "|| rc=$?" in line
+    assert 'if [ -f "$CHANNELS_FILE" ]' in sh, "a missing channel list must not be run into blindly"
+    assert "rc=0" in sh.split('if [ -f "$CHANNELS_FILE" ]')[1].split("collect.py --file")[0], \
+        "rc must be reset before the fallback, or a successful fallback still exits 11"
+
+
+def test_collect_sh_bounds_every_run_with_a_timeout():
+    sh = _read("collect.sh")
+    runs = [ln for ln in sh.splitlines() if "collect.py" in ln and "python" in ln]
+    assert runs, "no collect.py invocation left"
+    for line in runs:
+        assert "timeout" in line, f"unbounded run: {line.strip()}"
+    assert "EXIT_TIMEOUT=124" in sh
+    # `timeout -k` reports 137 when the process ignored TERM and had to be
+    # killed -- exactly the run that is stuck, so it must count as a timeout too.
+    assert "EXIT_KILLED=137" in sh
+    assert '-eq "$EXIT_KILLED"' in sh
+    # A timed-out subscription run is the hang we cannot otherwise detect;
+    # it has to reach the fallback rather than end the script.
+    assert "rc=$EXIT_AUTH_FAILED" in sh
+
+
+def test_collect_sh_logs_why_it_fell_back():
+    sh = _read("collect.sh")
+    assert "WARNING: token.pickle is missing" in sh
+    assert "WARNING: OAuth unusable" in sh
+    assert "ERROR: OAuth unusable" in sh

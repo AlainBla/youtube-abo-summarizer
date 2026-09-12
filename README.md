@@ -493,6 +493,8 @@ Each report script activates the virtual environment, renders the HTML, sends th
 exits with code `10` in that case (`0` when it ran fine but added nothing), and the script chains the
 export onto that code.
 
+It also survives a broken OAuth setup. Every run is bounded by `timeout -k 30s $COLLECT_TIMEOUT` (default 30 minutes), and when `token.pickle` is missing the subscription run is skipped outright — without a usable token `build_service()` opens a browser prompt that under cron blocks forever instead of failing. On exit code `11` (`EXIT_AUTH_FAILED`: no usable token, a refused refresh, a 401 on `subscriptions.list`, or an account with no subscriptions) — and on a timeout of the subscription run — the collection is repeated from `$CHANNELS_FILE`, one `UC...` ID per line, which needs neither token nor quota. A missing channel file is logged as an error and leaves the run failed rather than silently doing nothing. Exhausted API quota (403) does **not** trigger the fallback, and neither does a network failure: those stay exit `1`, because a blip must not cost a second full pass over every channel.
+
 Host-specific settings do not live in the scripts — copy `cron.env.example` to `cron.env` (gitignored)
 next to them and fill it in:
 
@@ -501,6 +503,8 @@ next to them and fill it in:
 | `EXPORT_OUTPUT` | `collect.sh`, `ingest_worker.sh` | Where the archive is written; must be the file the web server serves, because the export bakes its basename into the page as the update-manifest URL. Default: `<repo>/yt.html` |
 | `SYNC_URL` | `collect.sh`, `ingest_worker.sh` | Sync server base URL embedded into the archive. Leave it unset and the export drops the sync UI entirely — no login, no account display, no ingest button; the scripts log a warning in that case |
 | `DIGEST_TO` | `run_*.sh` | Recipient of the digest mails; the scripts abort when it is unset |
+| `CHANNELS_FILE` | `collect.sh` | Channel list used when OAuth is unusable: one `UC...` ID per line, `#` comments at column 0 only. Default: `<repo>/channels.txt`, which is gitignored — put it on the host by hand |
+| `COLLECT_TIMEOUT` | `collect.sh` | Upper bound per collect run, any `timeout` duration. Default: `30m`. Raise it while a large backlog is being worked off |
 
 The scripts source `cron.env`, so an assignment there wins over a variable set in the crontab line.
 

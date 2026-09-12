@@ -15,6 +15,30 @@ CLIENT_SECRETS = os.path.join(os.path.dirname(__file__), "client_secrets.json")
 TOKEN_FILE = os.path.join(os.path.dirname(__file__), "token.pickle")
 
 
+def has_usable_token() -> bool:
+    """True when build_service() can proceed without opening a browser.
+
+    Mirrors the decision build_service() makes below: valid credentials are
+    fine, expired ones with a refresh_token are fine (the refresh either works
+    or raises RefreshError, which a caller can act on), and everything else
+    ends up in InstalledAppFlow.run_local_server() -- a browser prompt with
+    nobody to answer it under cron, which blocks forever instead of failing.
+    Cheap and side-effect free: no network, no token rewrite.
+    """
+    if not os.path.exists(TOKEN_FILE):
+        return False
+    try:
+        # trusted local file: written only by this app's own pickle.dump()
+        with open(TOKEN_FILE, "rb") as f:
+            creds = pickle.load(f)
+    except Exception:  # noqa: BLE001 - any unreadable token is an unusable one
+        return False
+
+    if getattr(creds, "valid", False):
+        return True
+    return bool(getattr(creds, "expired", False) and getattr(creds, "refresh_token", None))
+
+
 def build_service():
     creds = None
     if os.path.exists(TOKEN_FILE):

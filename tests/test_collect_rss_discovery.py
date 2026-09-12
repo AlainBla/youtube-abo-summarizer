@@ -182,10 +182,24 @@ def test_a_handle_still_goes_through_the_api(monkeypatch):
     ]
 
 
-def test_a_channel_id_the_feed_cannot_resolve_falls_back_to_the_api(monkeypatch):
+def test_a_channel_id_the_feed_cannot_resolve_still_skips_the_api(monkeypatch):
+    # The identifier already is the channel_id; only the title is missing, and
+    # that is cosmetic. search.list would cost 100 quota units for it -- and in
+    # a token-less fallback run there are no credentials to spend anyway.
     monkeypatch.setattr(collect.feeds, "get_channel", lambda cid, no_proxy=False: None)
-    monkeypatch.setattr(collect, "resolve_channel_id", lambda service, ident: {"channel_id": ident, "title": "Via API"})
+    monkeypatch.setattr(collect, "resolve_channel_id", lambda *a, **k: pytest.fail("API called for a UC id"))
 
-    assert collect._resolve_identifiers([CHANNEL], lambda: object()) == [
-        {"channel_id": CHANNEL, "title": "Via API"}
+    assert collect._resolve_identifiers([CHANNEL], _exploding_service()) == [
+        {"channel_id": CHANNEL, "title": CHANNEL}
     ]
+
+
+def test_a_channel_without_credentials_is_skipped_not_fatal(monkeypatch):
+    # A fallback run has no usable token: one channel whose feed fails must not
+    # take the whole run down with it.
+    monkeypatch.setattr(collect.feeds, "get_new_videos_rss", lambda *a, **k: None)
+
+    def get_service():
+        raise RuntimeError("kein brauchbares token.pickle")
+
+    assert collect._discover_videos(CHANNEL, SINCE, get_service) == []

@@ -38,6 +38,9 @@ import transcripts as tr
 import openrouter
 import ytdlp_meta
 import feeds
+from google.auth.exceptions import RefreshError
+
+import youtube_client
 from youtube_client import build_service, get_subscribed_channels, get_new_videos, get_video_durations, resolve_channel_id, get_video_by_id
 
 load_dotenv()
@@ -51,9 +54,37 @@ _SHORTS_DEFAULT_MAX_SECONDS = 180
 # Distinct from 0 (ran fine, nothing new) and 1 (failed).
 EXIT_NEW_VIDEOS = 10
 
+# Exit code telling the caller that OAuth is unusable: no credentials, a token
+# that cannot be refreshed, or a 401 on subscriptions.list. collect.sh answers
+# it by re-running from a channel file, which needs neither token nor quota.
+# It is not a "try again later" code -- a network blip or an exhausted quota
+# must not trigger a second full pass over every channel, so those stay 1.
+EXIT_AUTH_FAILED = 11
+
 
 def _exit_code(added: int) -> int:
     return EXIT_NEW_VIDEOS if added else 0
+
+
+def _is_auth_failure(exc: BaseException) -> bool:
+    """True when `exc` means "these credentials cannot work", not "try again".
+
+    Deliberately narrow. A 403 is never matched: quotaExceeded,
+    rateLimitExceeded and dailyLimitExceeded all arrive as 403 and are not auth
+    problems, and SCOPES is hardcoded, so a scope regression is not a realistic
+    failure. OSError is not matched either -- socket.gaierror,
+    ConnectionRefusedError and TimeoutError are all subclasses of it, and a DNS
+    outage reported as an auth failure would send every run down the fallback.
+    """
+    if isinstance(exc, RefreshError):
+        # A 5xx from Google's token endpoint sets retryable: transport, not auth.
+        return not getattr(exc, "retryable", False)
+    if isinstance(exc, (FileNotFoundError, PermissionError)):
+        # client_secrets.json missing, or token.pickle unreadable.
+        return True
+    if isinstance(exc, HttpError):
+        return getattr(exc, "status_code", None) == 401
+    return False
 
 
 def _parse_duration_seconds(duration: str | None) -> int | None:
@@ -253,7 +284,11 @@ def _discover_videos(channel_id: str, since: datetime, get_service, use_rss: boo
             return videos
         print("    RSS-Feed konnte nicht antworten — YouTube API für diesen Kanal.", file=sys.stderr)
 
-    service = get_service()
+    try:
+        service = get_service()
+    except Exception as exc:  # noqa: BLE001 - no credentials skips a channel, not the run
+        print(f"    YouTube API nicht verfügbar ({exc}) — Kanal in diesem Lauf übersprungen.", file=sys.stderr)
+        return []
     videos = get_new_videos(service, channel_id, since)
     if videos:
         durations = get_video_durations(service, [v["video_id"] for v in videos])
@@ -274,6 +309,13 @@ def _resolve_identifiers(identifiers: list[str], get_service, no_proxy: bool = F
         resolved = None
         if ident.startswith("UC") and len(ident) == 24:
             resolved = feeds.get_channel(ident, no_proxy=no_proxy)
+        if not resolved and ident.startswith("UC") and len(ident) == 24:
+            # The identifier already is the channel_id; only the title is
+            # missing, and that is cosmetic. Going to search.list for it would
+            # cost 100 quota units -- and in a fallback run there may be no
+            # usable credentials at all.
+            print(f"    [rss] {ident}: Kanalname nicht ermittelbar, ID wird angezeigt.", file=sys.stderr)
+            resolved = {"channel_id": ident, "title": ident}
         if not resolved:
             resolved = resolve_channel_id(get_service(), ident)
         if resolved:
@@ -283,18 +325,27 @@ def _resolve_identifiers(identifiers: list[str], get_service, no_proxy: bool = F
     return channels
 
 
-def _lazy_service():
+def _lazy_service(require_token: bool = False):
     """Return a getter that builds the YouTube API service on first use.
 
-    The single-video path prefers yt-dlp and usually never touches the API.
-    Building the service up front would still demand credentials -- and with an
-    expired token that means an interactive OAuth flow, which under cron is a
-    worker hanging until someone notices.
+    The feed and yt-dlp paths usually never touch the API. Building the service
+    up front would still demand credentials -- and with a missing or stale
+    token that means an interactive OAuth flow, which under cron is a worker
+    hanging until someone notices.
+
+    `require_token` refuses to even try when the credentials on disk would open
+    that flow. Runs that were never meant to authorise anything (--file,
+    --video, explicit channels) set it; --auth does not, because the first,
+    interactive authorisation run has to keep working in a terminal.
     """
     cached = []
 
     def get():
         if not cached:
+            if require_token and not youtube_client.has_usable_token():
+                raise RuntimeError(
+                    "kein brauchbares token.pickle — YouTube API nicht verfügbar"
+                )
             cached.append(build_service())
         return cached[0]
 
@@ -449,7 +500,7 @@ def main():
     # --- Handle single video(s) ---
     if args.video:
         video_ids = [v.strip() for v in args.video.split(",") if v.strip()]
-        get_service = _lazy_service()
+        get_service = _lazy_service(require_token=True)
         now = datetime.now(tz=timezone.utc)
         added_count = 0
         for vid in video_ids:
@@ -459,15 +510,38 @@ def main():
         return added_count
 
     # --- Resolve channel list ---
-    get_service = _lazy_service()
+    get_service = _lazy_service(require_token=not args.auth)
 
     if args.auth:
+        # Before anything else: credentials that cannot work would send
+        # build_service() into its browser flow, which under cron blocks
+        # forever instead of failing. Exit 11 tells collect.sh to collect from
+        # its channel file instead.
+        if not youtube_client.has_usable_token():
+            print(
+                "token.pickle fehlt oder ist nicht mehr brauchbar — OAuth übersprungen.",
+                file=sys.stderr,
+            )
+            sys.exit(EXIT_AUTH_FAILED)
+
         print("Authenticating with YouTube...")
         print("Fetching subscriptions...")
         # The only API call a feed-driven run still needs: subscriptions.list,
         # one unit per 50 channels per run.
-        channels = get_subscribed_channels(get_service())
+        try:
+            channels = get_subscribed_channels(get_service())
+        except Exception as exc:  # noqa: BLE001 - re-raised unless it is an auth problem
+            if not _is_auth_failure(exc):
+                raise
+            print(f"OAuth nicht nutzbar: {exc}", file=sys.stderr)
+            sys.exit(EXIT_AUTH_FAILED)
         print(f"Found {len(channels)} subscribed channels.")
+        if not channels:
+            # A token for the wrong account authenticates fine and returns
+            # nothing -- silent zero-video runs forever. The channel file is
+            # the better answer.
+            print("Keine Abos gefunden — Token gehört womöglich zum falschen Konto.", file=sys.stderr)
+            sys.exit(EXIT_AUTH_FAILED)
     else:
         if args.file:
             identifiers = _load_identifiers_from_file(args.file)

@@ -18,3 +18,4 @@ __pycache__/
 cron.log
 claude_session.sh
 clause_session.sh
+channels.txt
