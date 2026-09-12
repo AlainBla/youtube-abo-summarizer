@@ -331,8 +331,24 @@ def _fetch_video_metadata(video_id: str, get_service, no_proxy: bool = False) ->
 
 def _process_single_video(get_service, video_id: str, model: str, now: datetime, skip_shorts: bool = True, no_proxy: bool = False) -> bool:
     """Fetch and process a single video. Returns True if added to store."""
+    # The store first, before any network call. The queue re-offers IDs that
+    # were collected long ago, and every metadata field a stored video needs is
+    # already a column here -- fetching first meant a yt-dlp run and, on a
+    # blocked IP, a proxy retry, only to find the store already had everything.
+    existing = store.get_video(video_id)
+    if existing and existing["has_transcript"] and existing["has_summary"]:
+        print(f"Fetching video {video_id}...")
+        print(f"  → {existing['title']}")
+        print("    Already in store with transcript and summary, skipping.")
+        return False
+
     print(f"Fetching video {video_id}...")
-    video = _fetch_video_metadata(video_id, get_service, no_proxy=no_proxy)
+    if existing:
+        # Incomplete entry (transcript or summary missing): the metadata is
+        # already known, only the missing piece has to be produced.
+        video = existing
+    else:
+        video = _fetch_video_metadata(video_id, get_service, no_proxy=no_proxy)
     if not video:
         print(f"Error: video '{video_id}' not found.", file=sys.stderr)
         return False
@@ -352,12 +368,6 @@ def _process_single_video(get_service, video_id: str, model: str, now: datetime,
         return False
 
     print(f"  → {vid_title}")
-
-    existing = store.get_video(vid_id)
-
-    if existing and existing["has_transcript"] and existing["has_summary"]:
-        print(f"    Already in store with transcript and summary, skipping.")
-        return False
 
     # Fetch transcript only if not already stored
     lang = None

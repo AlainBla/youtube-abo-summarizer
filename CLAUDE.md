@@ -221,7 +221,7 @@ Schedule `ingest_worker.sh` to run frequently (e.g. every minute). Edit the `PYT
 
 The worker processes each queued ID by running `collect.py --video=<id>` (the `=` form, because a video ID starting with `-` is otherwise read as a flag — that happened, and one queued video failed 100 times) and logs output to `data/ingest_worker.log`.
 
-Ingest metadata comes from yt-dlp (`ytdlp_meta.get_video_metadata()`), not the Data API: ingest is triggered by hand at any hour while the scheduled collect runs spend the project's daily quota, so a `quotaExceeded` there used to take the button down with it over a lookup worth one unit. The API remains the fallback for videos yt-dlp cannot read, and `yt-dlp` is in `requirements.txt` — an existing deployment needs `pip install -r requirements.txt` before the ingest button works again.
+Ingest metadata comes from yt-dlp (`ytdlp_meta.get_video_metadata()`), not the Data API: ingest is triggered by hand at any hour while the scheduled collect runs spend the project's daily quota, so a `quotaExceeded` there used to take the button down with it over a lookup worth one unit. The store is consulted before any of that: an ID whose transcript and summary are already on disk is answered from `data/videos.db` without a single network call, and an incomplete entry reuses its stored metadata instead of re-fetching it — the queue re-offers long-collected IDs, and paying a yt-dlp run plus a proxy retry to rediscover that is pure latency. The API remains the fallback for videos yt-dlp cannot read, and `yt-dlp` is in `requirements.txt` — an existing deployment needs `pip install -r requirements.txt` before the ingest button works again.
 
 ### Production deployment
 

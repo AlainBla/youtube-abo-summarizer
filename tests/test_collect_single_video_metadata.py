@@ -8,6 +8,7 @@ interactive OAuth flow and hang the cron worker forever).
 """
 import os
 import sys
+from datetime import datetime, timezone
 
 import pytest
 
@@ -16,6 +17,8 @@ sys.path.insert(0, REPO)
 
 collect = pytest.importorskip("collect", reason="collect.py runtime deps unavailable")
 
+
+NOW = datetime(2026, 9, 12, tzinfo=timezone.utc)
 
 META = {
     "video_id": "abc123",
@@ -92,3 +95,65 @@ def test_the_service_is_built_once_for_a_batch_of_videos(monkeypatch):
     assert get() == "svc"
     assert get() == "svc"
     assert len(calls) == 1
+
+
+STORED = {
+    "video_id": "abc123",
+    "title": "Schon da",
+    "published_at": "2026-09-06T10:00:00Z",
+    "thumbnail_url": "https://i.ytimg.com/vi/abc123/mqdefault.jpg",
+    "duration": "PT10M",
+    "channel_id": "UC" + "x" * 22,
+    "channel_title": "Ein Kanal",
+    "transcript_lang": "de",
+    "transcript_error": None,
+    "has_transcript": True,
+    "has_summary": True,
+}
+
+
+def test_a_complete_video_is_recognised_before_any_metadata_is_fetched(monkeypatch):
+    # The queue re-offers IDs that are long since collected. Fetching metadata
+    # first meant a yt-dlp run and, on a blocked IP, a proxy retry -- seconds of
+    # work per video, only to discover the store already has everything.
+    monkeypatch.setattr(collect.store, "get_video", lambda vid: dict(STORED))
+    monkeypatch.setattr(
+        collect.ytdlp_meta, "get_video_metadata",
+        lambda vid, no_proxy=False: pytest.fail("metadata fetched for a video already in the store"),
+    )
+    monkeypatch.setattr(collect, "get_video_by_id", lambda *a, **k: pytest.fail("API called"))
+
+    assert collect._process_single_video(_exploding_service(), "abc123", "model", NOW) is False
+
+
+def test_an_incomplete_entry_reuses_the_stored_metadata(monkeypatch):
+    # Only the summary is missing: the transcript is on disk and every metadata
+    # field the store needs is already a column. Nothing to fetch.
+    stored = dict(STORED, has_summary=False)
+    monkeypatch.setattr(collect.store, "get_video", lambda vid: dict(stored))
+    monkeypatch.setattr(collect.store, "get_llm_transcript_path", lambda vid: None)
+    monkeypatch.setattr(
+        collect.ytdlp_meta, "get_video_metadata",
+        lambda vid, no_proxy=False: pytest.fail("metadata fetched though the store has it"),
+    )
+    monkeypatch.setattr(collect, "get_video_by_id", lambda *a, **k: pytest.fail("API called"))
+    monkeypatch.setattr(collect.store, "update_video_with_summary", lambda *a, **k: None)
+
+    assert collect._process_single_video(_exploding_service(), "abc123", "model", NOW) is False
+
+
+def test_a_video_the_store_does_not_know_is_still_fetched(monkeypatch):
+    fetched = []
+    monkeypatch.setattr(collect.store, "get_video", lambda vid: None)
+
+    def meta(vid, no_proxy=False):
+        fetched.append(vid)
+        return dict(META)
+
+    monkeypatch.setattr(collect.ytdlp_meta, "get_video_metadata", meta)
+    monkeypatch.setattr(collect.tr, "get_transcript", lambda vid: (None, None, "unavailable"))
+    monkeypatch.setattr(collect.time, "sleep", lambda s: None)
+    monkeypatch.setattr(collect.store, "add_video", lambda entry: True)
+
+    assert collect._process_single_video(_exploding_service(), "abc123", "model", NOW) is True
+    assert fetched == ["abc123"]
