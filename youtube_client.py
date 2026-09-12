@@ -149,8 +149,29 @@ def get_video_by_id(service, video_id: str) -> dict | None:
     return None
 
 
+def uploads_playlist_id(channel_id: str) -> str | None:
+    """Derive a channel's uploads playlist ID without spending quota.
+
+    YouTube mints the uploads playlist as the channel ID with the leading "UC"
+    swapped for "UU" -- channels().list returns exactly that string for one
+    quota unit. Per channel, per run: with ~100 subscriptions and a half-hourly
+    collect that is roughly half the daily budget spent re-deriving a constant,
+    and an exhausted budget is what takes the on-demand ingest down with it.
+
+    Returns None for anything that is not a UC... channel ID, so the caller can
+    fall back to the API.
+    """
+    if not channel_id or not channel_id.startswith("UC") or len(channel_id) != 24:
+        return None
+    return "UU" + channel_id[2:]
+
+
 def _get_uploads_playlist_id(service, channel_id: str) -> str | None:
-    """Return the uploads playlist ID for a channel (costs 1 quota unit)."""
+    """Return the uploads playlist ID, derived if possible, else via the API."""
+    derived = uploads_playlist_id(channel_id)
+    if derived:
+        return derived
+
     resp = service.channels().list(
         part="contentDetails",
         id=channel_id,
@@ -167,8 +188,8 @@ def get_new_videos(service, channel_id: str, since: datetime) -> list[dict]:
     Uses playlistItems.list (1 quota unit/page) instead of search.list
     (100 quota units/page) to stay within the daily 10,000-unit quota.
     """
-    uploads_playlist_id = _get_uploads_playlist_id(service, channel_id)
-    if not uploads_playlist_id:
+    playlist_id = _get_uploads_playlist_id(service, channel_id)
+    if not playlist_id:
         return []
 
     since_utc = since.astimezone(timezone.utc)
@@ -176,7 +197,7 @@ def get_new_videos(service, channel_id: str, since: datetime) -> list[dict]:
 
     request = service.playlistItems().list(
         part="snippet",
-        playlistId=uploads_playlist_id,
+        playlistId=playlist_id,
         maxResults=50,
     )
     while request:

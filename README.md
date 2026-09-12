@@ -326,7 +326,9 @@ Schedule `ingest_worker.sh` to run every minute. Edit the `PYTHON` variable at t
 * * * * * /path/to/youtube-abo-summarizer/ingest_worker.sh
 ```
 
-The worker drains the queue by running `collect.py --video <id>` for each entry and logs output to `data/ingest_worker.log`.
+The worker drains the queue by running `collect.py --video=<id>` for each entry and logs output to `data/ingest_worker.log`. (The `=` form matters: a video ID starting with `-` is read as a flag otherwise.)
+
+Ingest does not spend YouTube API quota. Metadata for a single video comes from yt-dlp (`ytdlp_meta.get_video_metadata()`), which reads the watch page without a token or key; the Data API is only the fallback. This keeps the ingest button working after the scheduled collect runs have used up the day's quota. `yt-dlp` is listed in `requirements.txt`.
 
 ### Production deployment
 
@@ -515,7 +517,8 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 | `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html`; `update_tags()` writes only the tags column |
 | `tags.py` | Controlled German tag vocabulary (161 tags in ten groups) and the gate that enforces it: `canonicalize()` accepts an exact hit, a case-only difference, or a `tag_aliases.json` alias, rejects everything else, deduplicates and caps at `MAX_TAGS` (3); CLI: `--list`, `--candidates [--min N]`, `--build-aliases [--limit N] [--model M] [--dry-run]` |
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
-| `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution) |
+| `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution); derives a channel's uploads playlist ID (`UC…` → `UU…`) instead of spending a quota unit per channel per run on `channels().list` |
+| `ytdlp_meta.py` | Quota-free single-video metadata via yt-dlp, used by `collect.py --video`; same dict shape as the API path, `None` on failure, one proxy retry |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling; on `ip_blocked` retries via proxy; on `country_blocked` retries with country-pinned proxy; `requests.exceptions.ProxyError` / `ConnectionError` caught and mapped to `unavailable`; logs proxy config on startup |
 | `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns `(summary_html, tags)` tuple — structured HTML with chronological sections, proportional depth, and timestamp links, plus 2–3 tags extracted from a `<!-- tags: ... -->` comment appended by the model and run through `tags.canonicalize()`, so only entries from the controlled vocabulary are ever stored; `max_tokens=16384`; rejects unusable output (`SummaryRejected`) when the response was truncated at the output cap or degenerated into a repetition loop, so the video is stored without a summary instead of with garbage; repairs timestamp links whose `t=` offset does not match the visible `MM:SS` label and anchors the model closed with the wrong tag |
 | `renderer.py` | Jinja2 renderer; writes the final HTML report; accepts `lang=` kwarg; sanitizes summaries at render time to strip any trailing incomplete HTML tag (guards against LLM output truncated mid-tag) |

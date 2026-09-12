@@ -3,6 +3,7 @@ google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
 youtube-transcript-api
+yt-dlp
 openai
 python-dotenv
 jinja2

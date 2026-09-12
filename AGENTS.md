@@ -26,6 +26,7 @@ i18n.py                 # de/en UI string dicts
 state.py                # last_run.json helpers
 send_mail.py            # standalone SMTP sender
 youtube_client.py       # YouTube Data API v3 wrapper
+ytdlp_meta.py           # quota-free single-video metadata via yt-dlp (ingest path)
 template.html.j2        # report template
 export.html.j2          # export archive template
 ebook/                  # EPUB templates + stylesheet (book.css, chapter/nav/opf/ncx/title/transcript .j2)
@@ -112,6 +113,8 @@ Two traps that will produce a book that looks fine in a permissive reader but fa
 - Appends the ID to the queue file and returns `{"queued": true}` with HTTP 202. Processing is async via `ingest_worker.sh`.
 
 `can_ingest` in `/api/whoami` is `true` only when both conditions above are configured.
+
+The worker calls `collect.py --video=<id>` (the `=` form: a leading-dash video ID is otherwise parsed as a flag). That path takes its metadata from `ytdlp_meta.get_video_metadata()` — yt-dlp, no token, no quota — and only falls back to the Data API, whose service is built lazily — a stale token can therefore only hang the worker (`build_service()` opens an interactive OAuth flow, it does not raise) when that fallback is actually taken, not on every run.
 
 **Production**: use Gunicorn behind Nginx, not `python sync_server.py`. Add `ProxyFix` so the rate limiter sees real client IPs. See README for the full systemd + Nginx setup.
 

@@ -48,7 +48,7 @@ while IFS= read -r line; do
 
     echo "[$(date -Iseconds)] ingest $video_id (attempt $((attempts + 1)))" >> "$LOG"
     rc=0
-    "$PYTHON" "$COLLECT" --video "$video_id" >> "$LOG" 2>&1 || rc=$?
+    "$PYTHON" "$COLLECT" --video="$video_id" >> "$LOG" 2>&1 || rc=$?
     # collect.py exits with EXIT_NEW_VIDEOS (10) when it stored the video --
     # a success, not a failure. Anything else non-zero is a real error.
     if [ "$rc" -eq 0 ] || [ "$rc" -eq "$EXIT_NEW_VIDEOS" ]; then

@@ -36,6 +36,7 @@ import state
 import store
 import transcripts as tr
 import openrouter
+import ytdlp_meta
 from youtube_client import build_service, get_subscribed_channels, get_new_videos, get_video_durations, resolve_channel_id, get_video_by_id
 
 load_dotenv()
@@ -175,10 +176,56 @@ def _load_identifiers_from_file(path: str) -> list[str]:
         return [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
 
-def _process_single_video(service, video_id: str, model: str, now: datetime, skip_shorts: bool = True, no_proxy: bool = False) -> bool:
+def _lazy_service():
+    """Return a getter that builds the YouTube API service on first use.
+
+    The single-video path prefers yt-dlp and usually never touches the API.
+    Building the service up front would still demand credentials -- and with an
+    expired token that means an interactive OAuth flow, which under cron is a
+    worker hanging until someone notices.
+    """
+    cached = []
+
+    def get():
+        if not cached:
+            cached.append(build_service())
+        return cached[0]
+
+    return get
+
+
+def _fetch_video_metadata(video_id: str, get_service, no_proxy: bool = False) -> dict | None:
+    """Metadata for one video: yt-dlp first, YouTube API as fallback.
+
+    Ingest is triggered by hand at any hour, while the scheduled collect runs
+    spend the project's daily quota on subscriptions and playlist pages. A
+    quotaExceeded there used to take the ingest button down with it, over a
+    lookup worth a single unit. yt-dlp costs nothing and needs no token; the
+    API stays as the fallback for the cases yt-dlp cannot read.
+    """
+    meta = ytdlp_meta.get_video_metadata(video_id, no_proxy=no_proxy)
+    if meta:
+        return meta
+
+    print("    yt-dlp lieferte keine Metadaten — Fallback auf die YouTube API.", file=sys.stderr)
+    try:
+        service = get_service()
+    except Exception as exc:  # noqa: BLE001 - no credentials is a failed ingest, not a crash
+        print(f"    YouTube API nicht verfügbar: {exc}", file=sys.stderr)
+        return None
+    try:
+        return get_video_by_id(service, video_id)
+    except HttpError as e:
+        if e.resp.status == 403 and "quotaExceeded" in str(e):
+            print("    YouTube API quota exceeded — Metadaten nicht abrufbar.", file=sys.stderr)
+            return None
+        raise
+
+
+def _process_single_video(get_service, video_id: str, model: str, now: datetime, skip_shorts: bool = True, no_proxy: bool = False) -> bool:
     """Fetch and process a single video. Returns True if added to store."""
     print(f"Fetching video {video_id}...")
-    video = get_video_by_id(service, video_id)
+    video = _fetch_video_metadata(video_id, get_service, no_proxy=no_proxy)
     if not video:
         print(f"Error: video '{video_id}' not found.", file=sys.stderr)
         return False
@@ -285,11 +332,11 @@ def main():
     # --- Handle single video(s) ---
     if args.video:
         video_ids = [v.strip() for v in args.video.split(",") if v.strip()]
-        service = build_service()
+        get_service = _lazy_service()
         now = datetime.now(tz=timezone.utc)
         added_count = 0
         for vid in video_ids:
-            if _process_single_video(service, vid, model, now, skip_shorts=not args.include_shorts, no_proxy=args.no_proxy):
+            if _process_single_video(get_service, vid, model, now, skip_shorts=not args.include_shorts, no_proxy=args.no_proxy):
                 added_count += 1
         print(f"\nDone. {added_count} video(s) added to store.")
         return added_count
