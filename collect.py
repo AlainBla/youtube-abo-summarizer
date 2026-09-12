@@ -37,6 +37,7 @@ import store
 import transcripts as tr
 import openrouter
 import ytdlp_meta
+import feeds
 from youtube_client import build_service, get_subscribed_channels, get_new_videos, get_video_durations, resolve_channel_id, get_video_by_id
 
 load_dotenv()
@@ -156,6 +157,14 @@ def parse_args():
         action="store_true",
         help="Ignore WEBSHARE_PROXY_URL and fetch transcripts via direct connection.",
     )
+    parser.add_argument(
+        "--no-rss",
+        action="store_true",
+        help=(
+            "Discover new videos through the YouTube API instead of the free RSS feed. "
+            "The feed is used by default and costs no quota."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -174,6 +183,104 @@ def _load_identifiers_from_file(path: str) -> list[str]:
         sys.exit(1)
     with open(path) as f:
         return [line.strip() for line in f if line.strip() and not line.startswith("#")]
+
+
+def _fill_feed_durations(videos: list[dict], get_service, no_proxy: bool = False) -> None:
+    """Fill in the duration the RSS feed does not carry, in place.
+
+    Three sources, cheapest first. The store: `collect.sh` looks back four hours
+    every thirty minutes, so a video is re-listed by the feed for about eight
+    runs, and a duration already on disk costs nothing. Then yt-dlp, free but a
+    subprocess per video. Then, only for what is still missing, one batched
+    videos().list -- 1 unit per 50 videos.
+
+    That last step is not decoration: without it a run whose yt-dlp is broken
+    (dependency not installed yet, watch page blocked for the server's IP) would
+    read every short as "not short", because _is_short(None) is False, and spend
+    transcript and LLM budget on it.
+    """
+    missing = []
+    for v in videos:
+        existing = store.get_video(v["video_id"])
+        if existing and existing.get("duration"):
+            v["duration"] = existing["duration"]
+            continue
+
+        meta = ytdlp_meta.get_video_metadata(v["video_id"], no_proxy=no_proxy)
+        if meta:
+            v["duration"] = meta.get("duration")
+            v["title"] = meta.get("title") or v["title"]
+            v["published_at"] = meta.get("published_at") or v["published_at"]
+        else:
+            v["duration"] = None
+            missing.append(v)
+
+    if not missing:
+        return
+
+    try:
+        service = get_service()
+    except Exception as exc:  # noqa: BLE001 - no credentials is a degraded run, not a crash
+        print(
+            f"    Dauer für {len(missing)} Video(s) unbekannt, YouTube API nicht verfügbar: {exc}",
+            file=sys.stderr,
+        )
+        return
+    try:
+        durations = get_video_durations(service, [v["video_id"] for v in missing])
+    except HttpError as e:
+        print(f"    Dauer-Abruf über die API fehlgeschlagen: {e}", file=sys.stderr)
+        return
+    for v in missing:
+        v["duration"] = durations.get(v["video_id"])
+
+
+def _discover_videos(channel_id: str, since: datetime, get_service, use_rss: bool = True,
+                     no_proxy: bool = False) -> list[dict]:
+    """New videos for one channel, from the RSS feed where possible.
+
+    The feed costs no quota and needs no token, so the API service stays
+    unbuilt unless this channel actually falls back to it (feeds.get_new_videos_rss
+    returns None when it cannot answer -- see the ~15-entry cap there).
+
+    The feed carries no duration, and the shorts filter runs before any
+    transcript or LLM work, so _fill_feed_durations() supplies them.
+    """
+    if use_rss:
+        videos = feeds.get_new_videos_rss(channel_id, since, no_proxy=no_proxy)
+        if videos is not None:
+            _fill_feed_durations(videos, get_service, no_proxy=no_proxy)
+            return videos
+        print("    RSS-Feed konnte nicht antworten — YouTube API für diesen Kanal.", file=sys.stderr)
+
+    service = get_service()
+    videos = get_new_videos(service, channel_id, since)
+    if videos:
+        durations = get_video_durations(service, [v["video_id"] for v in videos])
+        for v in videos:
+            v["duration"] = durations.get(v["video_id"])
+    return videos
+
+
+def _resolve_identifiers(identifiers: list[str], get_service, no_proxy: bool = False) -> list[dict]:
+    """Resolve channel IDs/handles/URLs to [{channel_id, title}].
+
+    A UC... ID needs no API call at all: the feed states the channel title
+    itself, where channels().list would charge a quota unit for it. Handles and
+    URLs still go through the API -- the feed can only be addressed by ID.
+    """
+    channels = []
+    for ident in identifiers:
+        resolved = None
+        if ident.startswith("UC") and len(ident) == 24:
+            resolved = feeds.get_channel(ident, no_proxy=no_proxy)
+        if not resolved:
+            resolved = resolve_channel_id(get_service(), ident)
+        if resolved:
+            channels.append(resolved)
+        else:
+            print(f"Warning: could not resolve channel '{ident}', skipping.", file=sys.stderr)
+    return channels
 
 
 def _lazy_service():
@@ -342,11 +449,14 @@ def main():
         return added_count
 
     # --- Resolve channel list ---
+    get_service = _lazy_service()
+
     if args.auth:
         print("Authenticating with YouTube...")
-        service = build_service()
         print("Fetching subscriptions...")
-        channels = get_subscribed_channels(service)
+        # The only API call a feed-driven run still needs: subscriptions.list,
+        # one unit per 50 channels per run.
+        channels = get_subscribed_channels(get_service())
         print(f"Found {len(channels)} subscribed channels.")
     else:
         if args.file:
@@ -360,14 +470,7 @@ def main():
             )
             sys.exit(1)
 
-        service = build_service()
-        channels = []
-        for ident in identifiers:
-            resolved = resolve_channel_id(service, ident)
-            if resolved:
-                channels.append(resolved)
-            else:
-                print(f"Warning: could not resolve channel '{ident}', skipping.", file=sys.stderr)
+        channels = _resolve_identifiers(identifiers, get_service, no_proxy=args.no_proxy)
 
     if not channels:
         print("No channels to process. Exiting.")
@@ -384,7 +487,10 @@ def main():
 
         print(f"\n[{channel_title}] Fetching videos since {since.strftime('%Y-%m-%d %H:%M')} UTC...")
         try:
-            videos = get_new_videos(service, channel_id, since)
+            videos = _discover_videos(
+                channel_id, since, get_service,
+                use_rss=not args.no_rss, no_proxy=args.no_proxy,
+            )
         except HttpError as e:
             if e.status_code == 403 and "quotaExceeded" in str(e):
                 print("  YouTube API quota exceeded — stopping early.", file=sys.stderr)
@@ -392,11 +498,6 @@ def main():
             print(f"  API error: {e}", file=sys.stderr)
             continue
         print(f"  {len(videos)} new video(s).")
-
-        if videos:
-            durations = get_video_durations(service, [v["video_id"] for v in videos])
-            for v in videos:
-                v["duration"] = durations.get(v["video_id"])
 
         for video in videos:
             vid_id = video["video_id"]

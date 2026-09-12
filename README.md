@@ -95,6 +95,8 @@ python collect.py UC123abc @SomeHandle
 python collect.py --file channels.txt
 ```
 
+New videos are discovered through each channel's public RSS feed, which costs no API quota and needs no token; durations come from yt-dlp. The YouTube API is only consulted for your subscription list (`--auth`), for handles and URLs that have to be resolved to channel IDs, and as a per-channel fallback when a feed cannot answer — it holds only ~15 entries, so a channel that posted more between two runs is fetched through the API for that run. `--no-rss` forces the API path for everything.
+
 Results are written to `data/` (SQLite metadata + individual transcript and summary files). Videos already in the store are handled incrementally: if both transcript and summary exist they are skipped entirely; if only one is missing, only the missing piece is fetched or generated. Pass `--prune-days N` to remove entries older than N days; by default nothing is pruned.
 
 ### 2. Report — render and optionally send a digest
@@ -517,6 +519,7 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 | `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html`; `update_tags()` writes only the tags column |
 | `tags.py` | Controlled German tag vocabulary (161 tags in ten groups) and the gate that enforces it: `canonicalize()` accepts an exact hit, a case-only difference, or a `tag_aliases.json` alias, rejects everything else, deduplicates and caps at `MAX_TAGS` (3); CLI: `--list`, `--candidates [--min N]`, `--build-aliases [--limit N] [--model M] [--dry-run]` |
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
+| `feeds.py` | Quota-free video discovery through the channel RSS feed; returns `None` when the ~15-entry feed cannot cover the window, so the caller falls back to the API for that channel |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution); derives a channel's uploads playlist ID (`UC…` → `UU…`) instead of spending a quota unit per channel per run on `channels().list` |
 | `ytdlp_meta.py` | Quota-free single-video metadata via yt-dlp, used by `collect.py --video`; same dict shape as the API path, `None` on failure, one proxy retry |
 | `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling; on `ip_blocked` retries via proxy; on `country_blocked` retries with country-pinned proxy; `requests.exceptions.ProxyError` / `ConnectionError` caught and mapped to `unavailable`; logs proxy config on startup |

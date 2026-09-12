@@ -27,6 +27,7 @@ state.py                # last_run.json helpers
 send_mail.py            # standalone SMTP sender
 youtube_client.py       # YouTube Data API v3 wrapper
 ytdlp_meta.py           # quota-free single-video metadata via yt-dlp (ingest path)
+feeds.py                # quota-free channel discovery via the YouTube RSS feed
 template.html.j2        # report template
 export.html.j2          # export archive template
 ebook/                  # EPUB templates + stylesheet (book.css, chapter/nav/opf/ncx/title/transcript .j2)
@@ -61,6 +62,9 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 - Proxy retry: on `ip_blocked`, retries once via the configured proxy (if set); on `country_blocked`, retries once with a country-pinned Webshare proxy if `WEBSHARE_PROXY_URL` is set
 
 ### Collect / cron wiring
+- Discovery is quota-free by default: `_discover_videos()` reads the channel's RSS feed (`feeds.py`) and only falls back to `youtube_client.get_new_videos()` when the feed returns `None`. `None` and `[]` are different answers — `[]` means "read it, nothing new" (the common case), `None` means "cannot answer, pay for the API". Never collapse the two, and never return a partial list from the feed: it holds ~15 entries, so when all of them lie inside the window older ones may have been cut off
+- The feed carries no duration, and the shorts filter runs before transcript and LLM work, so `_fill_feed_durations()` supplies them: store first (the feed re-lists a video for ~8 runs of `collect.sh`), then `ytdlp_meta`, then one batched `get_video_durations()` for the rest. Keep that last fallback — `_is_short(None)` is `False`, so a broken or blocked yt-dlp would otherwise push every short through the LLM
+- What still costs quota: `subscriptions.list` under `--auth`, `resolve_channel_id()` for handles/URLs (100 units via `search.list`; a `UC…` ID is resolved from the feed instead), and per-channel fallbacks. `--no-rss` forces the old API path for debugging
 - `collect.py` exits with `EXIT_NEW_VIDEOS` (10) when a run stored at least one new video, `0` when it ran fine but stored nothing. `main()` returns the count; the mapping lives in `_exit_code()` so it stays testable
 - Anything that shells out to `collect.py` must treat 10 as success — `ingest_worker.sh` would otherwise re-queue every video it just ingested. `collect.sh` gates the archive re-export on exactly this code; a plain `&&` would re-export every run and keep the export's update banner permanently lit (the banner triggers on a changed `generated_at`, not on new rows)
 
