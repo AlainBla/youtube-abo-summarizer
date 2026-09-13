@@ -11,6 +11,7 @@ STRINGS: dict[str, dict] = {
         "bookmark_btn": "\u2605 Merken",
         "share_btn": "Link kopieren",
         "show_more": "\u25bc mehr",
+        "show_less": "\u25b2 weniger",
         "skip": "\u00fcberspringen \u2193",
         "no_videos": "Keine neuen Videos im gew\u00e4hlten Zeitraum.",
         "transcript_ip_blocked": (
@@ -47,6 +48,7 @@ STRINGS: dict[str, dict] = {
         "bookmark_btn": "\u2605 Save",
         "share_btn": "Copy link",
         "show_more": "\u25bc more",
+        "show_less": "\u25b2 less",
         "skip": "skip \u2193",
         "no_videos": "No new videos in the selected time range.",
         "transcript_ip_blocked": (

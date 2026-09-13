@@ -140,6 +140,16 @@
       color: #e0c060;
     }
 
+    /* Same buttons again at the foot of an expanded summary, so a long read
+       does not have to be scrolled back up to be marked. */
+    .video-actions-bottom {
+      margin-top: 0.8rem;
+      margin-bottom: 0;
+      padding-top: 0.6rem;
+      border-top: 1px solid #2a2a2a;
+    }
+    .video-actions-bottom .collapse-btn { margin-left: auto; }
+
     .video-thumb { flex-shrink: 0; width: 200px; }
     .video-thumb img { width: 100%; border-radius: 5px; display: block; }
     .video-embed { margin-top: 6px; width: 100%; aspect-ratio: 16/9; border: none; border-radius: 5px; display: block; }
@@ -465,7 +475,12 @@
 {%- if v.tags %}<div class="video-tags">{% for tag in v.tags %}<span class="tag-chip" onclick="setTagFilter('{{ tag|esch }}')">{{ tag|esch }}</span>{% endfor %}</div>{% endif -%}
 <div class="video-summary">
 {%- if v.summary_preview -%}
-{{ v.summary_preview }}{% if v.summary_rest %}<button class="summary-toggle" onclick="toggleSummary(this)">{{ t.show_more }}</button><div class="summary-details" hidden>{{ v.summary_rest }}</div>{% endif %}
+{{ v.summary_preview }}{% if v.summary_rest %}<button class="summary-toggle" onclick="toggleSummary(this)">{{ t.show_more }}</button><div class="summary-details" hidden>{{ v.summary_rest }}<div class="video-actions video-actions-bottom">
+<button class="read-btn" onclick="toggleRead('{{ v.video_id|esch }}')">{{ t.read_btn }}</button>
+<button class="bookmark-btn" onclick="toggleBookmark('{{ v.video_id|esch }}')">{{ t.bookmark_btn }}</button>
+<button class="share-btn" onclick="shareVideo('{{ v.video_id|esch }}', this)">{{ t.share_btn }}</button>
+<button class="collapse-btn" onclick="collapseSummary(this)">{{ t.show_less }}</button>
+</div></div>{% endif %}
 {%- elif v.transcript_error == 'ip_blocked' -%}
 <p class="no-transcript ip-blocked">{{ t.transcript_ip_blocked }}</p>
 {%- elif v.transcript_error == 'rate_limited' -%}
@@ -588,13 +603,13 @@
     var id = cards[i].getAttribute('data-video-id');
     if (read.has(id)) {
       cards[i].classList.add('is-read');
-      var rb = cards[i].querySelector('.read-btn');
-      if (rb) rb.classList.add('is-active');
+      var rb = cards[i].querySelectorAll('.read-btn');
+      for (var j = 0; j < rb.length; j++) rb[j].classList.add('is-active');
     }
     if (marked.has(id)) {
       cards[i].classList.add('is-bookmarked');
-      var bb = cards[i].querySelector('.bookmark-btn');
-      if (bb) bb.classList.add('is-active');
+      var bb = cards[i].querySelectorAll('.bookmark-btn');
+      for (var j = 0; j < bb.length; j++) bb[j].classList.add('is-active');
     }
   }
 })();
@@ -872,10 +887,13 @@ function updateCardInPlace(videoId) {
   var isRead = readSet.has(videoId);
   var isBookmarked = bookmarkSet.has(videoId);
   article.className = 'video-card' + (isRead ? ' is-read' : '') + (isBookmarked ? ' is-bookmarked' : '');
-  var readBtn = article.querySelector('.read-btn');
-  if (readBtn) readBtn.className = 'read-btn' + (isRead ? ' is-active' : '');
-  var bookmarkBtn = article.querySelector('.bookmark-btn');
-  if (bookmarkBtn) bookmarkBtn.className = 'bookmark-btn' + (isBookmarked ? ' is-active' : '');
+  // Both rows -- the one above the title and the one closing an expanded summary.
+  article.querySelectorAll('.read-btn').forEach(function (btn) {
+    btn.className = 'read-btn' + (isRead ? ' is-active' : '');
+  });
+  article.querySelectorAll('.bookmark-btn').forEach(function (btn) {
+    btn.className = 'bookmark-btn' + (isBookmarked ? ' is-active' : '');
+  });
 }
 
 window.toggleRead = function(videoId) {
@@ -1587,6 +1605,24 @@ function buildCard(v) {
   if (v.duration) metaExtras += ' &middot; ' + escHtml(v.duration);
   if (v.summary_model) metaExtras += '<span class="model-badge">' + escHtml(v.summary_model) + '</span>';
 
+  const isRead = readSet.has(v.video_id);
+  const isBookmarked = bookmarkSet.has(v.video_id);
+  const readBtnClass = 'read-btn' + (isRead ? ' is-active' : '');
+  const bookmarkBtnClass = 'bookmark-btn' + (isBookmarked ? ' is-active' : '');
+
+  // The same three buttons head the card and close an expanded summary; the
+  // second row spares the reader the scroll back up. Keep this markup in step
+  // with the card() macro in this template (tests/test_export_prerender.py).
+  function actionsHtml(extraClass) {
+    var bottom = extraClass === 'video-actions-bottom';
+    return '<div class="video-actions' + (extraClass ? ' ' + extraClass : '') + '">'
+      + '<button class="' + readBtnClass + '" onclick="toggleRead(\'' + escHtml(v.video_id) + '\')">' + s.readBtn + '</button>'
+      + '<button class="' + bookmarkBtnClass + '" onclick="toggleBookmark(\'' + escHtml(v.video_id) + '\')">' + s.bookmarkBtn + '</button>'
+      + '<button class="share-btn" onclick="shareVideo(\'' + escHtml(v.video_id) + '\', this)">' + s.shareBtn + '</button>'
+      + (bottom ? '<button class="collapse-btn" onclick="collapseSummary(this)">' + s.showLess + '</button>' : '')
+      + '</div>';
+  }
+
   const summary = getSummary(v);
   let summaryHtml;
   if (summary) {
@@ -1596,7 +1632,7 @@ function buildCard(v) {
     if (rest) {
       summaryHtml = preview
         + '<button class="summary-toggle" onclick="toggleSummary(this)">' + s.showMore + '</button>'
-        + '<div class="summary-details" hidden>' + rest + '</div>';
+        + '<div class="summary-details" hidden>' + rest + actionsHtml('video-actions-bottom') + '</div>';
     } else {
       summaryHtml = preview;
     }
@@ -1621,20 +1657,12 @@ function buildCard(v) {
       + '</div>';
   }
 
-  const isRead = readSet.has(v.video_id);
-  const isBookmarked = bookmarkSet.has(v.video_id);
   const cardClass = 'video-card' + (isRead ? ' is-read' : '') + (isBookmarked ? ' is-bookmarked' : '');
-  const readBtnClass = 'read-btn' + (isRead ? ' is-active' : '');
-  const bookmarkBtnClass = 'bookmark-btn' + (isBookmarked ? ' is-active' : '');
 
   return '<article class="' + cardClass + '" data-video-id="' + escHtml(v.video_id) + '">'
     + '<div class="video-thumb">' + thumbContent + '</div>'
     + '<div class="video-body">'
-    + '<div class="video-actions">'
-    + '<button class="' + readBtnClass + '" onclick="toggleRead(\'' + escHtml(v.video_id) + '\')">' + s.readBtn + '</button>'
-    + '<button class="' + bookmarkBtnClass + '" onclick="toggleBookmark(\'' + escHtml(v.video_id) + '\')">' + s.bookmarkBtn + '</button>'
-    + '<button class="share-btn" onclick="shareVideo(\'' + escHtml(v.video_id) + '\', this)">' + s.shareBtn + '</button>'
-    + '</div>'
+    + actionsHtml('')
     + '<a class="video-title" href="https://www.youtube.com/watch?v=' + escHtml(v.video_id) + '" target="_blank" rel="noopener">' + escHtml(v.title) + '</a>'
     + '<div class="video-meta"><span class="channel-link" onclick="setChannelFilter(\'' + escHtml(v.channel_id) + '\')">' + escHtml(v.channel_title) + '</span> &middot; ' + escHtml(v.published_at_display) + metaExtras + '</div>'
     + tagsHtml
@@ -1869,6 +1897,23 @@ function toggleSummary(btn) {
   var open = details.hidden === false;
   details.hidden = open;
   btn.textContent = open ? I18N[currentLang].showMore : I18N[currentLang].showLess;
+}
+
+// The collapse button at the foot of an expanded summary. It drives the card's
+// own "mehr/weniger" toggle rather than hiding the details itself, so that
+// button's label stays truthful. Collapsing pulls the text out from under the
+// reader, who is scrolled to its end -- scroll the card back into view when it
+// would otherwise end up above the viewport.
+function collapseSummary(btn) {
+  var details = btn.closest('.summary-details');
+  if (!details) return;
+  var toggle = details.previousElementSibling;
+  if (!toggle || !toggle.classList.contains('summary-toggle')) return;
+  toggleSummary(toggle);
+  var card = btn.closest('.video-card');
+  if (card && card.getBoundingClientRect().top < 0) {
+    card.scrollIntoView({block: 'start'});
+  }
 }
 
 function focusCard(idx) {

@@ -51,6 +51,31 @@ def test_pre_rendered_card_shows_summary_preview_and_toggle():
     assert "summary-details" in html
 
 
+def test_expanded_summary_repeats_the_action_buttons_at_its_foot():
+    # A long summary pushes the header row off screen; the reader must be able
+    # to mark it read / bookmark / copy the link where the reading ends.
+    html = render_export([video("v1", "2026-01-01T00:00:00Z")])
+    card = re.search(r"<article .*?</article>", html, re.S).group(0)
+    details = re.search(r'<div class="summary-details" hidden>(.*?)</article>', card, re.S)
+    assert details, "expanded summary block not found"
+    assert 'class="video-actions video-actions-bottom"' in details.group(1)
+    for cls in ("read-btn", "bookmark-btn", "share-btn"):
+        assert card.count('class="%s"' % cls) == 2, cls
+    # Collapsing is the same problem as marking: the "mehr/weniger" toggle sits
+    # above the text, so the bottom row carries its own collapse button.
+    assert card.count('class="collapse-btn"') == 1
+    assert 'class="collapse-btn"' in details.group(1)
+
+
+def test_card_without_an_expandable_summary_has_one_action_row_only():
+    html = render_export([video("v1", "2026-01-01T00:00:00Z", summary=None,
+                                transcript_error="country_blocked")])
+    card = re.search(r"<article .*?</article>", html, re.S).group(0)
+    assert "video-actions-bottom" not in card
+    assert card.count('class="share-btn"') == 1
+    assert "collapse-btn" not in card
+
+
 def test_page_size_is_rendered_from_the_pre_render_count():
     html = render_export([video("v1", "2026-01-01T00:00:00Z")])
     assert "const PAGE_SIZE = %d;" % renderer.EXPORT_FIRST_PAGE in html
@@ -108,6 +133,64 @@ def test_pre_rendered_markup_matches_buildCard_output():
 
     for pre, js in zip(pre_rendered, built):
         assert _normalize(pre) == _normalize(js)
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_collapse_button_drives_the_cards_own_summary_toggle():
+    """The bottom collapse button must not hide `.summary-details` itself: the
+    card's "mehr/weniger" toggle above the text owns that state, and a direct
+    `details.hidden = true` would leave that button reading "weniger" over a
+    collapsed summary -- one click then does nothing visible. Drive the real
+    functions against a small purpose-built DOM (dom_stub's querySelector is
+    not selector-aware, so it cannot express this) and check both the details
+    block and the toggle's label."""
+    html = render_export([video("v1", "2026-01-01T00:00:00Z")])
+    script = extract_script(html)
+    snippet = """
+    var details = {
+      hidden: true,
+      previousElementSibling: null,
+      classList: { contains: function (c) { return c === 'summary-details'; } },
+    };
+    var toggle = {
+      textContent: '\u25bc mehr',
+      nextElementSibling: details,
+      classList: { contains: function (c) { return c === 'summary-toggle'; } },
+    };
+    details.previousElementSibling = toggle;
+    var card = {
+      classList: { contains: function (c) { return c === 'video-card'; } },
+      getBoundingClientRect: function () { return {top: -400}; },
+      scrolled: false,
+      scrollIntoView: function () { this.scrolled = true; },
+    };
+    var collapseBtn = {
+      closest: function (sel) {
+        if (sel === '.summary-details') return details;
+        if (sel === '.video-card') return card;
+        return null;
+      },
+    };
+
+    toggleSummary(toggle);                 // the reader expands the summary
+    var afterExpand = {hidden: details.hidden, label: toggle.textContent};
+    collapseSummary(collapseBtn);          // ... and collapses it from the foot
+    console.log(JSON.stringify({
+      afterExpand: afterExpand,
+      hidden: details.hidden,
+      label: toggle.textContent,
+      scrolled: card.scrolled,
+    }));
+    process.exit(0);
+    """
+    out = run_node(script, snippet)
+    result = json.loads(out.strip().splitlines()[-1])
+
+    assert result["afterExpand"] == {"hidden": False, "label": "\u25b2 weniger"}
+    assert result["hidden"] is True
+    assert result["label"] == "\u25bc mehr"
+    # The reader sits at the end of the text that just disappeared.
+    assert result["scrolled"] is True
 
 
 def test_hydration_script_runs_before_the_data_blob():
@@ -190,19 +273,25 @@ function makeButton() {
 function makeCard(html) {
   var id = html.match(/data-video-id="([^"]*)"/)[1];
   var classes = new Set(html.match(/^<article class="([^"]*)"/)[1].split(/\\s+/).filter(Boolean));
-  var readBtn = /class="read-btn"/.test(html) ? makeButton() : null;
-  var bookmarkBtn = /class="bookmark-btn"/.test(html) ? makeButton() : null;
+  // One stub button per occurrence: the card carries the action row twice --
+  // above the title and at the foot of the expanded summary -- and hydration
+  // has to reach both.
+  function buttons(cls) {
+    return (html.match(new RegExp('class="' + cls + '"', 'g')) || []).map(makeButton);
+  }
+  var readBtns = buttons('read-btn');
+  var bookmarkBtns = buttons('bookmark-btn');
   return {
     getAttribute: function (name) { return name === 'data-video-id' ? id : null; },
     classList: { add: function (c) { classes.add(c); } },
-    querySelector: function (sel) {
-      if (sel === '.read-btn') return readBtn;
-      if (sel === '.bookmark-btn') return bookmarkBtn;
-      return null;
+    querySelectorAll: function (sel) {
+      if (sel === '.read-btn') return readBtns;
+      if (sel === '.bookmark-btn') return bookmarkBtns;
+      return [];
     },
     _classes: classes,
-    _readBtn: readBtn,
-    _bookmarkBtn: bookmarkBtn,
+    _readBtns: readBtns,
+    _bookmarkBtns: bookmarkBtns,
   };
 }
 
@@ -217,8 +306,8 @@ console.log(JSON.stringify(CARDS.map(function (c) {
   return {
     id: c.getAttribute('data-video-id'),
     classes: Array.from(c._classes),
-    readActive: c._readBtn ? Array.from(c._readBtn._classes) : null,
-    bookmarkActive: c._bookmarkBtn ? Array.from(c._bookmarkBtn._classes) : null,
+    readActive: c._readBtns.map(function (b) { return Array.from(b._classes); }),
+    bookmarkActive: c._bookmarkBtns.map(function (b) { return Array.from(b._classes); }),
   };
 })));
 """ % (json.dumps(articles), hydration_source)
@@ -235,15 +324,19 @@ console.log(JSON.stringify(CARDS.map(function (c) {
 
     by_id = {r["id"]: r for r in result}
 
+    # Two rows per card, so two of each button -- every copy must be painted.
+    assert len(by_id["v1"]["readActive"]) == 2
+    assert len(by_id["v1"]["bookmarkActive"]) == 2
+
     assert "is-read" in by_id["v1"]["classes"]
     assert "is-bookmarked" not in by_id["v1"]["classes"]
-    assert "is-active" in by_id["v1"]["readActive"]
-    assert "is-active" not in by_id["v1"]["bookmarkActive"]
+    assert all("is-active" in btn for btn in by_id["v1"]["readActive"])
+    assert all("is-active" not in btn for btn in by_id["v1"]["bookmarkActive"])
 
     assert "is-bookmarked" in by_id["v2"]["classes"]
     assert "is-read" not in by_id["v2"]["classes"]
-    assert "is-active" in by_id["v2"]["bookmarkActive"]
-    assert "is-active" not in by_id["v2"]["readActive"]
+    assert all("is-active" in btn for btn in by_id["v2"]["bookmarkActive"])
+    assert all("is-active" not in btn for btn in by_id["v2"]["readActive"])
 
 
 @pytest.mark.skipif(not node_available(), reason="node not installed")
