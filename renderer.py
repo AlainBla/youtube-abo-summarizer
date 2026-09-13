@@ -2,6 +2,7 @@
 
 import base64
 import gzip
+import hashlib
 import json
 import os
 import re
@@ -400,19 +401,45 @@ def _split_export_data(
     return index, chunks
 
 
-def _export_manifest(index: list[dict]) -> dict:
+def _export_manifest(index: list[dict], chunks: list[dict[str, str]]) -> dict:
     """Describe this export run for the update poll in the browser.
 
-    ``index`` is the newest-first list from ``_split_export_data()``, so its
-    first entry is the newest video. ``generated_at`` is the field the page
-    actually compares -- the counts only decide the wording of the banner.
+    ``index`` and ``chunks`` are the two outputs of ``_split_export_data()``
+    for this same run: ``index`` is the newest-first video list (so its first
+    entry is the newest video) and ``chunks`` carry the video_id -> summary
+    HTML that ``index`` leaves out. ``generated_at`` is the field the page
+    actually compares -- to decide *whether* something changed. Every other
+    field, old or new, only refines the banner's wording once a change is
+    already known.
+
+    ``summary_digest`` folds in a per-video record -- video_id plus a hash of
+    that video's summary (or of the empty string, for a video with none) --
+    in the same newest-first order as ``index``, so it changes when a
+    summary's text changes, when a summary is added or removed, and when one
+    is reassigned from one video to another (a plain hash of the summary
+    texts alone would miss that last case). A video without a summary still
+    contributes its record rather than being skipped, so "summary removed"
+    does not read as "nothing changed".
     """
     newest = index[0] if index else {}
+    summaries = {video_id: html for chunk in chunks for video_id, html in chunk.items()}
+    digest = hashlib.sha256()
+    summary_count = 0
+    for entry in index:
+        video_id = entry.get("video_id") or ""
+        summary = summaries.get(video_id, "")
+        if summary:
+            summary_count += 1
+        digest.update(video_id.encode("utf-8"))
+        digest.update(b"\x00")
+        digest.update(hashlib.sha256(summary.encode("utf-8")).digest())
     return {
         "generated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
         "video_count": len(index),
         "newest_id": newest.get("video_id"),
         "newest_published_at": newest.get("published_at"),
+        "summary_count": summary_count,
+        "summary_digest": digest.hexdigest()[:16],
     }
 
 
@@ -483,7 +510,7 @@ def render_export_html(
     # sync_url is operator-configured (not user content); wrap so autoescape preserves it
     safe_sync_url = Markup(sync_url) if sync_url else None
 
-    manifest = _export_manifest(index)
+    manifest = _export_manifest(index, chunks)
     manifest_path = output_path + EXPORT_MANIFEST_SUFFIX
     # The page resolves the sidecar relative to its own URL, so the basename is
     # all it needs for the usual /dir/file.html and /dir/ (index) deployments.

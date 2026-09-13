@@ -123,7 +123,7 @@ def test_a_complete_video_is_recognised_before_any_metadata_is_fetched(monkeypat
     )
     monkeypatch.setattr(collect, "get_video_by_id", lambda *a, **k: pytest.fail("API called"))
 
-    assert collect._process_single_video(_exploding_service(), "abc123", "model", NOW) is False
+    assert collect._process_single_video(_exploding_service(), "abc123", "model", NOW) == (False, False)
 
 
 def test_an_incomplete_entry_reuses_the_stored_metadata(monkeypatch):
@@ -139,7 +139,7 @@ def test_an_incomplete_entry_reuses_the_stored_metadata(monkeypatch):
     monkeypatch.setattr(collect, "get_video_by_id", lambda *a, **k: pytest.fail("API called"))
     monkeypatch.setattr(collect.store, "update_video_with_summary", lambda *a, **k: None)
 
-    assert collect._process_single_video(_exploding_service(), "abc123", "model", NOW) is False
+    assert collect._process_single_video(_exploding_service(), "abc123", "model", NOW) == (False, False)
 
 
 def test_a_video_the_store_does_not_know_is_still_fetched(monkeypatch):
@@ -155,5 +155,5 @@ def test_a_video_the_store_does_not_know_is_still_fetched(monkeypatch):
     monkeypatch.setattr(collect.time, "sleep", lambda s: None)
     monkeypatch.setattr(collect.store, "add_video", lambda entry: True)
 
-    assert collect._process_single_video(_exploding_service(), "abc123", "model", NOW) is True
+    assert collect._process_single_video(_exploding_service(), "abc123", "model", NOW) == (True, False)
     assert fetched == ["abc123"]

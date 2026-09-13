@@ -74,6 +74,88 @@ def test_empty_export_still_yields_a_valid_manifest(tmp_path):
         meta = json.load(f)
     assert meta["video_count"] == 0
     assert meta["newest_id"] is None
+    assert meta["summary_count"] == 0
+    assert isinstance(meta["summary_digest"], str) and meta["summary_digest"]
+
+
+# ── summary_count / summary_digest ───────────────────────────────────────────
+
+
+def _meta(tmp_path, videos, name="archive.html"):
+    out = _render_to(str(tmp_path), videos, name=name)
+    with open(out + ".meta.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def test_summary_count_ignores_videos_without_a_summary(tmp_path):
+    videos = [
+        video("v1", "2026-01-01T00:00:00Z"),
+        video("v2", "2026-02-01T00:00:00Z", summary=None),
+        video("v3", "2026-03-01T00:00:00Z", summary=""),
+    ]
+    meta = _meta(tmp_path, videos)
+    assert meta["summary_count"] == 1
+
+
+def test_summary_fields_are_also_in_the_embedded_manifest(tmp_path):
+    out = _render_to(str(tmp_path), [video("v1", "2026-01-01T00:00:00Z")])
+    with open(out, encoding="utf-8") as f:
+        html = f.read()
+    with open(out + ".meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+    embedded = _manifest_literal(html)
+    assert embedded["summary_count"] == meta["summary_count"] == 1
+    assert embedded["summary_digest"] == meta["summary_digest"]
+
+
+def test_digest_is_stable_across_reruns_of_the_same_videos(tmp_path):
+    videos = [video("v1", "2026-01-01T00:00:00Z"), video("v2", "2026-02-01T00:00:00Z")]
+    first = _meta(tmp_path, videos, name="a.html")
+    second = _meta(tmp_path, videos, name="b.html")
+    assert first["summary_digest"] == second["summary_digest"]
+
+
+def test_digest_changes_when_a_summary_is_edited(tmp_path):
+    base = [video("v1", "2026-01-01T00:00:00Z"), video("v2", "2026-02-01T00:00:00Z")]
+    before = _meta(tmp_path, base, name="before.html")
+    edited = [
+        video("v1", "2026-01-01T00:00:00Z", summary="<p>Rewritten</p>"),
+        video("v2", "2026-02-01T00:00:00Z"),
+    ]
+    after = _meta(tmp_path, edited, name="after.html")
+    assert before["summary_digest"] != after["summary_digest"]
+
+
+def test_digest_changes_when_a_summary_is_removed(tmp_path):
+    base = [video("v1", "2026-01-01T00:00:00Z"), video("v2", "2026-02-01T00:00:00Z")]
+    before = _meta(tmp_path, base, name="before.html")
+    dropped = [
+        video("v1", "2026-01-01T00:00:00Z", summary=None),
+        video("v2", "2026-02-01T00:00:00Z"),
+    ]
+    after = _meta(tmp_path, dropped, name="after.html")
+    assert before["summary_digest"] != after["summary_digest"]
+    assert before["summary_count"] == 2
+    assert after["summary_count"] == 1
+
+
+def test_digest_changes_when_a_summary_moves_to_a_different_video(tmp_path):
+    """A record keyed only by summary text would miss a summary reassigned
+    between videos with identical text elsewhere -- keying by video_id too
+    catches it."""
+    same_text = "<p>Shared text</p>"
+    base = [
+        video("v1", "2026-01-01T00:00:00Z", summary=same_text),
+        video("v2", "2026-02-01T00:00:00Z", summary=None),
+    ]
+    before = _meta(tmp_path, base, name="before.html")
+    moved = [
+        video("v1", "2026-01-01T00:00:00Z", summary=None),
+        video("v2", "2026-02-01T00:00:00Z", summary=same_text),
+    ]
+    after = _meta(tmp_path, moved, name="after.html")
+    assert before["summary_digest"] != after["summary_digest"]
+    assert before["summary_count"] == after["summary_count"] == 1
 
 
 def test_html_is_written_before_the_sidecar(tmp_path, monkeypatch):

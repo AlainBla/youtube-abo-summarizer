@@ -33,6 +33,7 @@ Usage:
 import argparse
 import collections
 import os
+import sys
 import time
 
 from dotenv import load_dotenv
@@ -43,6 +44,24 @@ import tags as tag_vocab
 import transcripts as tr
 
 load_dotenv()
+
+# Exit code signalling that this run changed stored content: a summary
+# written, a summary file rewritten by --fix-links, or tags rewritten by
+# --remap-tags. Any of those changes what the exported archive shows (tags
+# feed its filters and chips), so collect.sh's cron wrapper should re-export
+# on this the same way it does on collect.py's EXIT_NEW_VIDEOS. Kept equal to
+# that constant (pinned by tests/test_repair_exit_code.py) but defined here
+# rather than imported: openrouter (hence openai) is already on this module's
+# import path, but collect.py additionally pulls in googleapiclient and
+# google.auth for OAuth -- real weight to add just to read one integer off it.
+EXIT_CONTENT_CHANGED = 10
+
+
+def _exit_code(dry_run: bool, changed: bool) -> int:
+    """A dry run writes nothing, so it always exits 0 -- even when it reports
+    changes it would have made.
+    """
+    return EXIT_CONTENT_CHANGED if changed and not dry_run else 0
 
 
 def parse_args():
@@ -93,12 +112,15 @@ def parse_args():
     return parser.parse_args()
 
 
-def fix_links(entries, dry_run: bool) -> None:
+def fix_links(entries, dry_run: bool) -> int:
     """Rewrite stored summaries through openrouter's timestamp-link repair.
 
     Purely textual: recomputes each t= from its visible label, closes anchors the
     model left open, adds the missing ts-link class, and drops </p> tags the
     model placed mid-sentence. No API calls.
+
+    Returns the number of summaries that changed (or, under --dry-run, that
+    would have changed) -- the caller feeds that into the exit-code decision.
     """
     n_changed = 0
     for entry in entries:
@@ -115,14 +137,18 @@ def fix_links(entries, dry_run: bool) -> None:
             path.write_text(after, encoding="utf-8")
     verb = "would be repaired" if dry_run else "repaired"
     print(f"\nDone.  {n_changed} of {len(entries)} summaries {verb}.")
+    return n_changed
 
 
-def remap_tags(entries, dry_run: bool) -> None:
+def remap_tags(entries, dry_run: bool) -> int:
     """Rewrite stored tags through the controlled vocabulary. No API calls.
 
     Rejected old tags are deliberately not logged as candidates: the log exists
     to show what the model asks for now, and 10 700 historical inventions would
     bury that signal.
+
+    Returns the number of videos whose tags changed (or would change, under
+    --dry-run) -- the caller feeds that into the exit-code decision.
     """
     changed = 0
     emptied = 0
@@ -146,6 +172,7 @@ def remap_tags(entries, dry_run: bool) -> None:
     print(f"{len(distribution)} verschiedene Tags im Einsatz, häufigste:")
     for tag, count in distribution.most_common(15):
         print(f"  {count:5d}  {tag}")
+    return changed
 
 
 def main():
@@ -164,21 +191,21 @@ def main():
 
     if not entries:
         print("No videos to process.")
-        return
+        return _exit_code(args.dry_run, changed=False)
 
     if args.remap_tags:
         print(f"Scanning {len(entries)} video(s) for tags outside the vocabulary")
         if args.dry_run:
             print("  (dry-run — no changes will be written)")
-        remap_tags(entries, args.dry_run)
-        return
+        changed = remap_tags(entries, args.dry_run)
+        return _exit_code(args.dry_run, changed > 0)
 
     if args.fix_links:
         print(f"Scanning {len(entries)} video(s) for broken summary markup")
         if args.dry_run:
             print("  (dry-run — no changes will be written)")
-        fix_links(entries, args.dry_run)
-        return
+        changed = fix_links(entries, args.dry_run)
+        return _exit_code(args.dry_run, changed > 0)
 
     print(f"Scanning {len(entries)} video(s)  [model: {model}]")
     if args.dry_run:
@@ -261,7 +288,8 @@ def main():
         f"\nDone.  transcripts: {n_transcript_ok} fetched / {n_transcript_fail} failed  |  "
         f"summaries: {n_summarized} written / {n_rejected} rejected  |  skipped: {n_skipped}"
     )
+    return _exit_code(args.dry_run, n_summarized > 0)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

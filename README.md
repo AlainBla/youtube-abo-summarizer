@@ -216,12 +216,18 @@ the ID is genuinely absent.
 ### "New videos" banner
 
 Every export also writes a small manifest next to the HTML file — `full_archive.html` gets
-`full_archive.html.meta.json` — containing the generation timestamp, the video count, and the newest
-video ID. When the archive is served over HTTP(S), the open page re-fetches that manifest every five
+`full_archive.html.meta.json` — containing the generation timestamp, the video count, the newest
+video ID, how many videos carry a summary, and a short fingerprint over all summary texts. When the
+archive is served over HTTP(S), the open page re-fetches that manifest every five
 minutes (skipped while the tab is in the background, plus one immediate check when you return to the
 tab) and compares it against the values embedded at export time. If a newer export has been deployed,
-a banner appears at the top of the page: "3 neue Videos verfügbar" when the archive grew, otherwise
-"Archiv aktualisiert" — with a reload button and an "×" that dismisses it until the next export.
+a banner appears at the top of the page — with a reload button and an "×" that dismisses it until the
+next export. Its wording says what actually happened: "3 neue Videos verfügbar" when the archive grew;
+"2 neue Zusammenfassungen verfügbar" when the same videos gained summaries (a repaired transcript, a
+re-run summarization); "Zusammenfassungen aktualisiert" when summary texts changed without their number
+changing; "Archiv aktualisiert" for anything else. The summary wordings are only used when the video
+count is unchanged — an export that shrank (`--prune-days`, a narrower `--hours`) reports the generic
+text rather than blaming the departed videos on summaries.
 
 Nothing to configure: upload or serve the `.meta.json` file alongside the HTML and the banner works.
 If the manifest is missing (or the archive is opened as a local `file://` document) the page simply
@@ -489,9 +495,12 @@ Recommended crontab setup:
 
 Each report script activates the virtual environment, renders the HTML, sends the email, and cleans up HTML files older than 7 days.
 
-`collect.sh` regenerates the export archive as soon as a run has actually stored new videos: `collect.py`
-exits with code `10` in that case (`0` when it ran fine but added nothing), and the script chains the
-export onto that code.
+`collect.sh` regenerates the export archive as soon as a run has changed what the archive shows: `collect.py`
+exits with code `10` both when it stored a new video and when it wrote the summary a stored-but-incomplete
+entry was missing (`0` when it ran fine but changed nothing), and the script chains the export onto that code.
+`repair.py` uses the same code, so a repair run can be chained the same way:
+`python repair.py --fix-links; [ $? -eq 10 ] && python export.py --all --output yt.html` — a `--dry-run` always
+exits `0`.
 
 It also survives a broken OAuth setup. Every run is bounded by `timeout -k 30s $COLLECT_TIMEOUT` (default 30 minutes), and when `token.pickle` is missing the subscription run is skipped outright — without a usable token `build_service()` opens a browser prompt that under cron blocks forever instead of failing. On exit code `11` (`EXIT_AUTH_FAILED`: no usable token, a refused refresh, a 401 on `subscriptions.list`, or an account with no subscriptions) — and on a timeout of the subscription run — the collection is repeated from `$CHANNELS_FILE`, one `UC...` ID per line, which needs neither token nor quota. A missing channel file is logged as an error and leaves the run failed rather than silently doing nothing. Exhausted API quota (403) does **not** trigger the fallback, and neither does a network failure: those stay exit `1`, because a blip must not cost a second full pass over every channel.
 

@@ -2,10 +2,12 @@
 # Run the collection phase: fetch new videos, transcripts, and summaries.
 # Schedule this frequently (e.g. every hour or every 15 minutes via cron).
 #
-# When the run actually added videos (collect.py exits with EXIT_NEW_VIDEOS,
-# 10), the export archive is regenerated right away so the new videos show up
-# without waiting for anything else -- and so the archive's update banner only
-# fires when there is something new to announce.
+# When the run changed what the archive shows (collect.py exits with
+# EXIT_NEW_VIDEOS, 10: a new video stored, or a summary written for a video
+# that was already in the store but had none), the export archive is
+# regenerated right away so the change shows up without waiting for anything
+# else -- and so the archive's update banner only fires when there is
+# something to announce.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"

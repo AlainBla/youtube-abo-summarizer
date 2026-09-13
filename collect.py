@@ -48,10 +48,14 @@ load_dotenv()
 
 _SHORTS_DEFAULT_MAX_SECONDS = 180
 
-# Exit code telling the caller that this run put new videos into the store.
-# collect.sh chains the export onto it, so the archive -- and the "new videos"
-# banner it shows -- is only regenerated when there is something to announce.
-# Distinct from 0 (ran fine, nothing new) and 1 (failed).
+# Exit code telling the caller that this run changed what the archive shows:
+# a brand-new video stored, or a summary newly written for a video that was
+# already in the store (its transcript fetch had failed earlier and this run
+# filled the gap -- store.add_video() is never called for that case, so it
+# would otherwise leave no trace in the exit code at all). collect.sh chains
+# the export onto it, so the archive -- and its "new videos"/"updated" banner
+# -- is only regenerated when there is something to announce. Distinct from
+# 0 (ran fine, nothing changed) and 1 (failed).
 EXIT_NEW_VIDEOS = 10
 
 # Exit code telling the caller that OAuth is unusable: no credentials, a token
@@ -62,8 +66,15 @@ EXIT_NEW_VIDEOS = 10
 EXIT_AUTH_FAILED = 11
 
 
-def _exit_code(added: int) -> int:
-    return EXIT_NEW_VIDEOS if added else 0
+def _exit_code(added: int, summarized: int = 0) -> int:
+    """EXIT_NEW_VIDEOS now covers two distinct events: a brand-new video
+    stored, or a summary newly written for a video that was already in the
+    store (its transcript fetch had failed earlier and this run filled the
+    gap). Either one changes what the exported archive shows, so the two
+    counts merge here -- but only here; they stay separate everywhere else so
+    a cron log can still say which one happened.
+    """
+    return EXIT_NEW_VIDEOS if added or summarized else 0
 
 
 def _is_auth_failure(exc: BaseException) -> bool:
@@ -380,8 +391,15 @@ def _fetch_video_metadata(video_id: str, get_service, no_proxy: bool = False) ->
         raise
 
 
-def _process_single_video(get_service, video_id: str, model: str, now: datetime, skip_shorts: bool = True, no_proxy: bool = False) -> bool:
-    """Fetch and process a single video. Returns True if added to store."""
+def _process_single_video(get_service, video_id: str, model: str, now: datetime, skip_shorts: bool = True, no_proxy: bool = False) -> tuple[bool, bool]:
+    """Fetch and process a single video. Returns (added, summarized).
+
+    Both halves change what the archive shows, and the caller has to see them
+    apart: `added` is a video the store did not have, `summarized` an
+    already-stored one whose missing summary this run filled in (its
+    transcript fetch had failed earlier). store.add_video() is never called
+    for the second case, so it would otherwise leave no trace at all.
+    """
     # The store first, before any network call. The queue re-offers IDs that
     # were collected long ago, and every metadata field a stored video needs is
     # already a column here -- fetching first meant a yt-dlp run and, on a
@@ -391,7 +409,7 @@ def _process_single_video(get_service, video_id: str, model: str, now: datetime,
         print(f"Fetching video {video_id}...")
         print(f"  → {existing['title']}")
         print("    Already in store with transcript and summary, skipping.")
-        return False
+        return False, False
 
     print(f"Fetching video {video_id}...")
     if existing:
@@ -402,7 +420,7 @@ def _process_single_video(get_service, video_id: str, model: str, now: datetime,
         video = _fetch_video_metadata(video_id, get_service, no_proxy=no_proxy)
     if not video:
         print(f"Error: video '{video_id}' not found.", file=sys.stderr)
-        return False
+        return False, False
 
     vid_id = video["video_id"]
     vid_title = video["title"]
@@ -411,12 +429,12 @@ def _process_single_video(get_service, video_id: str, model: str, now: datetime,
 
     if skip_shorts and _is_short(video.get("duration")):
         print(f"  → {vid_title} [Short, skipped]")
-        return False
+        return False, False
 
     should_filter, matched_pattern = _should_filter_title(vid_title)
     if should_filter:
         print(f"    → Titel ignoriert (Filter match: '{matched_pattern}')")
-        return False
+        return False, False
 
     print(f"  → {vid_title}")
 
@@ -472,9 +490,9 @@ def _process_single_video(get_service, video_id: str, model: str, now: datetime,
             tags=tags,
             transcript_lang=lang,
         )
-        return False
+        return False, summary is not None
     else:
-        return store.add_video({
+        added = store.add_video({
             "channel_id": channel_id,
             "channel_title": channel_title,
             "video_id": vid_id,
@@ -490,6 +508,7 @@ def _process_single_video(get_service, video_id: str, model: str, now: datetime,
             "tags": tags,
             "collected_at": now.isoformat(),
         })
+        return added, False
 
 
 def main():
@@ -503,11 +522,19 @@ def main():
         get_service = _lazy_service(require_token=True)
         now = datetime.now(tz=timezone.utc)
         added_count = 0
+        summarized_count = 0
         for vid in video_ids:
-            if _process_single_video(get_service, vid, model, now, skip_shorts=not args.include_shorts, no_proxy=args.no_proxy):
-                added_count += 1
-        print(f"\nDone. {added_count} video(s) added to store.")
-        return added_count
+            added, summarized = _process_single_video(
+                get_service, vid, model, now,
+                skip_shorts=not args.include_shorts, no_proxy=args.no_proxy,
+            )
+            added_count += bool(added)
+            summarized_count += bool(summarized)
+        print(
+            f"\nDone. {added_count} video(s) added to store, "
+            f"{summarized_count} summary(ies) written for previously stored video(s)."
+        )
+        return added_count, summarized_count
 
     # --- Resolve channel list ---
     get_service = _lazy_service(require_token=not args.auth)
@@ -563,6 +590,7 @@ def main():
     # --- Fetch videos, transcripts, summaries ---
     now = datetime.now(tz=timezone.utc)
     total_added = 0
+    total_summarized = 0
 
     for ch in channels:
         channel_id = ch["channel_id"]
@@ -658,6 +686,11 @@ def main():
                     tags=tags,
                     transcript_lang=lang,
                 )
+                if summary is not None:
+                    # Same video as before, but a summary now exists where it
+                    # didn't -- the archive gains content even though nothing
+                    # was "added" in store.add_video()'s sense.
+                    total_summarized += 1
             else:
                 added = store.add_video({
                     "channel_id": channel_id,
@@ -687,9 +720,13 @@ def main():
         if removed:
             print(f"\nPruned {removed} store entry(s) older than {args.prune_days} days.")
 
-    print(f"\nDone. {total_added} new video(s) added to store.")
-    return total_added
+    print(
+        f"\nDone. {total_added} new video(s) added to store, "
+        f"{total_summarized} summary(ies) written for previously stored video(s)."
+    )
+    return total_added, total_summarized
 
 
 if __name__ == "__main__":
-    sys.exit(_exit_code(main() or 0))
+    added, summarized = main() or (0, 0)
+    sys.exit(_exit_code(added, summarized))
