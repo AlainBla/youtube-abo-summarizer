@@ -164,7 +164,8 @@ def main():
             time.sleep(5)
             if transcript:
                 print(f"    Summarizing via {model}...")
-                summary, _tags = openrouter.summarize_video(vid_id, vid_title, transcript, model)
+                summary, _tags = openrouter.summarize_video(vid_id, vid_title, transcript, model,
+                                                            channel=title)
             else:
                 if not transcript_error or transcript_error == "unavailable":
                     print("    No transcript available.")

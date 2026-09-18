@@ -126,7 +126,7 @@ def test_summarize_path_triggers_the_signal(monkeypatch):
     monkeypatch.setattr(repair.store, "get_llm_transcript_path", lambda vid: None)
     monkeypatch.setattr(
         repair.openrouter, "summarize_video",
-        lambda vid, title, transcript, model: ("<p>summary</p>", ["Tag1"]),
+        lambda vid, title, transcript, model, channel=None: ("<p>summary</p>", ["Tag1"]),
     )
     monkeypatch.setattr(repair.store, "update_video_with_summary", lambda *a, **kw: None)
 

@@ -79,7 +79,7 @@ def test_a_summary_filled_in_for_an_existing_video_is_reported_as_summarized(mon
     monkeypatch.setattr(collect.store, "update_video_with_summary", lambda *a, **k: None)
     monkeypatch.setattr(
         collect.openrouter, "summarize_video",
-        lambda vid, title, transcript, model: ("<p>Zusammenfassung</p>", ["Tag1"]),
+        lambda vid, title, transcript, model, channel=None: ("<p>Zusammenfassung</p>", ["Tag1"]),
     )
     monkeypatch.setattr(
         collect.ytdlp_meta, "get_video_metadata",
@@ -98,7 +98,7 @@ def test_a_rejected_summary_is_not_counted_as_a_change(monkeypatch, tmp_path):
     transcript_path = tmp_path / "abc123.de.txt"
     transcript_path.write_text("Ein Transkript.", encoding="utf-8")
 
-    def reject(vid, title, transcript, model):
+    def reject(vid, title, transcript, model, channel=None):
         raise collect.openrouter.SummaryRejected("hit the output cap")
 
     monkeypatch.setattr(collect.store, "get_video", lambda vid: dict(STORED))

@@ -220,6 +220,7 @@ def main():
     for entry in entries:
         vid_id    = entry["video_id"]
         vid_title = entry["title"]
+        vid_channel = entry.get("channel_title")
         t_exists  = entry["transcript"] is not None
         s_exists  = entry["summary"] is not None
         t_error   = entry.get("transcript_error")
@@ -274,7 +275,8 @@ def main():
             llm_path = store.get_llm_transcript_path(vid_id)
             llm_input = llm_path.read_text(encoding="utf-8") if llm_path else transcript
             try:
-                summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
+                summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model,
+                                                   channel=vid_channel)
             except openrouter.SummaryRejected as e:
                 print(f"    Summary rejected: {e} — left unchanged.")
                 n_rejected += 1

@@ -475,7 +475,8 @@ def _process_single_video(get_service, video_id: str, model: str, now: datetime,
             llm_input = manual if manual else transcript
         print(f"    Summarizing via {model}...")
         try:
-            summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
+            summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model,
+                                                       channel=channel_title)
         except openrouter.SummaryRejected as e:
             print(f"    Summary rejected: {e} — stored without summary.")
             summary, tags = None, None
@@ -668,7 +669,8 @@ def main():
                     llm_input = manual if manual else transcript
                 print(f"    Summarizing via {model}...")
                 try:
-                    summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model)
+                    summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model,
+                                                       channel=channel_title)
                 except openrouter.SummaryRejected as e:
                     print(f"    Summary rejected: {e} — stored without summary.")
                     summary, tags = None, None

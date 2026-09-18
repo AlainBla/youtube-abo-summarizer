@@ -35,6 +35,13 @@ Summary structure:
    Only use <ul>/<li> if the content is an actual enumeration (e.g. a list of steps or items).
 3. A concluding <h3> with a short <p> (2–3 sentences) summarising the overall message.
 
+Name the person speaking. The user message carries the channel as
+<channel>...</channel>: use that name — "SpeckObst erklärt…", "Alex Ziskind zeigt…" — unless
+the transcript itself gives a more specific one (the presenter introduces themselves, or is
+addressed by name), in which case use that. Never fall back to a generic label: no "der
+Creator", no "the creator", no "der YouTuber", no "der Host", no "der Sprecher". When no
+channel is given and the transcript names nobody, write around it ("im Video wird gezeigt…").
+
 The transcript contains timestamp markers in [MM:SS] format at the start of each segment.
 Include timestamp links to the relevant positions in the video using this exact HTML format:
   <a href="https://www.youtube.com/watch?v=VIDEO_ID&t=SECONDS" class="ts-link">MM:SS</a>
@@ -348,18 +355,31 @@ _CHUNK_SYSTEM_PROMPT = (
 )
 
 
-def _build_user_message(video_id: str, title: str, transcript: str) -> str:
+def _channel_line(channel: str | None) -> str:
+    """The channel as its own delimited element, or nothing at all.
+
+    Nothing rather than an empty element: <channel></channel> would read as a
+    name the model is expected to fill in, and it does not have one either.
+    """
+    return f"Channel: <channel>{channel}</channel>\n" if channel else ""
+
+
+def _build_user_message(
+    video_id: str, title: str, transcript: str, channel: str | None = None
+) -> str:
     """Build the user message for the LLM, wrapping untrusted inputs in delimiters.
 
-    Title and transcript come from YouTube and are potentially attacker-controlled.
-    XML-style delimiters make the boundary between instructions and data explicit,
-    reducing the effectiveness of prompt injection via crafted video metadata.
+    Channel, title and transcript come from YouTube and are potentially
+    attacker-controlled. XML-style delimiters make the boundary between
+    instructions and data explicit, reducing the effectiveness of prompt
+    injection via crafted video metadata.
     """
     duration = _transcript_duration(transcript)
     duration_line = f"Video duration: {_format_duration(duration)}\n" if duration else ""
     return (
         f"Video ID: {video_id}\n"
         f"{duration_line}"
+        f"{_channel_line(channel)}"
         f"Video title: <title>{title}</title>\n\n"
         f"Transcript (with timestamps):\n"
         f"<transcript>\n{transcript}\n</transcript>"
@@ -432,14 +452,20 @@ def _summarize_chunk(
 
 
 def _build_synthesis_message(
-    video_id: str, title: str, transcript: str, chunk_summaries: list[str]
+    video_id: str, title: str, transcript: str, chunk_summaries: list[str],
+    channel: str | None = None,
 ) -> str:
-    """Build the synthesis user message from ordered chunk summaries."""
+    """Build the synthesis user message from ordered chunk summaries.
+
+    The final prose comes out of this pass, so it needs the channel as much as
+    the single-pass message does.
+    """
     duration = _transcript_duration(transcript)
     duration_line = f"Video duration: {_format_duration(duration)}\n" if duration else ""
     parts = [
         f"Video ID: {video_id}\n",
         f"{duration_line}",
+        _channel_line(channel),
         f"Video title: <title>{title}</title>\n\n",
         "The transcript was too long for a single pass. "
         "The following are key-point summaries of consecutive transcript segments, in order. "
@@ -450,7 +476,9 @@ def _build_synthesis_message(
     return "".join(parts)
 
 
-def summarize_video(video_id: str, title: str, transcript: str, model: str) -> tuple[str, list[str]]:
+def summarize_video(
+    video_id: str, title: str, transcript: str, model: str, channel: str | None = None
+) -> tuple[str, list[str]]:
     """Return an (HTML-fragment summary, tags list) tuple for the video.
 
     When the transcript exceeds the model's context window the function
@@ -462,13 +490,14 @@ def summarize_video(video_id: str, title: str, transcript: str, model: str) -> t
     chunks = _split_transcript_chunks(transcript)
 
     if len(chunks) == 1:
-        user_message = _build_user_message(video_id, title, transcript)
+        user_message = _build_user_message(video_id, title, transcript, channel=channel)
     else:
         chunk_summaries = [
             _summarize_chunk(client, model, video_id, title, chunk, i, len(chunks))
             for i, chunk in enumerate(chunks)
         ]
-        user_message = _build_synthesis_message(video_id, title, transcript, chunk_summaries)
+        user_message = _build_synthesis_message(video_id, title, transcript, chunk_summaries,
+                                                channel=channel)
 
     response = client.chat.completions.create(
         model=model,
