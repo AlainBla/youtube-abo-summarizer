@@ -418,6 +418,14 @@ refuses that for tabs it did not open by script, so it may simply stay open with
 in the archive after `ingest_worker.sh` has processed the queue (it runs every minute) and the
 re-export that follows it.
 
+On the archive page itself, a successful ingest offers a **"Auf Zusammenfassung warten"** button in
+the sync bar. Pressing it makes the page check for a new export every 15 seconds (up to 10 minutes)
+and reload straight to that video once it is there. The wait survives the reload, and if the new
+export happened to be about a different video it simply keeps waiting. Submitting a video that is
+already in the archive with a summary queues nothing — the page jumps to it right away, and the
+YouTube button says "Schon im Archiv" and opens it instead of claiming to have queued anything.
+A `file://` archive gets no wait button: there is no manifest there to poll.
+
 ### Production deployment
 
 `python sync_server.py` starts Flask's development server — not suitable for production. Use **Gunicorn + systemd + Nginx**:

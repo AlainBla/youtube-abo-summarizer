@@ -45,6 +45,7 @@ function __el(id) {
       disabled: false,
       hidden: false,
       style: {},
+      dataset: {},
       options: __options(id),
       classList: {add: function () {}, remove: function () {}, toggle: function () {}},
       addEventListener: function () {},

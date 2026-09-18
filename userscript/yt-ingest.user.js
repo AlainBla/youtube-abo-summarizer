@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube → Archiv-Ingest
 // @namespace    youtube-abo-summarizer
-// @version      1.4.0
+// @version      1.6.0
 // @description  Adds a button on YouTube that queues the current video for transcription and summarisation, by driving the Ingest field of your own archive page.
 // @author       youtube-abo-summarizer
 // @match        https://www.youtube.com/*
@@ -61,6 +61,7 @@
     button: 'Zusammenfassen',
     sending: 'Wird gesendet…',
     queued: 'In die Warteschlange gestellt',
+    alreadyThere: 'Schon im Archiv \u2014 wird ge\u00f6ffnet',
     failed: 'Fehlgeschlagen',
     notLoggedIn: 'Nicht angemeldet — im Archiv anmelden und erneut versuchen',
     noVideo: 'Keine Video-ID auf dieser Seite',
@@ -184,7 +185,10 @@
       let sawDisabled = false;
       return waitFor(function () {
         if (btn.disabled) { sawDisabled = true; return null; }
-        if (input.value === '') return { ok: true };
+        // Cleared without the button ever being disabled: doIngest() recognised
+        // the video as already in the archive and never sent a request. Saying
+        // "queued" there would be a lie, and the useful thing is to show it.
+        if (input.value === '') return sawDisabled ? { ok: true } : { ok: true, already: true };
         // Never disabled and the field still holds the ID: doIngest() bailed
         // out before sending, which it only does on an unusable video ID.
         return sawDisabled ? { ok: false } : null;
@@ -201,11 +205,14 @@
         report('not-logged-in', videoId);
         return;
       }
-      banner(res.ok ? TEXT.queued : TEXT.failed, res.ok);
-      report(res.ok ? 'queued' : 'failed', videoId);
-      // Chrome refuses window.close() for a tab the script did not open with
-      // window.open, so this may do nothing -- the banner is the real report.
-      if (res.ok) setTimeout(function () { try { window.close(); } catch (e) {} }, 1500);
+      banner(res.already ? TEXT.alreadyThere : res.ok ? TEXT.queued : TEXT.failed, res.ok);
+      report(res.already ? 'already' : res.ok ? 'queued' : 'failed', videoId);
+      // Ten seconds, not one and a half: the archive offers "wait for the
+      // summary" after a successful ingest, and that offer is worth nothing in
+      // a tab that is gone before it can be switched to. Chrome refuses
+      // window.close() for a tab the script did not open with window.open
+      // anyway, so this may do nothing -- the banner is the real report.
+      if (res.ok) setTimeout(function () { try { window.close(); } catch (e) {} }, 10000);
     });
   }
 
@@ -429,6 +436,14 @@
         // Every YouTube tab runs this listener; only the one showing the video
         // that was queued should say anything.
         if (!btn || !newer || newer.videoId !== btn.dataset.videoId) return;
+        if (newer.state === 'already') {
+          flash(btn, TEXT.alreadyThere);
+          // It is already summarised, so there is nothing to wait for -- open
+          // it where the reader is, which is what asking for it meant.
+          GM_openInTab(ARCHIVE_URL + '?v=' + encodeURIComponent(newer.videoId),
+                       { active: true, insert: true });
+          return;
+        }
         flash(btn, newer.state === 'queued' ? TEXT.queued
                  : newer.state === 'failed' ? TEXT.failed
                  : TEXT.notLoggedIn);

@@ -546,6 +546,8 @@
   <div id="sync-ingest" style="display:none">
     <input type="text" id="ingest-input" placeholder="YouTube URL oder Video-ID" autocomplete="off">
     <button id="ingest-btn" onclick="doIngest()">Hinzufügen</button>
+    <button id="ingest-wait-btn" style="display:none" onclick="startIngestWait()">Auf Zusammenfassung warten</button>
+    <button id="ingest-wait-cancel" style="display:none" onclick="cancelIngestWait()">Abbrechen</button>
   </div>
   <span class="sync-status" id="sync-status"></span>
 </div>
@@ -784,6 +786,13 @@ const I18N = {
     singleNotFound: function(id) { return 'Video ' + id + ' ist nicht in diesem Archiv.'; },
     fullArchive: 'Vollst\u00e4ndiges Archiv',
     labelLength: 'L\u00e4nge',
+    waitBtn: 'Auf Zusammenfassung warten',
+    waitRunning: function(mins) { return 'Warte auf die Zusammenfassung\u2026 (noch ' + mins + ' Min)'; },
+    waitArrived: 'Zusammenfassung ist da',
+    waitTimeout: 'Noch nicht fertig \u2014 weiter warten?',
+    waitCancel: 'Abbrechen',
+    waitContinue: 'Weiter warten',
+    alreadyInArchive: 'Video ist bereits im Archiv',
     lengthUnder: function(n) { return '< ' + n + ' Min'; },
     singleTryFull: 'Im vollst\u00e4ndigen Archiv \u00f6ffnen',
   },
@@ -865,6 +874,13 @@ const I18N = {
     singleNotFound: function(id) { return 'Video ' + id + ' is not in this archive.'; },
     fullArchive: 'Full archive',
     labelLength: 'Length',
+    waitBtn: 'Wait for the summary',
+    waitRunning: function(mins) { return 'Waiting for the summary\u2026 (' + mins + ' min left)'; },
+    waitArrived: 'The summary is here',
+    waitTimeout: 'Not ready yet \u2014 keep waiting?',
+    waitCancel: 'Cancel',
+    waitContinue: 'Keep waiting',
+    alreadyInArchive: 'Video is already in the archive',
     lengthUnder: function(n) { return '< ' + n + ' min'; },
     singleTryFull: 'Open in the full archive',
   }
@@ -1243,6 +1259,20 @@ function doIngest() {
     updateSyncStatus(s.syncStatusIngestFailed);
     return;
   }
+  // Already here, summary and all: queueing it would put collect.py through a
+  // run that ends in exit 0 -- no re-export, nothing to wait for. Show the
+  // video instead, which is what asking for it meant.
+  ingestTargetKnown(videoId).then(function (known) {
+    if (!known) return postIngest(videoId, s);
+    document.getElementById('ingest-input').value = '';
+    updateSyncStatus(s.alreadyInArchive);
+    // Not in a background tab (the userscript opens one): reloading a 12 MB
+    // archive nobody is looking at helps no one.
+    if (document.visibilityState !== 'hidden') location.href = ingestWaitUrl(videoId);
+  });
+}
+
+function postIngest(videoId, s) {
   var btn = document.getElementById('ingest-btn');
   if (btn) btn.disabled = true;
   updateSyncStatus(s.syncStatusIngesting);
@@ -1266,6 +1296,7 @@ function doIngest() {
     if (res.status === 200 || res.status === 202) {
       updateSyncStatus(s.syncStatusIngested);
       document.getElementById('ingest-input').value = '';
+      showWaitOffer(videoId);
     } else {
       updateSyncStatus(s.syncStatusIngestFailed);
     }
@@ -1418,6 +1449,9 @@ function dismissUpdate() {
 
 function checkForUpdate() {
   if (!updatePollable()) return Promise.resolve();
+  // A running wait polls the same manifest and reloads on a change; a banner
+  // announcing that change seconds beforehand is noise.
+  if (waitTimer) return Promise.resolve();
   return fetch(MANIFEST_URL, {cache: 'no-store'})
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (meta) {
@@ -1437,6 +1471,188 @@ function startUpdatePolling() {
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') checkForUpdate();
   });
+}
+
+// ── Waiting for a queued video ───────────────────────────────────────────────
+// A freshly ingested video needs the worker, a transcript, the LLM and a
+// re-export before it can be shown -- minutes, not seconds. The manifest only
+// reports *that* a new export happened, never which video it brought, so the
+// wait ends by reloading into ?v=ID and letting the deep-link view decide:
+// found -> done, missing -> this export was someone else's, keep waiting.
+// Resolves once the index is decoded. Submissions can arrive earlier than
+// that -- the sync boot reveals the Ingest box from /api/whoami, well before
+// the data blob is parsed -- and answering "not in the archive" then would
+// queue videos that are already there. The timeout covers the path where the
+// blob never decodes at all (no DecompressionStream), where waiting forever
+// would swallow the submission instead.
+let markDataReady = function () {};
+const dataReadyPromise = new Promise(function (resolve) { markDataReady = resolve; });
+
+function whenDataReady() {
+  if (dataReady) return Promise.resolve();
+  return Promise.race([
+    dataReadyPromise,
+    new Promise(function (resolve) { setTimeout(resolve, 10000); }),
+  ]);
+}
+
+const WAIT_KEY = 'yt_ingest_wait';
+const WAIT_POLL_MS = 15 * 1000;
+const WAIT_MAX_MS = 10 * 60 * 1000;
+let waitTimer = null;
+
+function loadIngestWait() {
+  try {
+    return JSON.parse(localStorage.getItem(WAIT_KEY) || 'null');
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveIngestWait(state) {
+  try { localStorage.setItem(WAIT_KEY, JSON.stringify(state)); } catch (e) {}
+}
+
+function clearIngestWait() {
+  try { localStorage.removeItem(WAIT_KEY); } catch (e) {}
+  if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
+  var waitBtn = document.getElementById('ingest-wait-btn');
+  var cancelBtn = document.getElementById('ingest-wait-cancel');
+  if (waitBtn) waitBtn.style.display = 'none';
+  if (cancelBtn) cancelBtn.style.display = 'none';
+}
+
+function ingestWaitReady(saved, meta) {
+  return !!(saved && meta && meta.generated_at && meta.generated_at !== saved.generated_at);
+}
+
+function ingestWaitExpired(saved, now) {
+  return !!saved && (now - saved.started) > WAIT_MAX_MS;
+}
+
+function ingestWaitUrl(videoId) {
+  return location.href.split('#')[0].split('?')[0] + '?v=' + encodeURIComponent(videoId);
+}
+
+// True when the archive already shows this video *with* a summary: then there
+// is nothing to wait for, and nothing to queue either -- collect.py would exit
+// 0 on it, no re-export would follow, and the wait would run its full length
+// for an event that is never coming. A stored video whose transcript failed
+// has no summary and is worth queueing again.
+function ingestTargetKnown(videoId) {
+  return whenDataReady().then(function () { return lookupComplete(videoId); });
+}
+
+function lookupComplete(videoId) {
+  if (!dataReady) return Promise.resolve(false);
+  var hit = null;
+  for (var i = 0; i < VIDEOS.length; i++) {
+    if (VIDEOS[i].video_id === videoId) { hit = VIDEOS[i]; break; }
+  }
+  if (!hit) return Promise.resolve(false);
+  return ensureChunk(hit._c).then(function () {
+    return !!getSummary(hit);
+  }).catch(function () { return false; });
+}
+
+function showWaitOffer(videoId, label) {
+  var btn = document.getElementById('ingest-wait-btn');
+  // A file:// archive has no manifest to poll, so the wait could only ever
+  // time out. Better no button than one that cannot work.
+  if (!btn || !updatePollable()) return;
+  var s = I18N[currentLang || EMBEDDED_DEFAULT];
+  btn.dataset.videoId = videoId;
+  btn.textContent = label || s.waitBtn;
+  btn.style.display = '';
+}
+
+function renderWaitStatus(saved) {
+  var s = I18N[currentLang || EMBEDDED_DEFAULT];
+  var left = Math.max(0, Math.ceil((WAIT_MAX_MS - (Date.now() - saved.started)) / 60000));
+  updateSyncStatus(s.waitRunning(left));
+}
+
+function startIngestWait(videoId) {
+  var btn = document.getElementById('ingest-wait-btn');
+  var id = videoId || (btn && btn.dataset.videoId);
+  if (!id) return;
+  var saved = loadIngestWait();
+  // "Keep waiting" after a timeout restarts the clock rather than resuming a
+  // window that has already run out.
+  saveIngestWait({
+    video_id: id,
+    generated_at: MANIFEST.generated_at,
+    started: (saved && saved.video_id === id && !ingestWaitExpired(saved, Date.now()))
+      ? saved.started : Date.now(),
+  });
+  if (btn) btn.style.display = 'none';
+  var cancelBtn = document.getElementById('ingest-wait-cancel');
+  if (cancelBtn) {
+    cancelBtn.textContent = I18N[currentLang || EMBEDDED_DEFAULT].waitCancel;
+    cancelBtn.style.display = '';
+  }
+  renderWaitStatus(loadIngestWait());
+  if (waitTimer) clearInterval(waitTimer);
+  waitTimer = setInterval(pollIngestWait, WAIT_POLL_MS);
+}
+
+function cancelIngestWait() {
+  clearIngestWait();
+  updateSyncStatus('');
+}
+
+function pollIngestWait() {
+  var saved = loadIngestWait();
+  if (!saved) { clearIngestWait(); return Promise.resolve(); }
+  if (ingestWaitExpired(saved, Date.now())) {
+    if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
+    var s = I18N[currentLang || EMBEDDED_DEFAULT];
+    updateSyncStatus(s.waitTimeout);
+    showWaitOffer(saved.video_id, s.waitContinue);
+    var cancelBtn = document.getElementById('ingest-wait-cancel');
+    if (cancelBtn) cancelBtn.style.display = '';
+    return Promise.resolve();
+  }
+  renderWaitStatus(saved);
+  return fetch(MANIFEST_URL, {cache: 'no-store'})
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (meta) {
+      if (!ingestWaitReady(saved, meta)) return;
+      if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
+      location.href = ingestWaitUrl(saved.video_id);
+    })
+    .catch(function () { /* offline or mid-deploy: the next tick tries again */ });
+}
+
+// Called on load. Re-pinning the baseline to the export this page *is* comes
+// first: the saved value is by definition older than the manifest we are
+// looking at, so without it the first poll would reload again immediately,
+// and again after that.
+function resumeIngestWait() {
+  var saved = loadIngestWait();
+  if (!saved) return;
+  saved.generated_at = MANIFEST.generated_at;
+  saveIngestWait(saved);
+  if (ingestWaitExpired(saved, Date.now())) {
+    // Ten minutes are ten minutes, reload or no reload: offer to continue
+    // rather than silently granting another window.
+    var s = I18N[currentLang || EMBEDDED_DEFAULT];
+    updateSyncStatus(s.waitTimeout);
+    showWaitOffer(saved.video_id, s.waitContinue);
+    var cancelBtn = document.getElementById('ingest-wait-cancel');
+    if (cancelBtn) { cancelBtn.textContent = s.waitCancel; cancelBtn.style.display = ''; }
+    return;
+  }
+  startIngestWait(saved.video_id);
+}
+
+// The deep-link view is the only thing that can say whether the wait is over.
+function ingestWaitObserve(videoId, found) {
+  var saved = loadIngestWait();
+  if (!saved || saved.video_id !== videoId) return;
+  if (!found) return;  // this export brought something else; keep waiting
+  clearIngestWait();
+  updateSyncStatus(I18N[currentLang || EMBEDDED_DEFAULT].waitArrived);
 }
 
 // ── Single-video deep link (?v=ID) ───────────────────────────────────────────
@@ -1599,6 +1815,12 @@ function applyLang(lang) {
   document.getElementById('label-read').textContent = s.labelRead;
   document.getElementById('label-bookmark').textContent = s.labelBookmark;
   document.getElementById('label-length').textContent = s.labelLength;
+  var waitBtn = document.getElementById('ingest-wait-btn');
+  if (waitBtn && waitBtn.style.display !== 'none') {
+    waitBtn.textContent = waitTimer ? s.waitContinue : s.waitBtn;
+  }
+  var waitCancelBtn = document.getElementById('ingest-wait-cancel');
+  if (waitCancelBtn) waitCancelBtn.textContent = s.waitCancel;
   document.getElementById('label-sort').textContent = s.labelSort;
 
   {% if sync_url %}
@@ -1951,7 +2173,10 @@ function renderPage(page, skipScroll) {
   }
 
   // A shared link should show the whole summary, not the "more" teaser.
-  if (singleVideoId) expandSingleSummary();
+  if (singleVideoId) {
+    ingestWaitObserve(singleVideoId, slice.length > 0);
+    expandSingleSummary();
+  }
 
   // Restore focused highlight after re-render
   if (focusedIndex >= 0) {
@@ -2197,6 +2422,7 @@ async function bootstrap() {
   CHUNKS[0] = DATA_OBJ.summaries || {};
 {% endif %}
   dataReady = true;
+  markDataReady();
   populateChannelFilter();
   populateTagFilter();
   // The pre-rendered cards carry the export's default language. If the visitor
@@ -2206,6 +2432,10 @@ async function bootstrap() {
   applyLang(lang);
 {% if sync_url %}
   initSync();
+  // After a wait-driven reload the deep-link view has just decided whether the
+  // video is here; resuming re-pins the baseline and either keeps polling or
+  // finds the wait already cleared by ingestWaitObserve().
+  resumeIngestWait();
 {% endif %}
   prefetchChunks();
 }
