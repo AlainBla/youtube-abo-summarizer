@@ -30,6 +30,17 @@
     }
     .page-header h1 { font-size: 1.8rem; font-weight: 700; color: #fff; }
     .page-header .meta { color: #888; font-size: 0.9rem; margin-top: 0.25rem; }
+    .full-link {
+      color: #aaa;
+      font-size: 0.85rem;
+      text-decoration: none;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 0.35rem 0.6rem;
+      white-space: nowrap;
+    }
+    .full-link:hover { color: #fff; border-color: #555; }
+    .header-links { display: flex; align-items: center; gap: 0.5rem; }
 
     /* ── Controls bar ── */
     .controls-bar {
@@ -512,10 +523,13 @@
       <h1 id="page-title">YouTube Export</h1>
       <p class="meta" id="page-meta">{{ generated_date }} &mdash; {{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}</p>
     </div>
-    <select id="lang-select" class="lang-select" title="Language / Sprache">
-      <option value="de">&#x1F1E9;&#x1F1EA; Deutsch</option>
-      <option value="en">&#x1F1EC;&#x1F1E7; English</option>
-    </select>
+    <div class="header-links">
+      {% if full_url %}<a class="full-link" id="full-link" href="{{ full_url }}">{{ t.full_archive }}</a>{% endif %}
+      <select id="lang-select" class="lang-select" title="Language / Sprache">
+        <option value="de">&#x1F1E9;&#x1F1EA; Deutsch</option>
+        <option value="en">&#x1F1EC;&#x1F1E7; English</option>
+      </select>
+    </div>
   </div>
 </header>
 
@@ -670,6 +684,9 @@ const EMBEDDED_DEFAULT = '{{ default_lang }}';
 // page polls to notice a newer one. See renderer._export_manifest().
 const MANIFEST = {{ manifest_json }};
 const MANIFEST_URL = {{ manifest_url }};
+// Set when this page is a filtered view of a larger export (export.py --user).
+// Null in an ordinary export, where this page *is* the whole archive.
+const FULL_URL = {{ full_url_json }};
 const UPDATE_POLL_MS = 5 * 60 * 1000;
 
 // ── i18n ──────────────────────────────────────────────────────────────────────
@@ -750,6 +767,8 @@ const I18N = {
     singleShowAll: 'Alle Videos anzeigen',
     singleLoading: function(id) { return 'Video ' + id + ' wird geladen\u2026'; },
     singleNotFound: function(id) { return 'Video ' + id + ' ist nicht in diesem Archiv.'; },
+    fullArchive: 'Vollst\u00e4ndiges Archiv',
+    singleTryFull: 'Im vollst\u00e4ndigen Archiv \u00f6ffnen',
   },
   en: {
     pageTitle: 'YouTube Export',
@@ -827,6 +846,8 @@ const I18N = {
     singleShowAll: 'Show all videos',
     singleLoading: function(id) { return 'Loading video ' + id + '\u2026'; },
     singleNotFound: function(id) { return 'Video ' + id + ' is not in this archive.'; },
+    fullArchive: 'Full archive',
+    singleTryFull: 'Open in the full archive',
   }
 };
 
@@ -1417,7 +1438,21 @@ function readVideoParam() {
 
 function singleVideoUrl(id) {
   var base = location.href.split('#')[0].split('?')[0];
+  // A filtered page (export.py --user) is missing most of the archive by
+  // design, so a link into it dead-ends for anyone whose filter differs --
+  // and for this reader too, once the video ages out. Share the full archive
+  // instead, resolved against this page so file:// and http(s) both work.
+  if (FULL_URL) {
+    try { base = new URL(FULL_URL, base).href; } catch (e) { base = FULL_URL; }
+  }
   return base + '?v=' + encodeURIComponent(id);
+}
+
+function singleFullLink(id) {
+  if (!FULL_URL) return '';
+  var s = I18N[currentLang] || I18N[EMBEDDED_DEFAULT];
+  return ' <a class="full-link" href="' + escHtml(singleVideoUrl(id)) + '">'
+    + escHtml(s.singleTryFull) + '</a>';
 }
 
 function setSingleChrome(on) {
@@ -1504,6 +1539,8 @@ function applyLang(lang) {
   document.getElementById('search').placeholder = s.searchPlaceholder;
   document.getElementById('key-hint').textContent = s.keyHint;
   document.getElementById('lang-select').value = lang;
+  var fullLink = document.getElementById('full-link');
+  if (fullLink) fullLink.textContent = s.fullArchive;
 
   // channel-filter first option
   document.querySelector('#channel-filter option[value=""]').textContent = s.allChannels;
@@ -1854,7 +1891,9 @@ function renderPage(page, skipScroll) {
     document.getElementById('grid').innerHTML = slice.length
       ? slice.map(buildCard).join('')
       : '<p class="no-videos">'
-        + (singleVideoId ? escHtml(s.singleNotFound(singleVideoId)) : s.noVideos)
+        + (singleVideoId
+            ? escHtml(s.singleNotFound(singleVideoId)) + singleFullLink(singleVideoId)
+            : s.noVideos)
         + '</p>';
   }
 

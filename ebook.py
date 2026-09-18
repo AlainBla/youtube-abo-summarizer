@@ -7,7 +7,6 @@ for a user's read state) -- no YouTube and no LLM calls.
 
 import argparse
 import os
-import sqlite3
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -16,6 +15,7 @@ import epub_builder
 import export
 import i18n as i18n_module
 import store
+import sync_state
 
 DEFAULT_LIMIT = 100
 # Standing configuration for books, read only by this CLI: the HTML export and
@@ -26,7 +26,7 @@ DEFAULT_LIMIT = 100
 CRON_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cron.env")
 EXCLUDE_CHANNELS_VAR = "EBOOK_EXCLUDE_CHANNELS"
 
-DEFAULT_SYNC_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sync-server", "sync.db")
+DEFAULT_SYNC_DB = sync_state.DEFAULT_SYNC_DB
 # __file__-relative, matching store.py's DATA_DIR -- a cwd-relative path here
 # would write thumbnails somewhere other than the rest of data/ whenever this
 # is invoked from outside the repo root (e.g. cron), silently defeating the
@@ -60,23 +60,12 @@ def select_videos(entries, channel=None, videos=None, tag=None, limit=DEFAULT_LI
 def load_read_ids(sync_db, email):
     """Video IDs this user has marked as read, straight from the sync database.
 
-    Read-only. An unknown email is an error rather than an empty set -- a typo
-    would otherwise silently produce a book in which nothing is marked read.
+    A thin pass-through to sync_state, which the personal export shares for
+    bookmark state as well. Read-only; an unknown email is an error rather
+    than an empty set -- a typo would otherwise silently produce a book in
+    which nothing is marked read.
     """
-    if not os.path.exists(sync_db):
-        sys.exit(f"Error: sync database not found: {sync_db}")
-    db = sqlite3.connect(f"file:{sync_db}?mode=ro", uri=True)
-    try:
-        row = db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
-        if row is None:
-            sys.exit(f"Error: no sync user with email '{email}'.")
-        rows = db.execute(
-            "SELECT video_id FROM video_state WHERE user_id = ? AND type = 'read' AND value = 1",
-            (row[0],),
-        ).fetchall()
-    finally:
-        db.close()
-    return {r[0] for r in rows}
+    return sync_state.load_state_ids(sync_db, email, "read")
 
 
 def partition_by_read(videos, read_ids, mode):

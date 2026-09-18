@@ -18,6 +18,7 @@ repair.py               # gap-repair CLI
 recover_from_export.py  # restore store entries from an exported HTML file
 summarize.py            # legacy all-in-one CLI (no store)
 store.py                # SQLite + file store (data/)
+sync_state.py           # read-only per-user read/bookmark flags from the sync DB
 tags.py                 # controlled German tag vocabulary + canonicalize() gate
 transcripts.py          # youtube-transcript-api wrapper
 openrouter.py           # LLM client (OpenRouter / Ollama)
@@ -75,11 +76,12 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 
 - The repository is **public**. No sync URL, output path or mail address belongs in a tracked `*.sh`; they come from `cron.env` (gitignored, template `cron.env.example`), which every cron script sources. `tests/test_collect_shell_wiring.py` guards this
 - An unset `SYNC_URL` is a silent feature amputation, not a degraded mode: `export.py` without `--sync-url` renders no sync bar at all, so login, account display and ingest vanish from the archive. Both cron scripts log a warning when it is missing; keep that warning whenever you touch the export invocation
+- `export.py --user` writes **two** files: the filtered page at `--output` and the whole archive at `full_sidecar_path()` (`.full` before the extension), full archive first so the link out of the filtered page never dangles. Both carry their own `.meta.json`; a deploy step must copy all four. The selection is one exclusion — read, not bookmarked, collected more than `--read-days` ago — in `export.filter_personal()`; keep it there rather than reconstructing the union at a call site
 - `cron.env` is sourced by the shell scripts *and* parsed directly by `ebook.py` (`configured_exclusions()`): sourcing sets shell variables, not environment variables, so a Python child would never see `EBOOK_EXCLUDE_CHANNELS` otherwise. Keep that variable ebook-only — the export and the digests must keep showing every channel
 
 ### Renderer / templates
 - `renderer.render_html()` accepts `lang="de"|"en"`
-- `renderer.render_export_html()` accepts `lang=`, `sync_url=`, and `show_embed=` (default `True`; pass `False` for `--thumbnail` mode which renders static `<img>` instead of YouTube `<iframe>`)
+- `renderer.render_export_html()` accepts `lang=`, `sync_url=`, `show_embed=` (default `True`; pass `False` for `--thumbnail` mode which renders static `<img>` instead of YouTube `<iframe>`) and `full_url=` (set only for `export.py --user`: it adds the header link `#full-link`, points `singleVideoUrl()` — and therefore every share button — at the full archive, and gives the `singleNotFound` state a link into it. A plain export renders `FULL_URL = null` and is unchanged)
 - `_sanitize_summary()` strips trailing incomplete HTML tags (guards against LLM truncation)
 - `renderer._split_export_data()` is the single source of truth for both sort order and chunk boundaries: videos are sorted `published_at` descending (`video_id` descending as tie-break), then split into a summary-free `index` plus a list of summary chunks of `EXPORT_CHUNK_SIZE` (50) videos each — chunk `k` covers index positions `[k*50, (k+1)*50)`. Anything that reorders or re-chunks export data must go through this function, not reimplement the sort/slice logic
 - `renderer.EXPORT_FIRST_PAGE` (20) drives both the number of statically pre-rendered cards and the JS `PAGE_SIZE` (rendered into the template from the same constant) — they cannot drift apart because one is derived from the other

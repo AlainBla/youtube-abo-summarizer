@@ -450,6 +450,7 @@ def render_export_html(
     sync_url: str | None = None,
     show_embed: bool = True,
     compress: bool = True,
+    full_url: str | None = None,
 ) -> None:
     """Render and write a self-contained export HTML file with embedded video data.
 
@@ -462,6 +463,11 @@ def render_export_html(
     ``DecompressionStream``). ``compress=False`` embeds one plain
     ``{index, summaries}`` JSON object (no chunking) for browsers without
     ``DecompressionStream``.
+
+    ``full_url`` marks this export as a filtered view of a larger one (see
+    ``export.py --user``): the header gains a link to that full archive, and
+    share links plus the "not in this archive" state resolve against it, so a
+    copied link keeps working for someone whose filter differs.
 
     Alongside the HTML a manifest sidecar ``<output_path>.meta.json`` is written
     (after the HTML, never before it). The page embeds the same manifest and
@@ -533,6 +539,8 @@ def render_export_html(
         first_page_size=EXPORT_FIRST_PAGE,
         manifest_json=Markup(json.dumps(manifest, ensure_ascii=False).replace("</", "<\\/")),
         manifest_url=Markup(json.dumps(manifest_url)),
+        full_url=full_url,
+        full_url_json=Markup(json.dumps(full_url)),
         t=i18n_module.get_strings(lang),
     )
 

@@ -179,9 +179,56 @@ python export.py --no-compress
 
 # Embed sync server URL (enables cross-browser read/bookmark sync)
 python export.py --all --sync-url https://sync.example.com --output archive.html
+
+# Personal view for one sync user, with the full archive beside it
+python export.py --all --user you@example.com --output yt.html
 ```
 
 `--hours` and `--all` are mutually exclusive. The default output filename is `export_YYYY-MM-DD_HH-MM.html`.
+
+### Personal export (`--user`)
+
+`--user EMAIL` narrows the archive to what that sync-server account still has reason to look at:
+
+- everything **unread**,
+- **read** videos that entered the store within the last `--read-days` days (default 30),
+- everything **bookmarked**, however old.
+
+Put differently, a video is left out only when it is read, not bookmarked, and was collected more than
+`--read-days` days ago. "Collected" is the store's `collected_at` timestamp — the same one the
+"Recently added" sort uses — so a video published years ago but backfilled last week counts as recent
+here too.
+
+Read and bookmark flags are read straight out of the sync server's database (`--sync-db`, default
+`sync-server/sync.db`); no network call is involved, and an email that has never logged in is an error
+rather than an empty result.
+
+The unfiltered archive is written alongside the filtered page, with `.full` before the extension:
+
+```
+python export.py --all --user you@example.com --output yt.html
+  → yt.html            the personal view
+    yt.html.meta.json
+    yt.full.html       the same selection without the per-user filter
+    yt.full.html.meta.json
+```
+
+The sidecar is "full" only relative to the filtered page: it carries the same `--hours`/`--all` window
+and the same `--channel`/`--videos` restrictions, minus the read/bookmark filter. Use `--all` if the
+link is to lead to the whole archive.
+
+The filtered page carries a **"Vollständiges Archiv" / "Full archive"** link in its header, and its
+share buttons copy links into `yt.full.html` instead of into the filtered page — a link into a
+filtered page can dead-end for whoever receives it. Opening `yt.html?v=ID` for a video the filter left
+out offers the same video in the full archive.
+
+Both files must be deployed together (each has its own `.meta.json` update sidecar), and the link
+between them is a plain relative filename, so it works over http(s) and from `file://` alike.
+
+To have cron produce this pair, set `EXPORT_USER` (and optionally `EXPORT_READ_DAYS`) in `cron.env`;
+`collect.sh` then passes them to its post-collection export. Note that this export still only runs
+when a collect run actually stored something — marking videos read does not, by itself, refresh the
+personal page.
 
 `--sort` picks the order: `added-desc` (default, most recently added to the store first), `date-desc` (newest publish date first) or `date-asc` (chronological). Under `added-desc` a video ingested on demand today ranks first even if it was published months ago). Weeks stay the grouping level in every mode; under `added-desc` a week is placed by its freshest arrival. The sort runs before `--limit`, so `--sort added-desc --limit 50` gives the 50 most recently added videos.
 
@@ -488,7 +535,7 @@ Recommended crontab setup:
 
 | Script | Purpose |
 |---|---|
-| `collect.sh` | Runs `collect.py --auth`; re-exports the archive as soon as new videos were stored; schedule this frequently |
+| `collect.sh` | Runs `collect.py --auth`; re-exports the archive as soon as new videos were stored (the personal pair when `EXPORT_USER` is set in `cron.env`); schedule this frequently |
 | `run_6hours.sh` | Renders and emails a 6-hour digest via `report.py` |
 | `run_12hours.sh` | Renders and emails a 12-hour digest via `report.py` |
 | `run_daily.sh` | Renders and emails a 24-hour digest via `report.py` |
@@ -511,6 +558,8 @@ next to them and fill it in:
 |---|---|---|
 | `EXPORT_OUTPUT` | `collect.sh`, `ingest_worker.sh` | Where the archive is written; must be the file the web server serves, because the export bakes its basename into the page as the update-manifest URL. Default: `<repo>/yt.html` |
 | `SYNC_URL` | `collect.sh`, `ingest_worker.sh` | Sync server base URL embedded into the archive. Leave it unset and the export drops the sync UI entirely — no login, no account display, no ingest button; the scripts log a warning in that case |
+| `EXPORT_USER` | `collect.sh`, `ingest_worker.sh` | Sync account whose personal view `EXPORT_OUTPUT` becomes (unread + recently added read + bookmarked), with the unfiltered archive written beside it as `<name>.full.html`. Unset: one unfiltered archive, as before |
+| `EXPORT_READ_DAYS` | `collect.sh`, `ingest_worker.sh` | How long a read video stays in that personal view after it entered the store; bookmarks ignore it. Default: `30` |
 | `DIGEST_TO` | `run_*.sh` | Recipient of the digest mails; the scripts abort when it is unset |
 | `CHANNELS_FILE` | `collect.sh` | Channel list used when OAuth is unusable: one `UC...` ID per line, `#` comments at column 0 only. Default: `<repo>/channels.txt`, which is gitignored — put it on the host by hand |
 | `COLLECT_TIMEOUT` | `collect.sh` | Upper bound per collect run, any `timeout` duration. Default: `30m`. Raise it while a large backlog is being worked off |
@@ -526,7 +575,8 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 |---|---|
 | `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
-| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel/tag/read/bookmark filters, sort (publish date, date added, channel, title), and pagination |
+| `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel/tag/read/bookmark filters, sort (publish date, date added, channel, title), and pagination; `--user` renders a personal view plus the full archive beside it |
+| `sync_state.py` | Read-only access to the sync server's per-user read and bookmark flags; shared by `export.py --user` and `ebook.py --user` |
 | `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries (also re-generates tags with `--force-summarize`); `--remap-tags` rewrites stored tags through the controlled vocabulary and `tag_aliases.json`, no LLM calls |
 | `recover_from_export.py` | Restores store entries from a previously exported HTML file; inserts missing DB rows and summary files; leaves existing entries untouched; supports `--dry-run` |
 | `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html`; `update_tags()` writes only the tags column |

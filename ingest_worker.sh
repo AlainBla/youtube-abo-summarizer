@@ -25,6 +25,12 @@ fi
 
 EXPORT_OUTPUT="${EXPORT_OUTPUT:-$REPO/yt.html}"
 SYNC_URL="${SYNC_URL:-}"
+# Must mirror collect.sh: with EXPORT_USER set, $EXPORT_OUTPUT is that user's
+# personal view and the full archive lives beside it. Exporting without the
+# flag here would replace the personal page with the whole archive the minute
+# after someone used the Ingest button on it.
+EXPORT_USER="${EXPORT_USER:-}"
+EXPORT_READ_DAYS="${EXPORT_READ_DAYS:-}"
 MAX_RETRIES=100
 EXIT_NEW_VIDEOS=10
 
@@ -82,5 +88,13 @@ if [ "$success" -eq 1 ]; then
         echo "[$(date -Iseconds)] WARNING: SYNC_URL is unset -- exporting without sync support. Set it in cron.env." >> "$LOG"
     fi
 
-    cd "$REPO" && "$PYTHON" "$EXPORT" --all ${sync_args[@]+"${sync_args[@]}"} --output "$EXPORT_OUTPUT" >> "$LOG" 2>&1
+    user_args=()
+    if [ -n "$EXPORT_USER" ]; then
+        user_args=(--user "$EXPORT_USER")
+        if [ -n "$EXPORT_READ_DAYS" ]; then
+            user_args+=(--read-days "$EXPORT_READ_DAYS")
+        fi
+    fi
+
+    cd "$REPO" && "$PYTHON" "$EXPORT" --all ${sync_args[@]+"${sync_args[@]}"} ${user_args[@]+"${user_args[@]}"} --output "$EXPORT_OUTPUT" >> "$LOG" 2>&1
 fi

@@ -40,6 +40,18 @@ def test_ingest_worker_accepts_the_new_videos_code_as_success():
         "ingest_worker.sh would re-queue a video whose collect run added it"
 
 
+def test_both_export_invocations_honour_the_personal_export():
+    """collect.sh and ingest_worker.sh write the same file. If only one of them
+    passes --user, the first ingest after a collect run silently replaces the
+    personal page with the full archive."""
+    for name in ("collect.sh", "ingest_worker.sh"):
+        sh = _read(name)
+        assert 'EXPORT_USER="${EXPORT_USER:-}"' in sh, f"{name} does not read EXPORT_USER"
+        export_line = [ln for ln in sh.splitlines() if "export.py" in ln or '"$EXPORT"' in ln][-1]
+        assert "user_args" in export_line, \
+            f"{name} exports without passing --user; it would overwrite the personal page"
+
+
 def test_no_host_specific_values_are_hardcoded_in_the_cron_scripts():
     """This repository is public: sync URL, output path and digest recipient
     belong in cron.env (gitignored), not in the tracked shell scripts."""

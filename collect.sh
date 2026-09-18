@@ -8,6 +8,11 @@
 # regenerated right away so the change shows up without waiting for anything
 # else -- and so the archive's update banner only fires when there is
 # something to announce.
+#
+# With EXPORT_USER set, that export is the personal one (filtered by read and
+# bookmark state) plus the full archive beside it. Read state changes without
+# any new video arriving, so the filtered page only catches up at the next run
+# that stored something -- deliberate: this trigger is the only one there is.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
@@ -23,6 +28,13 @@ fi
 
 EXPORT_OUTPUT="${EXPORT_OUTPUT:-$REPO/yt.html}"
 SYNC_URL="${SYNC_URL:-}"
+# Set to a sync-server account to make $EXPORT_OUTPUT that user's personal
+# view -- unread videos, read ones that arrived within EXPORT_READ_DAYS, and
+# everything bookmarked -- with the unfiltered archive beside it as
+# <name>.full.html. Unset: one unfiltered archive, as before. The address is
+# host-specific, so it belongs in cron.env, never in this tracked script.
+EXPORT_USER="${EXPORT_USER:-}"
+EXPORT_READ_DAYS="${EXPORT_READ_DAYS:-}"
 # Channel list used when OAuth is unusable. Gitignored, so a fresh clone does
 # not have it -- put it on the host by hand (see README).
 CHANNELS_FILE="${CHANNELS_FILE:-$REPO/channels.txt}"
@@ -79,7 +91,15 @@ if [ "$rc" -eq "$EXIT_NEW_VIDEOS" ]; then
         echo "[$(date -Iseconds)] WARNING: SYNC_URL is unset -- exporting without sync support. Set it in cron.env." >> "$REPO/cron.log"
     fi
 
-    python3 export.py --all ${sync_args[@]+"${sync_args[@]}"} --output "$EXPORT_OUTPUT" >> "$REPO/cron.log" 2>&1
+    user_args=()
+    if [ -n "$EXPORT_USER" ]; then
+        user_args=(--user "$EXPORT_USER")
+        if [ -n "$EXPORT_READ_DAYS" ]; then
+            user_args+=(--read-days "$EXPORT_READ_DAYS")
+        fi
+    fi
+
+    python3 export.py --all ${sync_args[@]+"${sync_args[@]}"} ${user_args[@]+"${user_args[@]}"} --output "$EXPORT_OUTPUT" >> "$REPO/cron.log" 2>&1
 elif [ "$rc" -ne 0 ]; then
     exit "$rc"
 fi
