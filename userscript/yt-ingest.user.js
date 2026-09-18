@@ -1,13 +1,11 @@
 // ==UserScript==
 // @name         YouTube → Archiv-Ingest
 // @namespace    youtube-abo-summarizer
-// @version      1.0.0
+// @version      1.1.0
 // @description  Adds a button on YouTube that queues the current video for transcription and summarisation, by driving the Ingest field of your own archive page.
 // @author       youtube-abo-summarizer
 // @match        https://www.youtube.com/*
 // @match        https://m.youtube.com/*
-// (mobile has none of the desktop containers, so there the button is the
-//  floating one in the corner)
 // @match        https://sync.example.com/yt.html*
 // @grant        GM_openInTab
 // @grant        GM_setValue
@@ -17,6 +15,9 @@
 // @noframes
 // ==/UserScript==
 
+// On m.youtube.com none of the desktop containers exist, so the button is the
+// floating one in the corner there.
+//
 // ── Configure two things before use ──────────────────────────────────────────
 //   1. ARCHIVE_URL below: the exported archive you are logged into.
 //   2. The third @match line above: the same URL with a trailing *.
@@ -33,6 +34,18 @@
   'use strict';
 
   const ARCHIVE_URL = 'https://sync.example.com/yt.html';
+
+  // Every decision this script makes is logged under this prefix (console.log,
+  // not console.info -- Firefox hides the latter unless the Info filter is on):
+  // if the button
+  // is missing, the console says whether the script ran at all, whether it
+  // found a video ID, and where it put the button.
+  const LOG = '[yt-ingest]';
+  function log() {
+    try {
+      console.log.apply(console, [LOG].concat(Array.prototype.slice.call(arguments)));
+    } catch (e) {}
+  }
 
   const RESULT_KEY = 'ingest_result';       // cross-tab relay, archive -> YouTube
   const BUTTON_ID = 'yas-ingest-btn';
@@ -94,6 +107,7 @@
   if (typeof document === 'undefined') return;
 
   const onArchive = location.href.indexOf(ARCHIVE_URL) === 0;
+  log('v1.1 running', location.href, onArchive ? '(archive side)' : '(youtube side)');
 
   // ── Part B: the archive page does the actual submitting ────────────────────
 
@@ -204,11 +218,27 @@
   }
 
   function actionRow() {
-    // YouTube renames these containers regularly; the floating fallback is
-    // what keeps the script working when it does.
-    return document.querySelector('#top-level-buttons-computed')
-        || document.querySelector('#actions #menu #top-level-buttons')
-        || null;
+    // YouTube renames and rebuilds these containers regularly, and a container
+    // that exists is not necessarily one that will show a foreign child --
+    // hence both the list and the visibility check in placeButton().
+    const selectors = [
+      'ytd-watch-metadata #top-level-buttons-computed',
+      '#actions #top-level-buttons-computed',
+      '#top-level-buttons-computed',
+      'ytd-watch-metadata #actions-inner #menu',
+      '#above-the-fold #actions',
+    ];
+    for (let i = 0; i < selectors.length; i++) {
+      const el = document.querySelector(selectors[i]);
+      if (el) return { el: el, selector: selectors[i] };
+    }
+    return null;
+  }
+
+  function isVisible(el) {
+    if (!el || !el.isConnected) return false;
+    const box = el.getBoundingClientRect();
+    return box.width > 0 && box.height > 0;
   }
 
   function flash(btn, text) {
@@ -218,21 +248,7 @@
     btn._resetTimer = setTimeout(function () { btn.textContent = original; }, 2500);
   }
 
-  function placeButton() {
-    const videoId = videoIdFromUrl(location.href);
-    const existing = document.getElementById(BUTTON_ID);
-    if (!videoId) {
-      if (existing) existing.remove();
-      return;
-    }
-    const row = actionRow();
-    if (existing) {
-      existing.dataset.videoId = videoId;
-      // Re-parent when YouTube rebuilt the row under us (SPA navigation).
-      if (row && existing.parentElement !== row) row.appendChild(existing);
-      return;
-    }
-
+  function makeButton(videoId) {
     const btn = document.createElement('button');
     btn.id = BUTTON_ID;
     btn.type = 'button';
@@ -244,22 +260,71 @@
       const id = btn.dataset.videoId;
       if (!isVideoId(id)) return flash(btn, TEXT.noVideo);
       flash(btn, TEXT.sending);
+      log('queueing', id, '->', archiveUrlFor(id));
       GM_openInTab(archiveUrlFor(id), { active: false, insert: true });
     });
+    return btn;
+  }
 
-    if (row) {
-      styleAsYouTubeButton(btn);
-      row.appendChild(btn);
-    } else {
-      styleAsFloating(btn);
-      document.body.appendChild(btn);
+  function goFloating(btn) {
+    if (btn.dataset.floating === '1') return;
+    btn.dataset.floating = '1';
+    styleAsFloating(btn);
+    document.body.appendChild(btn);
+    log('button placed: floating (no usable action row)');
+  }
+
+  function placeButton() {
+    const videoId = videoIdFromUrl(location.href);
+    const existing = document.getElementById(BUTTON_ID);
+    if (!videoId) {
+      if (existing) existing.remove();
+      return;
     }
+    if (existing) {
+      existing.dataset.videoId = videoId;
+      const row = existing.dataset.floating === '1' ? null : actionRow();
+      // SPA navigation rebuilds the row under us.
+      if (row && existing.parentElement !== row.el) row.el.appendChild(existing);
+      return;
+    }
+
+    const btn = makeButton(videoId);
+    const row = actionRow();
+    if (!row) return goFloating(btn);
+
+    styleAsYouTubeButton(btn);
+    row.el.appendChild(btn);
+    log('button placed in', row.selector);
+    // A container can accept the node and still never show it (zero-size row,
+    // overflow, a re-render that drops foreign children). Verify, then fall
+    // back rather than leaving the page looking untouched.
+    setTimeout(function () {
+      if (!isVisible(btn)) {
+        log('that row did not render it; falling back to the floating button');
+        goFloating(btn);
+      }
+    }, 800);
   }
 
   function watchYouTube() {
     placeButton();
-    // SPA: no reload between videos, and the action row is rebuilt each time.
+    // YouTube is a single-page app: no reload between videos, and the action
+    // row is rebuilt each time. The event fires on document in some versions
+    // and on window in others, so listen on both.
+    document.addEventListener('yt-navigate-finish', placeButton);
     window.addEventListener('yt-navigate-finish', placeButton);
+    // The row often does not exist yet at document-idle, and neither event
+    // fires on a cold load, so keep looking for a while.
+    let tries = 0;
+    const timer = setInterval(function () {
+      tries += 1;
+      if (tries > 40 || document.getElementById(BUTTON_ID)) {  // ~20 s
+        clearInterval(timer);
+        return;
+      }
+      placeButton();
+    }, 500);
     const obs = new MutationObserver(function () {
       if (!document.getElementById(BUTTON_ID)) placeButton();
     });
@@ -275,7 +340,9 @@
                  : newer.state === 'failed' ? TEXT.failed
                  : TEXT.notLoggedIn);
       });
-    } catch (e) {}  // older managers without the listener API: no relay, no harm
+    } catch (e) {
+      log('no GM_addValueChangeListener; the button will not report back', e);
+    }
   }
 
   if (onArchive) {
