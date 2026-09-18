@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube → Archiv-Ingest
 // @namespace    youtube-abo-summarizer
-// @version      1.1.0
+// @version      1.4.0
 // @description  Adds a button on YouTube that queues the current video for transcription and summarisation, by driving the Ingest field of your own archive page.
 // @author       youtube-abo-summarizer
 // @match        https://www.youtube.com/*
@@ -40,6 +40,11 @@
   // if the button
   // is missing, the console says whether the script ran at all, whether it
   // found a video ID, and where it put the button.
+  // Explicit colours, not YouTube's CSS variables: those resolve differently
+  // per theme and gave a grey chip with grey text next to the Like button.
+  const BUTTON_BG = '#cc0000';
+  const BUTTON_FG = '#ffffff';
+
   const LOG = '[yt-ingest]';
   function log() {
     try {
@@ -107,7 +112,11 @@
   if (typeof document === 'undefined') return;
 
   const onArchive = location.href.indexOf(ARCHIVE_URL) === 0;
-  log('v1.1 running', location.href, onArchive ? '(archive side)' : '(youtube side)');
+  // The version comes from the metadata block via GM_info -- typing it into
+  // this line by hand is how v1.2 came to announce itself as v1.1.
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
+    ? 'v' + GM_info.script.version : 'version unknown';
+  log(VERSION, 'running', location.href, onArchive ? '(archive side)' : '(youtube side)');
 
   // ── Part B: the archive page does the actual submitting ────────────────────
 
@@ -202,38 +211,77 @@
 
   // ── Part A: the button on YouTube ──────────────────────────────────────────
 
-  function styleAsYouTubeButton(btn) {
-    btn.style.cssText =
-      'margin-left:8px;height:36px;padding:0 16px;border:none;border-radius:18px;' +
-      'background:rgba(255,255,255,0.1);color:var(--yt-spec-text-primary,#f1f1f1);' +
-      'font:500 14px/36px Roboto,Arial,sans-serif;cursor:pointer;white-space:nowrap;';
+  function styleAsChip(btn) {
+    btn.removeAttribute('style');  // may be coming back from the floating spot
+    // !important throughout: the button sits inside YouTube's own flex row,
+    // whose stylesheet has rules for the element types it expects there and
+    // will happily collapse a foreign child to zero size.
+    const css = {
+      'display': 'inline-flex', 'align-items': 'center', 'justify-content': 'center',
+      'box-sizing': 'border-box', 'height': '36px', 'padding': '0 16px',
+      'margin-left': '8px', 'border': 'none', 'border-radius': '18px',
+      'background': BUTTON_BG, 'color': BUTTON_FG,
+      'font-family': 'Roboto, Arial, sans-serif', 'font-size': '14px',
+      'letter-spacing': 'normal', 'text-transform': 'none',
+      'font-weight': '500', 'line-height': 'normal', 'cursor': 'pointer',
+      'white-space': 'nowrap', 'flex': '0 0 auto',
+      'visibility': 'visible', 'opacity': '1',
+    };
+    for (const prop in css) btn.style.setProperty(prop, css[prop], 'important');
   }
 
   function styleAsFloating(btn) {
+    btn.removeAttribute('style');
     btn.style.cssText =
       'position:fixed;right:20px;bottom:20px;z-index:9000;height:40px;padding:0 18px;' +
-      'border:none;border-radius:20px;background:#c00;color:#fff;' +
+      'border:none;border-radius:20px;background:' + BUTTON_BG + ';color:' + BUTTON_FG + ';' +
       'font:500 14px/40px Roboto,Arial,sans-serif;cursor:pointer;' +
       'box-shadow:0 2px 10px rgba(0,0,0,0.5);';
   }
 
-  function actionRow() {
-    // YouTube renames and rebuilds these containers regularly, and a container
-    // that exists is not necessarily one that will show a foreign child --
-    // hence both the list and the visibility check in placeButton().
-    const selectors = [
-      'ytd-watch-metadata #top-level-buttons-computed',
-      '#actions #top-level-buttons-computed',
-      '#top-level-buttons-computed',
-      'ytd-watch-metadata #actions-inner #menu',
-      '#above-the-fold #actions',
-    ];
-    for (let i = 0; i < selectors.length; i++) {
-      const el = document.querySelector(selectors[i]);
-      if (el) return { el: el, selector: selectors[i] };
-    }
-    return null;
-  }
+  // Where the button wants to be, best first. The like/dislike pill is the
+  // anchor: sitting right behind it is the point, and its parent is the row
+  // YouTube actually renders, whatever that row is called this month.
+  const PLACEMENTS = [
+    {
+      name: 'next to like/dislike',
+      find: function () {
+        const anchor = document.querySelector('segmented-like-dislike-button-view-model')
+                    || document.querySelector('ytd-segmented-like-dislike-button-renderer')
+                    || document.querySelector('like-button-view-model');
+        if (!anchor || !anchor.parentElement) return null;
+        // The pill is often wrapped once or twice inside the row; go up to the
+        // child of the row itself, so the button lands beside the whole pill
+        // rather than inside it.
+        let node = anchor;
+        while (node.parentElement
+               && node.parentElement.id !== 'top-level-buttons-computed'
+               && node.parentElement.id !== 'top-level-buttons'
+               && node.parentElement !== document.body) {
+          node = node.parentElement;
+          if (node.tagName === 'YTD-MENU-RENDERER') break;
+        }
+        return { parent: node.parentElement, before: node.nextSibling };
+      },
+    },
+    {
+      name: 'end of the action row',
+      find: function () {
+        const row = document.querySelector('ytd-watch-metadata #top-level-buttons-computed')
+                 || document.querySelector('#actions #top-level-buttons-computed')
+                 || document.querySelector('#top-level-buttons-computed');
+        return row ? { parent: row, before: null } : null;
+      },
+    },
+    {
+      name: 'actions container',
+      find: function () {
+        const el = document.querySelector('ytd-watch-metadata #actions-inner')
+                || document.querySelector('#above-the-fold #actions');
+        return el ? { parent: el, before: null } : null;
+      },
+    },
+  ];
 
   function isVisible(el) {
     if (!el || !el.isConnected) return false;
@@ -267,11 +315,60 @@
   }
 
   function goFloating(btn) {
-    if (btn.dataset.floating === '1') return;
-    btn.dataset.floating = '1';
+    btn.dataset.placement = 'floating';
+    btn.dataset.floatingSince = String(Date.now());
     styleAsFloating(btn);
     document.body.appendChild(btn);
-    log('button placed: floating (no usable action row)');
+    log('button placed: floating');
+  }
+
+  function tryPlacement(btn, index) {
+    const plan = PLACEMENTS[index];
+    if (!plan) return goFloating(btn);
+
+    let slot = null;
+    try {
+      slot = plan.find();
+    } catch (e) {
+      log('placement "' + plan.name + '" threw', e);
+    }
+    if (!slot || !slot.parent) return tryPlacement(btn, index + 1);
+
+    btn.dataset.placement = String(index);
+    styleAsChip(btn);
+    slot.parent.insertBefore(btn, slot.before || null);
+    log('button placed:', plan.name);
+
+    // Inserting is not showing: YouTube's own CSS can collapse a foreign child
+    // to nothing, and then the page just looks untouched. Measure, then move on.
+    setTimeout(function () {
+      if (!isVisible(btn)) {
+        log('"' + plan.name + '" rendered it at zero size; trying the next spot');
+        tryPlacement(btn, index + 1);
+      }
+    }, 800);
+  }
+
+  // The action row does not exist yet when this script first runs, so an early
+  // verdict of "no slot anywhere" is a verdict about YouTube's rendering, not
+  // about the page. Keep offering the button a better place for a while.
+  function upgradeFromFloating() {
+    const btn = document.getElementById(BUTTON_ID);
+    if (!btn || btn.dataset.placement !== 'floating') return;
+    const tries = parseInt(btn.dataset.upgradeTries || '0', 10);
+    if (tries >= 5) return;  // stop rather than flicker between two spots
+    for (let i = 0; i < PLACEMENTS.length; i++) {
+      let slot = null;
+      try {
+        slot = PLACEMENTS[i].find();
+      } catch (e) {}
+      if (slot && slot.parent) {
+        btn.dataset.upgradeTries = String(tries + 1);
+        log('a slot appeared; moving the button out of the corner');
+        tryPlacement(btn, i);
+        return;
+      }
+    }
   }
 
   function placeButton() {
@@ -283,28 +380,15 @@
     }
     if (existing) {
       existing.dataset.videoId = videoId;
-      const row = existing.dataset.floating === '1' ? null : actionRow();
-      // SPA navigation rebuilds the row under us.
-      if (row && existing.parentElement !== row.el) row.el.appendChild(existing);
+      // SPA navigation rebuilds the row: a chip whose parent went away has to
+      // be placed again, a floating one stays where it is.
+      if (existing.dataset.placement !== 'floating' && !isVisible(existing)) {
+        existing.remove();
+        tryPlacement(makeButton(videoId), 0);
+      }
       return;
     }
-
-    const btn = makeButton(videoId);
-    const row = actionRow();
-    if (!row) return goFloating(btn);
-
-    styleAsYouTubeButton(btn);
-    row.el.appendChild(btn);
-    log('button placed in', row.selector);
-    // A container can accept the node and still never show it (zero-size row,
-    // overflow, a re-render that drops foreign children). Verify, then fall
-    // back rather than leaving the page looking untouched.
-    setTimeout(function () {
-      if (!isVisible(btn)) {
-        log('that row did not render it; falling back to the floating button');
-        goFloating(btn);
-      }
-    }, 800);
+    tryPlacement(makeButton(videoId), 0);
   }
 
   function watchYouTube() {
@@ -314,16 +398,25 @@
     // and on window in others, so listen on both.
     document.addEventListener('yt-navigate-finish', placeButton);
     window.addEventListener('yt-navigate-finish', placeButton);
+    // Fires when the watch metadata (title, like row) has been filled in --
+    // the moment a slot becomes available on a cold load.
+    document.addEventListener('yt-page-data-updated', function () {
+      placeButton();
+      upgradeFromFloating();
+    });
     // The row often does not exist yet at document-idle, and neither event
     // fires on a cold load, so keep looking for a while.
     let tries = 0;
     const timer = setInterval(function () {
       tries += 1;
-      if (tries > 40 || document.getElementById(BUTTON_ID)) {  // ~20 s
+      if (tries > 40) {  // ~20 s
         clearInterval(timer);
         return;
       }
+      // Keep running even once the button exists: the first placement may have
+      // been the corner, decided before YouTube had rendered anything to sit in.
       placeButton();
+      upgradeFromFloating();
     }, 500);
     const obs = new MutationObserver(function () {
       if (!document.getElementById(BUTTON_ID)) placeButton();
