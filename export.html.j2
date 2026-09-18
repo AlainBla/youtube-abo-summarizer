@@ -585,6 +585,17 @@
     </select>
   </div>
   <div class="control-group">
+    <label class="ctrl-label" for="length-filter" id="label-length">L&auml;nge</label>
+    <select id="length-filter" autocomplete="off">
+      <option value="">Alle</option>
+      <option value="5">&lt; 5 Min</option>
+      <option value="10">&lt; 10 Min</option>
+      <option value="20">&lt; 20 Min</option>
+      <option value="30">&lt; 30 Min</option>
+      <option value="60">&lt; 60 Min</option>
+    </select>
+  </div>
+  <div class="control-group">
     <label class="ctrl-label" for="sort" id="label-sort">Sortierung</label>
     <select id="sort" autocomplete="off">
       <option value="date-desc">Neueste zuerst</option>
@@ -688,6 +699,10 @@ const MANIFEST_URL = {{ manifest_url }};
 // Null in an ordinary export, where this page *is* the whole archive.
 const FULL_URL = {{ full_url_json }};
 const UPDATE_POLL_MS = 5 * 60 * 1000;
+// Upper bounds offered by #length-filter, in minutes, in the order the
+// <option>s stand in -- applyLang() writes their labels from this list, so a
+// bucket added here needs an <option> added there and nowhere else.
+const LENGTH_BUCKETS = [5, 10, 20, 30, 60];
 
 // ── i18n ──────────────────────────────────────────────────────────────────────
 const I18N = {
@@ -768,6 +783,8 @@ const I18N = {
     singleLoading: function(id) { return 'Video ' + id + ' wird geladen\u2026'; },
     singleNotFound: function(id) { return 'Video ' + id + ' ist nicht in diesem Archiv.'; },
     fullArchive: 'Vollst\u00e4ndiges Archiv',
+    labelLength: 'L\u00e4nge',
+    lengthUnder: function(n) { return '< ' + n + ' Min'; },
     singleTryFull: 'Im vollst\u00e4ndigen Archiv \u00f6ffnen',
   },
   en: {
@@ -847,6 +864,8 @@ const I18N = {
     singleLoading: function(id) { return 'Loading video ' + id + '\u2026'; },
     singleNotFound: function(id) { return 'Video ' + id + ' is not in this archive.'; },
     fullArchive: 'Full archive',
+    labelLength: 'Length',
+    lengthUnder: function(n) { return '< ' + n + ' min'; },
     singleTryFull: 'Open in the full archive',
   }
 };
@@ -1558,6 +1577,13 @@ function applyLang(lang) {
   bfOpts[0].textContent = s.allVideos;
   bfOpts[1].textContent = s.bookmarkedOnly;
 
+  // length-filter
+  var lfOpts = document.getElementById('length-filter').options;
+  lfOpts[0].textContent = s.allVideos;
+  for (var li = 0; li < LENGTH_BUCKETS.length; li++) {
+    lfOpts[li + 1].textContent = s.lengthUnder(LENGTH_BUCKETS[li]);
+  }
+
   // sort
   var sortOpts = document.getElementById('sort').options;
   sortOpts[0].textContent = s.sortDateDesc;
@@ -1572,6 +1598,7 @@ function applyLang(lang) {
   document.getElementById('label-tag').textContent = s.labelTag;
   document.getElementById('label-read').textContent = s.labelRead;
   document.getElementById('label-bookmark').textContent = s.labelBookmark;
+  document.getElementById('label-length').textContent = s.labelLength;
   document.getElementById('label-sort').textContent = s.labelSort;
 
   {% if sync_url %}
@@ -1644,6 +1671,24 @@ function setChannelFilter(channelId) {
   var sel = document.getElementById('channel-filter');
   sel.value = (sel.value === channelId) ? '' : channelId;
   applyFiltersAndSort();
+}
+
+function durationSeconds(v) {
+  // The index carries only the display string the card shows ("7:12",
+  // "1:02:03"); parsed once per video and cached on the record.
+  if (v._secs !== undefined) return v._secs;
+  var parts = String(v.duration || '').split(':');
+  var secs = null;
+  if (parts.length === 2 || parts.length === 3) {
+    secs = 0;
+    for (var i = 0; i < parts.length; i++) {
+      var n = parseInt(parts[i], 10);
+      if (isNaN(n)) { secs = null; break; }
+      secs = secs * 60 + n;
+    }
+  }
+  v._secs = secs;
+  return secs;
 }
 
 function escHtml(s) {
@@ -1787,6 +1832,7 @@ function applyFiltersAndSort(page) {
   const readFilter = document.getElementById('read-filter').value;
   const bookmarkFilter = document.getElementById('bookmark-filter').value;
   const dateFrom = document.getElementById('date-filter').value; // "YYYY-MM-DD" or ""
+  const maxMinutes = parseInt(document.getElementById('length-filter').value, 10);
 
   filtered = VIDEOS.filter(function(v) {
     if (channelId && v.channel_id !== channelId) return false;
@@ -1795,6 +1841,13 @@ function applyFiltersAndSort(page) {
     if (readFilter === 'unread' && readSet.has(v.video_id)) return false;
     if (bookmarkFilter === 'bookmarked' && !bookmarkSet.has(v.video_id)) return false;
     if (dateFrom && v.published_at.slice(0, 10) < dateFrom) return false;
+    if (maxMinutes) {
+      // Unknown length cannot satisfy "shorter than N" -- about 4 % of the
+      // store has no duration, and showing those under a length filter would
+      // be worse than leaving them to the unfiltered view.
+      var secs = durationSeconds(v);
+      if (secs === null || secs >= maxMinutes * 60) return false;
+    }
     if (q) {
       if (getSearchText(v).indexOf(q) === -1) return false;
     }
@@ -2024,6 +2077,7 @@ document.getElementById('search').addEventListener('input', function() {
 document.getElementById('channel-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('tag-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('read-filter').addEventListener('change', applyFiltersAndSort);
+document.getElementById('length-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('bookmark-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('date-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('sort').addEventListener('change', applyFiltersAndSort);

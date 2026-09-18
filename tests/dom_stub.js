@@ -15,7 +15,7 @@ globalThis.setInterval = function (fn, ms) {
   return timer;
 };
 
-const __optionCounts = {'sort': 5, 'read-filter': 3, 'bookmark-filter': 2};
+const __optionCounts = {'sort': 5, 'read-filter': 3, 'bookmark-filter': 2, 'length-filter': 6};
 const __DEFAULT_OPTIONS = 4;
 
 function __options(id) {
