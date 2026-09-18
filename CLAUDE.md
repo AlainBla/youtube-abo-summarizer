@@ -246,6 +246,18 @@ The worker processes each queued ID by running `collect.py --video=<id>` (the `=
 
 Ingest metadata comes from yt-dlp (`ytdlp_meta.get_video_metadata()`), not the Data API: ingest is triggered by hand at any hour while the scheduled collect runs spend the project's daily quota, so a `quotaExceeded` there used to take the button down with it over a lookup worth one unit. The store is consulted before any of that: an ID whose transcript and summary are already on disk is answered from `data/videos.db` without a single network call, and an incomplete entry reuses its stored metadata instead of re-fetching it — the queue re-offers long-collected IDs, and paying a yt-dlp run plus a proxy retry to rediscover that is pure latency. The API remains the fallback for videos yt-dlp cannot read, and `yt-dlp` is in `requirements.txt` — an existing deployment needs `pip install -r requirements.txt` before the ingest button works again.
 
+### YouTube userscript (`userscript/yt-ingest.user.js`)
+
+A Violentmonkey/Tampermonkey script that puts a "Zusammenfassen" button on a YouTube watch page (and Shorts/live/`youtu.be`), which queues that video for transcription and summarisation.
+
+It holds **no API token**. Pressing the button opens the archive in a background tab at `#ingest=<VIDEO_ID>`, and the script's other half — matched on the archive URL — types that ID into the page's own Ingest field and clicks its button, so the request goes out under the session the browser is already logged in with. Consequences worth knowing: it works only while that archive page exists at the configured URL and the account is logged in and in `INGEST_EMAILS`; and it needs no CORS exemption, since nothing cross-origin is ever requested (`GM_xmlhttpRequest` and a stored token would be the alternative, and would mean keeping a 30-day credential in script storage).
+
+The hash, not `?v=ID`: the query form is the archive's own single-video deep link and would show the video rather than queue it. The hash is dropped via `history.replaceState` before submitting, so a reload cannot queue twice.
+
+The verdict is read off `doIngest()`'s own mechanics, not off `#sync-status`: that line is localised *and* written by the login and sync handlers, so a change there right after the Ingest box appears may belong to something else entirely. The script instead watches the button's `disabled` flag (set while the request is in flight) and the input, which `doIngest()` clears only on 200/202 — a submission that never disabled the button was refused before sending (unusable ID). A timeout waiting for `#sync-ingest` to become visible is reported as "not logged in", which is what it almost always is. Success is relayed back to the YouTube tab through `GM_setValue`/`GM_addValueChangeListener`, so the button itself confirms.
+
+Two lines are host-specific and must be edited after installing: `ARCHIVE_URL` and the third `@match` (a `@match` cannot read a variable). `userscript/*.local.user.js` is gitignored for a filled-in copy — this repository is public. `tests/test_userscript.py` requires the file in Node (the browser half is skipped when there is no `document`) and pins the URL parsing, including an ID starting with `-`.
+
 ### Production deployment
 
 `python sync_server.py` is for development only. In production: **Gunicorn + systemd + Nginx**.
@@ -303,6 +315,7 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `state.py` | Reads/writes `last_run.json` (channel_id → last checked ISO timestamp) |
 | `send_mail.py` | Standalone script; sends an HTML file as an email via SMTP_SSL |
 | `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth (supports STARTTLS port 587 and SSL port 465), per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` appends video ID to `INGEST_QUEUE` file and returns 202; `/api/whoami` returns `can_ingest` flag |
+| `userscript/yt-ingest.user.js` | Violentmonkey/Tampermonkey script: a button on YouTube that queues the current video, by driving the Ingest field of the logged-in archive page instead of holding a token of its own. Two host-specific lines (`ARCHIVE_URL`, the archive `@match`) |
 | `ingest_worker.sh` | Cron script that drains `INGEST_QUEUE` by running `collect.py --video <id>` for each entry; re-exports `$EXPORT_OUTPUT` afterwards, honouring `EXPORT_USER`/`EXPORT_READ_DAYS` exactly as `collect.sh` does; logs to `data/ingest_worker.log`; schedule every minute |
 
 ### Cron configuration (`cron.env`)

@@ -18,6 +18,7 @@ repair.py               # gap-repair CLI
 recover_from_export.py  # restore store entries from an exported HTML file
 summarize.py            # legacy all-in-one CLI (no store)
 store.py                # SQLite + file store (data/)
+userscript/             # YouTube "Zusammenfassen" button (Violentmonkey)
 sync_state.py           # read-only per-user read/bookmark flags from the sync DB
 tags.py                 # controlled German tag vocabulary + canonicalize() gate
 transcripts.py          # youtube-transcript-api wrapper

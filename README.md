@@ -385,6 +385,39 @@ The worker drains the queue by running `collect.py --video=<id>` for each entry 
 
 Ingest does not spend YouTube API quota. Metadata for a single video comes from yt-dlp (`ytdlp_meta.get_video_metadata()`), which reads the watch page without a token or key; the Data API is only the fallback. This keeps the ingest button working after the scheduled collect runs have used up the day's quota. `yt-dlp` is listed in `requirements.txt`.
 
+### YouTube button (userscript)
+
+`userscript/yt-ingest.user.js` adds a **"Zusammenfassen"** button to YouTube watch pages (also Shorts,
+`/live/` and `youtu.be` links). Pressing it queues that video for transcript fetching and
+summarisation, without waiting for the next scheduled collect run.
+
+Install it in Violentmonkey or Tampermonkey, then edit two lines at the top:
+
+```js
+// @match        https://sync.example.com/yt.html*      <- your archive URL, with a trailing *
+const ARCHIVE_URL = 'https://sync.example.com/yt.html'; // <- the same URL
+```
+
+On mobile (`m.youtube.com`) none of the desktop containers exist, so the button appears as a small
+floating one in the corner.
+
+(A `@match` cannot read a variable, hence twice. `userscript/*.local.user.js` is gitignored if you
+want to keep a filled-in copy in the repo.)
+
+The script stores no API token. The button opens your archive in a background tab with
+`#ingest=<VIDEO_ID>`; there the script fills the page's own Ingest field and presses its button, so
+the request is made by the archive under the login you already have. It therefore works only when:
+
+- the archive really is at the configured URL,
+- you are logged in there (magic link), and
+- your address is in `INGEST_EMAILS` on the sync server — otherwise the Ingest field is not even shown.
+
+If those do not hold, the tab shows "Nicht angemeldet" instead of failing silently. On success the YouTube button
+confirms with "In die Warteschlange gestellt" and the archive tab tries to close itself — Chrome
+refuses that for tabs it did not open by script, so it may simply stay open with its green banner. The video appears
+in the archive after `ingest_worker.sh` has processed the queue (it runs every minute) and the
+re-export that follows it.
+
 ### Production deployment
 
 `python sync_server.py` starts Flask's development server — not suitable for production. Use **Gunicorn + systemd + Nginx**:
@@ -594,6 +627,7 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 | `state.py` | Reads/writes `last_run.json` (per-channel ISO timestamps) |
 | `send_mail.py` | SMTP email sender |
 | `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth (STARTTLS port 587 or SSL port 465), per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` appends video ID to `INGEST_QUEUE` and returns 202; `/api/whoami` returns `can_ingest` flag |
+| `userscript/yt-ingest.user.js` | Browser userscript: a "Zusammenfassen" button on YouTube that queues the current video through your logged-in archive page |
 | `ingest_worker.sh` | Cron script that drains `INGEST_QUEUE` by calling `collect.py --video <id>` for each entry; logs to `data/ingest_worker.log` |
 
 ## Limitations
