@@ -274,8 +274,8 @@ next export. Its wording says what actually happened: "3 neue Videos verfügbar"
 "2 neue Zusammenfassungen verfügbar" when the same videos gained summaries (a repaired transcript, a
 re-run summarization); "Zusammenfassungen aktualisiert" when summary texts changed without their number
 changing; "Archiv aktualisiert" for anything else. The summary wordings are only used when the video
-count is unchanged — an export that shrank (`--prune-days`, a narrower `--hours`) reports the generic
-text rather than blaming the departed videos on summaries.
+count is unchanged — an export that shrank (`--prune-days`, a narrower `--hours`) reports
+the generic text rather than blaming the departed videos on summaries.
 
 Nothing to configure: upload or serve the `.meta.json` file alongside the HTML and the banner works.
 If the manifest is missing (or the archive is opened as a local `file://` document) the page simply
@@ -632,7 +632,7 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 | `renderer.py` | Jinja2 renderer; writes the final HTML report; accepts `lang=` kwarg; sanitizes summaries at render time to strip any trailing incomplete HTML tag (guards against LLM output truncated mid-tag) |
 | `i18n.py` | UI string dicts for `de` (default) and `en`; `get_strings()` and `resolve_lang()` helpers used by the renderer |
 | `template.html.j2` | Self-contained dark-theme HTML report template; read/bookmark buttons with state persisted in browser `localStorage`; all UI strings sourced from `i18n.py` via `{{ t.xxx }}` |
-| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date/channel/tag/read/bookmark filters (each with a visible label), sort, pagination; channel name on each card is clickable and toggles the channel filter; in-page language selector with flag emoji (cookie `yt_lang`, browser fallback); full `de`/`en` string set in the embedded `I18N` object; sync bar shows "Ingest" button when `can_ingest` is true |
+| `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date/channel/tag/read/bookmark/length filters (each with a visible label), sort, pagination; the header shows the archive's total runtime and the results count that of the current selection, both as `dd:hh:mm` behind the video count; channel name on each card is clickable and toggles the channel filter; in-page language selector with flag emoji (cookie `yt_lang`, browser fallback); full `de`/`en` string set in the embedded `I18N` object; sync bar shows "Ingest" button when `can_ingest` is true |
 | `state.py` | Reads/writes `last_run.json` (per-channel ISO timestamps) |
 | `send_mail.py` | SMTP email sender |
 | `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth (STARTTLS port 587 or SSL port 465), per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` appends video ID to `INGEST_QUEUE` and returns 202; `/api/whoami` returns `can_ingest` flag |

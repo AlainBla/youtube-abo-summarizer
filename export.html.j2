@@ -521,7 +521,7 @@
   <div class="header-row">
     <div>
       <h1 id="page-title">YouTube Export</h1>
-      <p class="meta" id="page-meta">{{ generated_date }} &mdash; {{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}</p>
+      <p class="meta" id="page-meta">{{ generated_date }} &mdash; {{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}{% if total_duration %} &middot; {{ total_duration }}{% endif %}</p>
     </div>
     <div class="header-links">
       {% if full_url %}<a class="full-link" id="full-link" href="{{ full_url }}">{{ t.full_archive }}</a>{% endif %}
@@ -691,6 +691,7 @@ let VIDEOS = [];
 let dataReady = false;
 const PAGE_SIZE = {{ first_page_size }};
 const TOTAL_VIDEOS = {{ total_videos }};
+const TOTAL_DURATION = '{{ total_duration }}';
 const GENERATED_DATE = '{{ generated_date }}';
 const EMBEDDED_DEFAULT = '{{ default_lang }}';
 // Snapshot of the export this document was rendered from, plus the sidecar the
@@ -710,8 +711,9 @@ const LENGTH_BUCKETS = [5, 10, 20, 30, 60];
 const I18N = {
   de: {
     pageTitle: 'YouTube Export',
-    generated: function(date, n) {
-      return 'Generiert ' + date + ' \u2014 ' + n + ' Video' + (n !== 1 ? 's' : '');
+    generated: function(date, n, dur) {
+      return 'Generiert ' + date + ' \u2014 ' + n + ' Video' + (n !== 1 ? 's' : '')
+        + (dur ? ' \u00b7 ' + dur : '');
     },
     searchPlaceholder: 'Titel oder Zusammenfassung durchsuchen\u2026',
     allChannels: 'Alle',
@@ -743,7 +745,7 @@ const I18N = {
     transcriptUnavailable: 'Kein Transkript f\u00fcr dieses Video verf\u00fcgbar.',
     noVideos: 'Keine Videos gefunden.',
     loadingData: 'Daten werden geladen…',
-    results: function(n) { return n + ' Video' + (n !== 1 ? 's' : ''); },
+    results: function(n, dur) { return n + ' Video' + (n !== 1 ? 's' : '') + (dur ? ' \u00b7 ' + dur : ''); },
     prevPage: '\u2190',
     nextPage: '\u2192',
     firstPage: '\u00ab',
@@ -798,8 +800,9 @@ const I18N = {
   },
   en: {
     pageTitle: 'YouTube Export',
-    generated: function(date, n) {
-      return 'Generated ' + date + ' \u2014 ' + n + ' video' + (n !== 1 ? 's' : '');
+    generated: function(date, n, dur) {
+      return 'Generated ' + date + ' \u2014 ' + n + ' video' + (n !== 1 ? 's' : '')
+        + (dur ? ' \u00b7 ' + dur : '');
     },
     searchPlaceholder: 'Search title or summary\u2026',
     allChannels: 'All',
@@ -831,7 +834,7 @@ const I18N = {
     transcriptUnavailable: 'No transcript available for this video.',
     noVideos: 'No videos found.',
     loadingData: 'Loading data…',
-    results: function(n) { return n + ' video' + (n !== 1 ? 's' : ''); },
+    results: function(n, dur) { return n + ' video' + (n !== 1 ? 's' : '') + (dur ? ' \u00b7 ' + dur : ''); },
     prevPage: '\u2190',
     nextPage: '\u2192',
     firstPage: '\u00ab',
@@ -1770,7 +1773,8 @@ function applyLang(lang) {
   document.documentElement.lang = lang;
   document.title = s.pageTitle + ' \u2014 ' + GENERATED_DATE;
   document.getElementById('page-title').textContent = s.pageTitle;
-  document.getElementById('page-meta').textContent = s.generated(GENERATED_DATE, TOTAL_VIDEOS);
+  document.getElementById('page-meta').textContent =
+    s.generated(GENERATED_DATE, TOTAL_VIDEOS, TOTAL_DURATION);
   document.getElementById('search').placeholder = s.searchPlaceholder;
   document.getElementById('key-hint').textContent = s.keyHint;
   document.getElementById('lang-select').value = lang;
@@ -1911,6 +1915,27 @@ function durationSeconds(v) {
   }
   v._secs = secs;
   return secs;
+}
+
+// Total runtime of a video list, as dd:hh:mm. Videos whose duration the index
+// does not carry (~4 % of the store) contribute nothing, so the sum is a lower
+// bound rather than a wrong number.
+function totalDurationSeconds(list) {
+  var sum = 0;
+  for (var i = 0; i < list.length; i++) {
+    var secs = durationSeconds(list[i]);
+    if (secs !== null) sum += secs;
+  }
+  return sum;
+}
+
+function formatTotalDuration(secs) {
+  var mins = Math.floor(secs / 60);
+  var days = Math.floor(mins / 1440);
+  var hours = Math.floor(mins / 60) % 24;
+  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  // Days are not capped at two digits -- a full archive runs past 99 days.
+  return pad(days) + ':' + pad(hours) + ':' + pad(mins % 60);
 }
 
 function escHtml(s) {
@@ -2185,7 +2210,11 @@ function renderPage(page, skipScroll) {
     if (cards[localIdx]) cards[localIdx].classList.add('focused');
   }
 
-  document.getElementById('results-count').textContent = s.results(total);
+  // A selection whose videos all lack a duration sums to zero -- show no
+  // runtime at all there rather than a "00:00:00" that reads as a fact.
+  var totalSecs = totalDurationSeconds(filtered);
+  document.getElementById('results-count').textContent =
+    s.results(total, totalSecs ? formatTotalDuration(totalSecs) : '');
 
   if (!skipScroll && currentPage !== prevPage) {
     var grid = document.getElementById('grid');

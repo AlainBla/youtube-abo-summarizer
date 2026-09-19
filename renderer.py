@@ -443,6 +443,43 @@ def _export_manifest(index: list[dict], chunks: list[dict[str, str]]) -> dict:
     }
 
 
+def _duration_seconds(display: str | None) -> int | None:
+    """Seconds behind a card's duration string ("7:12", "1:02:03").
+
+    The mirror of the JS `durationSeconds()`, and deliberately reading the same
+    display string rather than the store's ISO form: whatever the page can add
+    up, the header states, and neither can add up what is not there (~4 % of the
+    store carries no duration).
+    """
+    parts = str(display or "").split(":")
+    if len(parts) not in (2, 3):
+        return None
+    secs = 0
+    for part in parts:
+        if not part.isdigit():
+            return None
+        secs = secs * 60 + int(part)
+    return secs
+
+
+def _format_total_duration(secs: int) -> str:
+    """A runtime sum as dd:hh:mm -- the mirror of the JS `formatTotalDuration()`.
+
+    Days are not capped at two digits: a full archive runs well past 99.
+    """
+    mins = secs // 60
+    return f"{mins // 1440:02d}:{mins // 60 % 24:02d}:{mins % 60:02d}"
+
+
+def _total_duration_label(videos: list[dict]) -> str:
+    """The header's runtime, or "" when nothing in the selection carries one.
+
+    Empty rather than "00:00:00", which would read as a measured zero.
+    """
+    total = sum(s for s in (_duration_seconds(v.get("duration")) for v in videos) if s)
+    return _format_total_duration(total) if total else ""
+
+
 def render_export_html(
     videos: list[dict],
     output_path: str,
@@ -532,6 +569,7 @@ def render_export_html(
         data_obj=data_obj,
         generated_date=datetime.now().strftime(GENERATED_STAMP_FORMAT),
         total_videos=len(videos),
+        total_duration=_total_duration_label(videos),
         default_lang=lang,
         sync_url=safe_sync_url,
         show_embed=show_embed,
