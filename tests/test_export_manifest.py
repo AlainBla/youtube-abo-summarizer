@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -59,6 +60,52 @@ def test_embedded_manifest_matches_the_sidecar(tmp_path):
     with open(out + ".meta.json", encoding="utf-8") as f:
         meta = json.load(f)
     assert _manifest_literal(html) == meta
+
+
+def test_recent_ids_lead_with_the_latest_arrival_not_the_latest_upload(tmp_path):
+    # "New" means new to this archive: a video backfilled today leads the
+    # window even though it was published years ago, because that is what the
+    # page counts as an arrival (and what the added-desc sort already means).
+    videos = [
+        video("old", "2020-01-01T00:00:00Z", collected_at="2026-03-01T00:00:00Z"),
+        video("new", "2026-02-01T00:00:00Z", collected_at="2026-02-01T00:00:00Z"),
+    ]
+    out = _render_to(str(tmp_path), videos)
+    with open(out + ".meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+    assert meta["recent_ids"] == ["old", "new"]
+    # ... while the archive itself is still ordered by publish date.
+    assert meta["newest_id"] == "new"
+
+
+def test_recent_ids_fall_back_to_published_at_without_collected_at(tmp_path):
+    videos = [
+        video("v1", "2026-01-01T00:00:00Z"),
+        video("v3", "2026-03-01T00:00:00Z"),
+        video("v2", "2026-02-01T00:00:00Z"),
+    ]
+    out = _render_to(str(tmp_path), videos)
+    with open(out + ".meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+    assert meta["recent_ids"] == ["v3", "v2", "v1"]
+
+
+def test_recent_ids_are_capped_so_the_sidecar_stays_small(tmp_path):
+    count = renderer.EXPORT_RECENT_IDS + 10
+    videos = [
+        video(
+            "v%03d" % n,
+            "2026-01-01T00:00:00Z",
+            collected_at=(datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=n))
+            .isoformat(),
+        )
+        for n in range(count)
+    ]
+    out = _render_to(str(tmp_path), videos)
+    with open(out + ".meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+    assert len(meta["recent_ids"]) == renderer.EXPORT_RECENT_IDS
+    assert meta["recent_ids"][0] == "v%03d" % (count - 1)
 
 
 def test_manifest_url_is_the_html_basename_plus_suffix(tmp_path):

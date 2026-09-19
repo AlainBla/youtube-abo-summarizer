@@ -774,7 +774,10 @@ const I18N = {
         + 'Der Login funktioniert nur, wenn die Seite \u00fcber ' + origin
         + ' ge\u00f6ffnet wird (oder lokal als file://-Datei).';
     },
-    updateNew: function(n) { return n + (n === 1 ? ' neues Video' : ' neue Videos') + ' verf\u00fcgbar'; },
+    updateNew: function(n, removed) {
+      return n + (n === 1 ? ' neues Video' : ' neue Videos') + ' verf\u00fcgbar'
+        + (removed ? ', ' + removed + ' entfernt' : '');
+    },
     updateNewSummaries: function(n) { return n + ' neue Zusammenfassung' + (n !== 1 ? 'en' : '') + ' verf\u00fcgbar'; },
     updateSummariesChanged: 'Zusammenfassungen aktualisiert',
     updateGeneric: 'Archiv aktualisiert',
@@ -863,7 +866,10 @@ const I18N = {
         + 'Login only works when the page is opened via ' + origin
         + ' (or locally as a file:// document).';
     },
-    updateNew: function(n) { return n + ' new video' + (n !== 1 ? 's' : '') + ' available'; },
+    updateNew: function(n, removed) {
+      return n + ' new video' + (n !== 1 ? 's' : '') + ' available'
+        + (removed ? ', ' + removed + ' removed' : '');
+    },
     updateNewSummaries: function(n) { return n + ' new summar' + (n !== 1 ? 'ies' : 'y') + ' available'; },
     updateSummariesChanged: 'Summaries updated',
     updateGeneric: 'Archive updated',
@@ -1402,22 +1408,56 @@ function updatePollable() {
   return /^https?:$/.test(location.protocol);
 }
 
+function arrivedVideos(current, pending) {
+  // How many videos the pending export *added*, independent of what it
+  // dropped -- null when it cannot be told from these two manifests.
+  //
+  // recent_ids lists the most recently collected videos, newest arrival
+  // first, so everything new sits at its front: count the leading entries the
+  // current page does not know yet and stop at the first one it does. A plain
+  // set difference would instead over-count, because removals let older IDs
+  // slide into the pending window that the current one never carried.
+  if (!Array.isArray(current.recent_ids) || !Array.isArray(pending.recent_ids)) return null;
+  // A Set, not a plain object: an ID reading "constructor" is inherited-truthy
+  // on {} and would end the count at a video the page has never seen.
+  var known = new Set(current.recent_ids);
+  var added = 0;
+  while (added < pending.recent_ids.length && !known.has(pending.recent_ids[added])) added++;
+  return added;
+}
+
 function updateBannerKey(current, pending) {
   // Pure decision so it can be unit-tested without a DOM or a real MANIFEST.
-  var addedVideos = (pending.video_count || 0) - (current.video_count || 0);
-  if (addedVideos > 0) return {kind: 'videos', count: addedVideos};
+  //
+  // The video count is a *net* figure and on its own says nothing about
+  // arrivals: a personal export (--user) drops every video that has been read
+  // long enough, so three new videos and five departing ones read as an
+  // archive that shrank by two. arrivedVideos() counts the arrivals alone,
+  // and the removals are then whatever the net change does not explain.
+  var netVideos = (pending.video_count || 0) - (current.video_count || 0);
+  var added = arrivedVideos(current, pending);
+  if (added === null) {
+    // One side predates recent_ids -- the net figure is all there is, and it
+    // can only ever name arrivals when nothing left.
+    if (netVideos > 0) return {kind: 'videos', count: netVideos, removed: 0};
+  } else if (added > 0) {
+    return {kind: 'videos', count: added, removed: Math.max(0, added - netVideos)};
+  }
 
-  // Only look at summary fields when the video count is unchanged: a
-  // filtered/pruned export (--hours, --prune-days) can shrink between runs,
-  // which changes summary_digest too because videos left -- that must not
-  // read as "summaries updated". And only compare them when both manifests
-  // actually carry the fields (an archive from before they existed, or a
-  // sidecar poll crossing that boundary either way) -- never claim a
-  // summary change we cannot actually establish from what's on hand.
+  // Only look at summary fields when no video came or went: a filtered/pruned
+  // export (--hours, --prune-days, --user) can shrink between runs, which
+  // changes summary_digest too because videos left -- that must not read as
+  // "summaries updated". And only compare them when both manifests actually
+  // carry the fields (an archive from before they existed, or a sidecar poll
+  // crossing that boundary either way) -- never claim a summary change we
+  // cannot actually establish from what's on hand.
   var haveSummaryFields =
     typeof current.summary_count === 'number' && typeof pending.summary_count === 'number' &&
     typeof current.summary_digest === 'string' && typeof pending.summary_digest === 'string';
-  if (addedVideos === 0 && haveSummaryFields) {
+  // added === null: an archive from before recent_ids, where an unchanged
+  // count is the only evidence that nothing came or went.
+  if (netVideos !== 0 || (added !== null && added !== 0)) return {kind: 'generic'};
+  if (haveSummaryFields) {
     var addedSummaries = pending.summary_count - current.summary_count;
     if (addedSummaries > 0) return {kind: 'newSummaries', count: addedSummaries};
     if (pending.summary_digest !== current.summary_digest) return {kind: 'summariesChanged'};
@@ -1435,7 +1475,7 @@ function renderUpdateBanner() {
   var s = I18N[currentLang] || I18N[EMBEDDED_DEFAULT];
   var key = updateBannerKey(MANIFEST, pendingUpdate);
   var text;
-  if (key.kind === 'videos') text = s.updateNew(key.count);
+  if (key.kind === 'videos') text = s.updateNew(key.count, key.removed);
   else if (key.kind === 'newSummaries') text = s.updateNewSummaries(key.count);
   else if (key.kind === 'summariesChanged') text = s.updateSummariesChanged;
   else text = s.updateGeneric;

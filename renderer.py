@@ -340,6 +340,14 @@ EXPORT_FIRST_PAGE = 20
 # ask for it every few minutes without cost.
 EXPORT_MANIFEST_SUFFIX = ".meta.json"
 
+# How many of the most recently collected video IDs the manifest carries, so
+# the open page can count what *arrived* instead of what the archive gained on
+# balance. A personal export (--user) drops read videos on every run, so the
+# net count says nothing: three new videos and five aged-out ones look like a
+# shrinking archive. 100 is far more than any two consecutive exports differ
+# by, and costs ~1.2 kB in a sidecar polled every five minutes.
+EXPORT_RECENT_IDS = 100
+
 
 def _esc_html(s) -> str:
     """Escape exactly like escHtml() in export.html.j2 (& < > " and nothing else).
@@ -420,8 +428,28 @@ def _export_manifest(index: list[dict], chunks: list[dict[str, str]]) -> dict:
     texts alone would miss that last case). A video without a summary still
     contributes its record rather than being skipped, so "summary removed"
     does not read as "nothing changed".
+
+    ``recent_ids`` names the ``EXPORT_RECENT_IDS`` most recently *collected*
+    videos, newest arrival first. It is what lets the page separate arrivals
+    from departures: ``video_count`` alone nets the two out, and a personal
+    export (``--user``) loses read videos on every run, so an archive that
+    gained three videos and lost five would only ever say "Archiv
+    aktualisiert". Ordered by ``collected_at`` (falling back to
+    ``published_at``, as everything else meaning "date added" does), so a
+    backfill ingested today leads the list even though it was published years
+    ago -- "new" here is new to this archive, not newly published.
     """
     newest = index[0] if index else {}
+    by_arrival = sorted(
+        index,
+        key=lambda e: (
+            e.get("collected_at") or e.get("published_at") or "",
+            e.get("published_at") or "",
+            e.get("video_id") or "",
+        ),
+        reverse=True,
+    )
+    recent_ids = [e.get("video_id") or "" for e in by_arrival[:EXPORT_RECENT_IDS]]
     summaries = {video_id: html for chunk in chunks for video_id, html in chunk.items()}
     digest = hashlib.sha256()
     summary_count = 0
@@ -440,6 +468,7 @@ def _export_manifest(index: list[dict], chunks: list[dict[str, str]]) -> dict:
         "newest_published_at": newest.get("published_at"),
         "summary_count": summary_count,
         "summary_digest": digest.hexdigest()[:16],
+        "recent_ids": recent_ids,
     }
 
 

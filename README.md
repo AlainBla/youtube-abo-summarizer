@@ -265,16 +265,23 @@ the ID is genuinely absent.
 
 Every export also writes a small manifest next to the HTML file — `full_archive.html` gets
 `full_archive.html.meta.json` — containing the generation timestamp, the video count, the newest
-video ID, how many videos carry a summary, and a short fingerprint over all summary texts. When the
+video ID, how many videos carry a summary, a short fingerprint over all summary texts, and the IDs of
+the 100 most recently collected videos. When the
 archive is served over HTTP(S), the open page re-fetches that manifest every five
 minutes (skipped while the tab is in the background, plus one immediate check when you return to the
 tab) and compares it against the values embedded at export time. If a newer export has been deployed,
 a banner appears at the top of the page — with a reload button and an "×" that dismisses it until the
-next export. Its wording says what actually happened: "3 neue Videos verfügbar" when the archive grew;
+next export. Its wording says what actually happened: "3 neue Videos verfügbar" when
+videos arrived, with ", 5 entfernt" appended when videos left in the same export;
 "2 neue Zusammenfassungen verfügbar" when the same videos gained summaries (a repaired transcript, a
 re-run summarization); "Zusammenfassungen aktualisiert" when summary texts changed without their number
-changing; "Archiv aktualisiert" for anything else. The summary wordings are only used when the video
-count is unchanged — an export that shrank (`--prune-days`, a narrower `--hours`) reports
+changing; "Archiv aktualisiert" for anything else.
+
+Arrivals and departures are counted separately, which is what the list of recently collected IDs is
+for: a personal export (`--user`) drops every video that has been read long enough, so the video count
+alone nets the two out — three new videos against five departed ones used to look like a shrinking
+archive and read as the bare "Archiv aktualisiert". The summary wordings, by contrast, are only used
+when nothing came or went at all: an export that shrank (`--prune-days`, a narrower `--hours`) reports
 the generic text rather than blaming the departed videos on summaries.
 
 Nothing to configure: upload or serve the `.meta.json` file alongside the HTML and the banner works.

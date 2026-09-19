@@ -40,12 +40,83 @@ FULL = {
 }
 
 
+# The same manifest with a recent_ids window: the IDs of the most recently
+# collected videos, newest arrival first. FULL deliberately carries none, so
+# the tests using it pin the fallback for archives exported before the field
+# existed.
+def _with_recent(manifest: dict, ids: list[str], **over) -> dict:
+    return dict(manifest, recent_ids=list(ids), **over)
+
+
+WINDOW = ["v009", "v008", "v007", "v006", "v005"]
+
+
 @pytest.mark.skipif(not node_available(), reason="node not installed")
 def test_videos_added_wins_over_everything_else():
     current = dict(FULL)
     pending = dict(FULL, video_count=12, summary_count=5, summary_digest="bbbbbbbbbbbbbbbb")
     key = _key(current, pending)
-    assert key == {"kind": "videos", "count": 2}
+    assert key == {"kind": "videos", "count": 2, "removed": 0}
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_arrivals_are_counted_when_just_as_many_videos_left():
+    # The case a personal export (--user) produces constantly: two new videos
+    # in, two read ones aged out, video_count unchanged. Netting them out is
+    # what used to leave only "Archiv aktualisiert".
+    current = _with_recent(FULL, WINDOW)
+    pending = _with_recent(FULL, ["v011", "v010"] + WINDOW[:3], summary_digest="bbbbbbbbbbbbbbbb")
+    key = _key(current, pending)
+    assert key == {"kind": "videos", "count": 2, "removed": 2}
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_arrivals_are_counted_when_more_videos_left_than_arrived():
+    current = _with_recent(FULL, WINDOW)
+    pending = _with_recent(FULL, ["v011"] + WINDOW, video_count=7)
+    key = _key(current, pending)
+    assert key == {"kind": "videos", "count": 1, "removed": 4}
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_departures_alone_do_not_claim_new_videos():
+    current = _with_recent(FULL, WINDOW)
+    pending = _with_recent(FULL, WINDOW[:3], video_count=8, summary_count=6,
+                           summary_digest="dddddddddddddddd")
+    key = _key(current, pending)
+    assert key == {"kind": "generic"}
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_a_window_sharing_nothing_counts_the_whole_window():
+    # A page left open long enough that every ID in the pending window is new
+    # to it: the count is capped by the window, never wrong in the other
+    # direction, and still names arrivals rather than falling back to generic.
+    current = _with_recent(FULL, WINDOW)
+    pending = _with_recent(FULL, ["n1", "n2", "n3"], video_count=13)
+    key = _key(current, pending)
+    assert key == {"kind": "videos", "count": 3, "removed": 0}
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_ids_that_only_slide_into_the_window_are_not_arrivals():
+    # Removals let older IDs enter the pending window that the current one
+    # never carried. They sit behind the first known ID, so the prefix count
+    # ignores them -- a set difference would report them as new.
+    current = _with_recent(FULL, ["v009", "v008", "v007"])
+    pending = _with_recent(FULL, ["v010", "v008", "v006", "v005"], video_count=10)
+    key = _key(current, pending)
+    assert key == {"kind": "videos", "count": 1, "removed": 1}
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_recent_ids_on_one_side_only_falls_back_to_the_net_count():
+    current = dict(FULL)
+    pending = _with_recent(FULL, ["v011"] + WINDOW, video_count=11)
+    assert _key(current, pending) == {"kind": "videos", "count": 1, "removed": 0}
+    # ... and a shrink the net figure cannot explain stays generic, exactly as
+    # it did before recent_ids existed.
+    assert _key(current, dict(FULL, video_count=8)) == {"kind": "generic"}
 
 
 @pytest.mark.skipif(not node_available(), reason="node not installed")
@@ -102,6 +173,14 @@ def test_missing_summary_fields_on_current_stays_generic():
 
 
 @pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_an_unchanged_window_still_reports_new_summaries():
+    current = _with_recent(FULL, WINDOW)
+    pending = _with_recent(FULL, WINDOW, summary_count=11, summary_digest="bbbbbbbbbbbbbbbb")
+    key = _key(current, pending)
+    assert key == {"kind": "newSummaries", "count": 3}
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
 def test_nothing_changed_stays_generic():
     current = dict(FULL)
     pending = dict(FULL)
@@ -129,6 +208,18 @@ def test_german_video_wording_singular():
 @pytest.mark.skipif(not node_available(), reason="node not installed")
 def test_german_video_wording_plural():
     assert _i18n_string("de", "updateNew", 2) == "2 neue Videos verfügbar"
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_german_video_wording_names_departures_separately():
+    assert _i18n_string("de", "updateNew", 3, 5) == "3 neue Videos verfügbar, 5 entfernt"
+    assert _i18n_string("de", "updateNew", 2, 0) == "2 neue Videos verfügbar"
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_english_video_wording_names_departures_separately():
+    assert _i18n_string("en", "updateNew", 3, 5) == "3 new videos available, 5 removed"
+    assert _i18n_string("en", "updateNew", 1, 0) == "1 new video available"
 
 
 @pytest.mark.skipif(not node_available(), reason="node not installed")
@@ -202,3 +293,14 @@ def test_a_poll_finding_only_a_changed_digest_renders_the_changed_wording():
     out = _banner_after_poll("{summary_digest: 'ffffffffffffffff'}")
     assert out["display"] != "none"
     assert out["text"] == "Zusammenfassungen aktualisiert"
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_a_poll_finding_arrivals_and_departures_renders_both_numbers():
+    # The whole chain for the case that started this: same video count, but
+    # the window shows two arrivals.
+    # A window whose IDs the page does not know at all, at an unchanged
+    # video_count: as many videos left as arrived.
+    out = _banner_after_poll("{recent_ids: ['n1', 'n2'], video_count: MANIFEST.video_count}")
+    assert out["display"] != "none"
+    assert out["text"] == "2 neue Videos verfügbar, 2 entfernt"
