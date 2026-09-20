@@ -62,6 +62,7 @@ Place your Google OAuth credentials in `client_secrets.json` (downloaded from th
 | `SMTP_FROM` | No | Sender address (defaults to `SMTP_USER`) |
 | `SUMMARY_LANG` | No | Language for LLM-generated summaries (default: `German`); any name the model understands, e.g. `English` |
 | `TRANSCRIPT_LANGS` | No | Comma-separated transcript language priority list (default: `de,en`); falls back to any available language |
+| `VIDEO_TITLE_FILTERS` | No | Title blacklist for `collect.py`: comma-separated regex patterns, matched case-insensitively anywhere in the title, e.g. `Letsplay,Let.?s ?Play`. A match is skipped before the transcript and the LLM |
 | `WEBSHARE_PROXY_URL` | No | Residential proxy URL for transcript fetching |
 | `PROXY_FALLBACK_COUNTRY` | No | Country code used for the geo-block retry (default: `DE`); appended to the Webshare username, e.g. `US`, `GB` |
 
@@ -99,6 +100,25 @@ python collect.py --file channels.txt
 New videos are discovered through each channel's public RSS feed, which costs no API quota and needs no token; durations come from yt-dlp. The YouTube API is only consulted for your subscription list (`--auth`), for handles and URLs that have to be resolved to channel IDs, and as a per-channel fallback when a feed cannot answer — it holds only ~15 entries, so a channel that posted more between two runs is fetched through the API for that run. `--no-rss` forces the API path for everything.
 
 Results are written to `data/` (SQLite metadata + individual transcript and summary files). Videos already in the store are handled incrementally: if both transcript and summary exist they are skipped entirely; if only one is missing, only the missing piece is fetched or generated. Pass `--prune-days N` to remove entries older than N days; by default nothing is pruned.
+
+#### Blacklisting videos by title
+
+`VIDEO_TITLE_FILTERS` in `.env` keeps whole categories of video out of the pipeline:
+
+```
+VIDEO_TITLE_FILTERS=Letsplay,Let.?s ?Play,\(Werbung\)
+```
+
+Comma-separated regex patterns, matched case-insensitively anywhere in the title, so `Letsplay` catches "Mein Letsplay #3" and "LETSPLAY Finale" — but not "Let's Play", which is why the second pattern is there. A match is dropped **before** the transcript fetch and the LLM call, so it costs nothing and never enters the store; the run logs `→ Titel ignoriert (Filter match: 'Letsplay')`. Two things to know: the comma is the separator, so a pattern cannot contain one, and an invalid regex aborts the run with exit 1 instead of quietly filtering the wrong thing. The filter also applies to `collect.py --video`, i.e. to the archive's Ingest button — a blacklisted video cannot be queued by hand either.
+
+Patterns only affect videos on their way in. To remove what is already stored:
+
+```bash
+python collect.py --prune-filtered --dry-run   # list the matches, write nothing
+python collect.py --prune-filtered             # delete them
+```
+
+The clean-up reads the store's titles through the same filter, prints each match with the pattern that caught it, and deletes the entries together with their transcript and summary files. It needs no OAuth token and no API quota. Back up `data/` first — the deletion is irreversible and `data/` is not in version control.
 
 ### 2. Report — render and optionally send a digest
 

@@ -250,6 +250,46 @@ def get_all_videos(with_transcripts: bool = True) -> list[dict]:
     return result
 
 
+def _unlink_video_files(video_id: str) -> None:
+    """Remove every file belonging to one video: transcripts and summary.
+
+    Both the plain ``<id>.txt`` and the per-language ``<id>.<lang>.txt``
+    variants, because either form may be the only one on disk (see
+    ``_resolve_transcript_path()``); leaving one behind would make a later run
+    read a transcript for a row that no longer exists.
+    """
+    for path in TRANSCRIPTS_DIR.glob(f"{video_id}.*.txt"):
+        path.unlink(missing_ok=True)
+    (TRANSCRIPTS_DIR / f"{video_id}.txt").unlink(missing_ok=True)
+    (SUMMARIES_DIR / f"{video_id}.html").unlink(missing_ok=True)
+
+
+def delete_videos(video_ids) -> int:
+    """Delete the given entries and their files. Returns how many rows went.
+
+    An ID the store does not hold is silently skipped rather than an error:
+    the callers work from a selection they made themselves, and a row that
+    disappeared in between is the outcome they wanted anyway.
+    """
+    ids = list(dict.fromkeys(video_ids))
+    if not ids:
+        return 0
+    with _conn() as c:
+        placeholders = ",".join("?" * len(ids))
+        rows = c.execute(
+            f"SELECT video_id FROM videos WHERE video_id IN ({placeholders})", ids
+        ).fetchall()
+        present = [r["video_id"] for r in rows]
+        for vid_id in present:
+            _unlink_video_files(vid_id)
+        if present:
+            c.execute(
+                f"DELETE FROM videos WHERE video_id IN ({','.join('?' * len(present))})",
+                present,
+            )
+    return len(present)
+
+
 def prune_older_than(days: int = 7) -> int:
     """Delete entries and their files older than `days` days by published_at.
 
@@ -260,11 +300,4 @@ def prune_older_than(days: int = 7) -> int:
         rows = c.execute(
             "SELECT video_id FROM videos WHERE published_at < ?", (cutoff,)
         ).fetchall()
-        video_ids = [r["video_id"] for r in rows]
-        for vid_id in video_ids:
-            for p in TRANSCRIPTS_DIR.glob(f"{vid_id}.*.txt"):
-                p.unlink(missing_ok=True)
-            (TRANSCRIPTS_DIR / f"{vid_id}.txt").unlink(missing_ok=True)
-            (SUMMARIES_DIR / f"{vid_id}.html").unlink(missing_ok=True)
-        c.execute("DELETE FROM videos WHERE published_at < ?", (cutoff,))
-    return len(video_ids)
+    return delete_videos(r["video_id"] for r in rows)

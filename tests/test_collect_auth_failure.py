@@ -74,6 +74,8 @@ class _Args:
     channels = []
     hours = 4
     prune_days = None
+    prune_filtered = False
+    dry_run = False
     include_shorts = False
     no_proxy = False
     no_rss = False

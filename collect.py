@@ -66,15 +66,15 @@ EXIT_NEW_VIDEOS = 10
 EXIT_AUTH_FAILED = 11
 
 
-def _exit_code(added: int, summarized: int = 0) -> int:
-    """EXIT_NEW_VIDEOS now covers two distinct events: a brand-new video
-    stored, or a summary newly written for a video that was already in the
-    store (its transcript fetch had failed earlier and this run filled the
-    gap). Either one changes what the exported archive shows, so the two
-    counts merge here -- but only here; they stay separate everywhere else so
-    a cron log can still say which one happened.
+def _exit_code(added: int, summarized: int = 0, removed: int = 0) -> int:
+    """EXIT_NEW_VIDEOS covers three distinct events: a brand-new video stored,
+    a summary newly written for a video that was already in the store (its
+    transcript fetch had failed earlier and this run filled the gap), or
+    entries deleted by --prune-filtered. Each one changes what the exported
+    archive shows, so the counts merge here -- but only here; they stay
+    separate everywhere else so a cron log can still say which one happened.
     """
-    return EXIT_NEW_VIDEOS if added or summarized else 0
+    return EXIT_NEW_VIDEOS if added or summarized or removed else 0
 
 
 def _is_auth_failure(exc: BaseException) -> bool:
@@ -146,6 +146,58 @@ def _should_filter_title(title: str) -> tuple[bool, str]:
     return False, ""
 
 
+def find_filtered_in_store() -> list[tuple[str, str, str]]:
+    """Stored videos whose title VIDEO_TITLE_FILTERS would skip today.
+
+    Returns (video_id, channel_title, title, matched_pattern) tuples -- the
+    channel is there because it is what tells a false positive apart from a
+    real hit when eyeballing a --dry-run list. Reading the store's
+    titles through the very function the collect loop uses is the point: a
+    pattern added to .env and this clean-up cannot disagree about what counts
+    as a match, and an invalid regex fails here exactly as it would there --
+    before anything is deleted.
+    """
+    matches = []
+    for entry in store.get_all_videos(with_transcripts=False):
+        title = entry.get("title") or ""
+        hit, pattern = _should_filter_title(title)
+        if hit:
+            matches.append(
+                (entry["video_id"], entry.get("channel_title") or "", title, pattern)
+            )
+    return matches
+
+
+def prune_filtered(dry_run: bool = False) -> int:
+    """Delete the stored videos VIDEO_TITLE_FILTERS now excludes.
+
+    The title filter only ever applied to videos on their way in, so turning
+    it on leaves whatever it would have skipped sitting in the archive. This
+    is the reversal, and it is deliberately a separate run rather than part of
+    a collect: deleting summaries is irreversible and data/ has no backup.
+    Returns the number of entries removed (0 for a dry run, however many it
+    reports).
+    """
+    if not os.environ.get("VIDEO_TITLE_FILTERS", "").strip():
+        print("VIDEO_TITLE_FILTERS is empty -- nothing to prune.", file=sys.stderr)
+        return 0
+
+    matches = find_filtered_in_store()
+    if not matches:
+        print("No stored video matches VIDEO_TITLE_FILTERS.")
+        return 0
+
+    for vid_id, channel_title, title, pattern in matches:
+        print(f"  {vid_id}  {channel_title}  {title}  [Filter: '{pattern}']")
+    if dry_run:
+        print(f"\n{len(matches)} entry(s) would be deleted (dry run, nothing written).")
+        return 0
+
+    removed = store.delete_videos(m[0] for m in matches)
+    print(f"\nDeleted {removed} entry(s) matching VIDEO_TITLE_FILTERS.")
+    return removed
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Collect new YouTube video summaries into data/."
@@ -198,6 +250,19 @@ def parse_args():
         "--no-proxy",
         action="store_true",
         help="Ignore WEBSHARE_PROXY_URL and fetch transcripts via direct connection.",
+    )
+    parser.add_argument(
+        "--prune-filtered",
+        action="store_true",
+        help=(
+            "Delete stored videos whose title matches VIDEO_TITLE_FILTERS and exit. "
+            "Fetches nothing; combine with --dry-run to see the list first."
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --prune-filtered: list what would be deleted without writing.",
     )
     parser.add_argument(
         "--no-rss",
@@ -514,6 +579,15 @@ def _process_single_video(get_service, video_id: str, model: str, now: datetime,
 
 def main():
     args = parse_args()
+
+    # Before anything else, and before any network or OAuth setup: this is a
+    # store-only operation and must run on a host with no token and no quota
+    # left. Its own count reaches _exit_code() so a caller can chain the
+    # export onto a run that actually removed something.
+    if args.prune_filtered:
+        removed = prune_filtered(dry_run=args.dry_run)
+        return 0, 0, removed
+
     tr.log_proxy_config(no_proxy=args.no_proxy)
     model = os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
 
@@ -535,7 +609,7 @@ def main():
             f"\nDone. {added_count} video(s) added to store, "
             f"{summarized_count} summary(ies) written for previously stored video(s)."
         )
-        return added_count, summarized_count
+        return added_count, summarized_count, 0
 
     # --- Resolve channel list ---
     get_service = _lazy_service(require_token=not args.auth)
@@ -726,9 +800,9 @@ def main():
         f"\nDone. {total_added} new video(s) added to store, "
         f"{total_summarized} summary(ies) written for previously stored video(s)."
     )
-    return total_added, total_summarized
+    return total_added, total_summarized, 0
 
 
 if __name__ == "__main__":
-    added, summarized = main() or (0, 0)
-    sys.exit(_exit_code(added, summarized))
+    added, summarized, removed = main() or (0, 0, 0)
+    sys.exit(_exit_code(added, summarized, removed))
