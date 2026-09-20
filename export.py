@@ -20,6 +20,7 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 
+import export_stats
 import renderer
 import store
 import sync_state
@@ -27,6 +28,35 @@ import sync_state
 DEFAULT_SYNC_DB = sync_state.DEFAULT_SYNC_DB
 # How long a video stays in the personal export after it was marked read.
 DEFAULT_READ_DAYS = 30
+
+
+def record_backlog(user, read_days, all_videos, hours, personal_count, total_count,
+                   now=None) -> dict | None:
+    """Append this run to the export history, then read the history back.
+
+    In that order: the tooltip's "today" is this very run, so its record has
+    to exist before the series is loaded. A failed write costs the statistic,
+    never the export -- export_stats.record() never raises.
+
+    The series is keyed by user, --read-days and the time window, so changing
+    one of those starts a new line instead of bending the old one. --channel
+    and --videos are deliberately *not* part of that key (they are not part of
+    what the user asked to separate), so a restricted personal export lands in
+    the same series as the full one and will look like a sudden drop.
+    """
+    now = now or datetime.now(tz=timezone.utc)
+    fp = export_stats.fingerprint(
+        user=user,
+        read_days=read_days,
+        window=export_stats.window_label(all_videos, hours),
+    )
+    export_stats.record({
+        "ts": now.isoformat(timespec="seconds"),
+        **fp,
+        "personal_count": personal_count,
+        "total_count": total_count,
+    })
+    return export_stats.backlog(export_stats.series(export_stats.load(), fp), now)
 
 
 def parse_args():
@@ -232,7 +262,7 @@ def main():
         for e in entries
     ]
 
-    def render(selection, path, full_url=None):
+    def render(selection, path, full_url=None, backlog=None):
         renderer.render_export_html(
             selection, path,
             lang=args.lang or "de",
@@ -240,12 +270,17 @@ def main():
             show_embed=not args.thumbnail,
             compress=not args.no_compress,
             full_url=full_url,
+            backlog=backlog,
         )
 
     if args.user:
         read_ids = sync_state.load_state_ids(args.sync_db, args.user, "read")
         bookmark_ids = sync_state.load_state_ids(args.sync_db, args.user, "bookmark")
         personal = filter_personal(videos, read_ids, bookmark_ids, days=args.read_days)
+        backlog = record_backlog(
+            args.user, args.read_days, args.all, args.hours,
+            personal_count=len(personal), total_count=len(videos),
+        )
         full_path = full_sidecar_path(output_path)
         # The full archive is written first: the filtered page links to it, so
         # it must already be there by the time that page can be opened. Both
@@ -254,7 +289,9 @@ def main():
         render(videos, full_path)
         print(f"Rendering {len(personal)} of {len(videos)} video(s) "
               f"for {args.user} → {output_path}")
-        render(personal, output_path, full_url=os.path.basename(full_path))
+        # Only the personal page carries the backlog history: the sidecar is
+        # the unfiltered archive, where "how big is my stack" has no meaning.
+        render(personal, output_path, full_url=os.path.basename(full_path), backlog=backlog)
     else:
         print(f"Rendering {len(videos)} video(s) → {output_path}")
         render(videos, output_path)

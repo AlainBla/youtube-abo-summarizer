@@ -30,6 +30,25 @@
     }
     .page-header h1 { font-size: 1.8rem; font-weight: 700; color: #fff; }
     .page-header .meta { color: #888; font-size: 0.9rem; margin-top: 0.25rem; }
+    /* Only the personal export has a history behind its count; the dotted
+       underline is what tells a reader there is something to open. Tap or
+       click, because a phone has no hover -- the title attribute is the
+       desktop shortcut, the panel below is what everyone gets. */
+    #video-count.has-backlog { cursor: pointer; border-bottom: 1px dotted #666; }
+    #backlog-panel {
+      margin-top: 0.4rem;
+      padding: 0.5rem 0.7rem;
+      border: 1px solid #333;
+      border-radius: 6px;
+      background: #1a1a1a;
+      color: #bbb;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      /* The panel prints the very text of the tooltip, newlines and all, so
+         the two can never say different things. */
+      white-space: pre-line;
+      max-width: 22rem;
+    }
     .full-link {
       color: #aaa;
       font-size: 0.85rem;
@@ -521,7 +540,8 @@
   <div class="header-row">
     <div>
       <h1 id="page-title">YouTube Export</h1>
-      <p class="meta" id="page-meta">{{ generated_date }} &mdash; {{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}{% if total_duration %} &middot; {{ total_duration }}{% endif %}</p>
+      <p class="meta" id="page-meta"><span id="meta-generated">{{ generated_date }} &mdash; </span><span id="video-count"{% if backlog %} class="has-backlog"{% endif %}>{{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}</span><span id="meta-duration">{% if total_duration %} &middot; {{ total_duration }}{% endif %}</span></p>
+      <div id="backlog-panel" hidden></div>
     </div>
     <div class="header-links">
       {% if full_url %}<a class="full-link" id="full-link" href="{{ full_url }}">{{ t.full_archive }}</a>{% endif %}
@@ -692,6 +712,10 @@ let dataReady = false;
 const PAGE_SIZE = {{ first_page_size }};
 const TOTAL_VIDEOS = {{ total_videos }};
 const TOTAL_DURATION = '{{ total_duration }}';
+// Personal exports only (export_stats.py): this run's video count and the
+// counts of 7, 30 and 90 days ago, or null where the history does not reach
+// back that far. null for every other export -- no history, no tooltip.
+const BACKLOG = {{ backlog_json }};
 const GENERATED_DATE = '{{ generated_date }}';
 const EMBEDDED_DEFAULT = '{{ default_lang }}';
 // Snapshot of the export this document was rendered from, plus the sidecar the
@@ -711,10 +735,10 @@ const LENGTH_BUCKETS = [5, 10, 20, 30, 60];
 const I18N = {
   de: {
     pageTitle: 'YouTube Export',
-    generated: function(date, n, dur) {
-      return 'Generiert ' + date + ' \u2014 ' + n + ' Video' + (n !== 1 ? 's' : '')
-        + (dur ? ' \u00b7 ' + dur : '');
-    },
+    generatedPrefix: function(date) { return 'Generiert ' + date + ' \u2014 '; },
+    videoCount: function(n) { return n + ' Video' + (n !== 1 ? 's' : ''); },
+    backlogToday: 'Bestand heute',
+    backlogAgo: {d7: 'vor 7 Tagen', d30: 'vor 30 Tagen', d90: 'vor 3 Monaten'},
     searchPlaceholder: 'Titel oder Zusammenfassung durchsuchen\u2026',
     allChannels: 'Alle',
     allTags: 'Alle',
@@ -803,10 +827,10 @@ const I18N = {
   },
   en: {
     pageTitle: 'YouTube Export',
-    generated: function(date, n, dur) {
-      return 'Generated ' + date + ' \u2014 ' + n + ' video' + (n !== 1 ? 's' : '')
-        + (dur ? ' \u00b7 ' + dur : '');
-    },
+    generatedPrefix: function(date) { return 'Generated ' + date + ' \u2014 '; },
+    videoCount: function(n) { return n + ' video' + (n !== 1 ? 's' : ''); },
+    backlogToday: 'Backlog today',
+    backlogAgo: {d7: '7 days ago', d30: '30 days ago', d90: '3 months ago'},
     searchPlaceholder: 'Search title or summary\u2026',
     allChannels: 'All',
     allTags: 'All',
@@ -1805,6 +1829,74 @@ function shareVideo(id, btn) {
 }
 
 // ── Apply language ─────────────────────────────────────────────────────────────
+function backlogTooltipText(b, s) {
+  // Pure, so every branch -- a window the history does not reach, an
+  // unchanged count -- is testable without a DOM.
+  if (!b || typeof b.now !== 'number') return '';
+  var lines = [s.backlogToday + ': ' + b.now];
+  [7, 30, 90].forEach(function (days) {
+    var key = 'd' + days;
+    var label = s.backlogAgo[key];
+    var past = b[key];
+    if (typeof past !== 'number') {
+      // No measurement that old: a dash, never an extrapolation from the
+      // oldest one there is -- that would report today's backlog as history.
+      lines.push(label + ': \u2014');
+      return;
+    }
+    var delta = b.now - past;
+    var sign = delta > 0 ? '+' : (delta < 0 ? '\u2212' : '\u00b1');
+    lines.push(label + ': ' + past + ' (' + sign + Math.abs(delta) + ')');
+  });
+  return lines.join('\n');
+}
+
+// The language the backlog text was last written in. Kept separately from
+// currentLang because the tooltip is set from detectLang() before bootstrap()
+// ever calls applyLang(), and the panel must not open in a different language
+// than the tooltip it mirrors.
+var backlogLang = EMBEDDED_DEFAULT;
+
+function backlogStrings() {
+  return I18N[backlogLang] || I18N[EMBEDDED_DEFAULT];
+}
+
+function setBacklogTooltip(lang) {
+  var el = document.getElementById('video-count');
+  if (!el || !BACKLOG) return;
+  backlogLang = lang;
+  var text = backlogTooltipText(BACKLOG, backlogStrings());
+  el.setAttribute('title', text);
+  // A title attribute is a desktop-only affordance: a phone or tablet has no
+  // hover at all, so the same text is also a panel the count opens on tap.
+  el.setAttribute('role', 'button');
+  el.setAttribute('tabindex', '0');
+  el.setAttribute('aria-expanded', backlogPanelOpen() ? 'true' : 'false');
+  el.setAttribute('aria-controls', 'backlog-panel');
+  var panel = document.getElementById('backlog-panel');
+  if (panel && backlogPanelOpen()) panel.textContent = text;
+}
+
+function backlogPanelOpen() {
+  var panel = document.getElementById('backlog-panel');
+  return !!panel && !panel.hidden;
+}
+
+function setBacklogPanel(open) {
+  var panel = document.getElementById('backlog-panel');
+  var el = document.getElementById('video-count');
+  if (!panel || !BACKLOG) return;
+  if (open) {
+    panel.textContent = backlogTooltipText(BACKLOG, backlogStrings());
+  }
+  panel.hidden = !open;
+  if (el) el.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function toggleBacklogPanel() {
+  setBacklogPanel(!backlogPanelOpen());
+}
+
 function applyLang(lang) {
   currentLang = lang;
   setCookie(COOKIE_LANG, lang);
@@ -1813,8 +1905,13 @@ function applyLang(lang) {
   document.documentElement.lang = lang;
   document.title = s.pageTitle + ' \u2014 ' + GENERATED_DATE;
   document.getElementById('page-title').textContent = s.pageTitle;
-  document.getElementById('page-meta').textContent =
-    s.generated(GENERATED_DATE, TOTAL_VIDEOS, TOTAL_DURATION);
+  // Three elements rather than one line of text: the count has to stay its
+  // own node, or the tooltip would be wiped out on every language switch.
+  document.getElementById('meta-generated').textContent = s.generatedPrefix(GENERATED_DATE);
+  document.getElementById('video-count').textContent = s.videoCount(TOTAL_VIDEOS);
+  document.getElementById('meta-duration').textContent =
+    TOTAL_DURATION ? ' \u00b7 ' + TOTAL_DURATION : '';
+  setBacklogTooltip(lang);
   document.getElementById('search').placeholder = s.searchPlaceholder;
   document.getElementById('key-hint').textContent = s.keyHint;
   document.getElementById('lang-select').value = lang;
@@ -2378,6 +2475,40 @@ document.getElementById('sort').addEventListener('change', applyFiltersAndSort);
 document.getElementById('lang-select').addEventListener('change', function() {
   applyLang(this.value);
 });
+
+// The count is pre-rendered, so its tooltip and its click handler are wired
+// here rather than in bootstrap(): on a large archive the data blob decodes
+// seconds later, and an affordance that is dead for those seconds is one
+// nobody tries twice. The wiring runs before setBacklogTooltip(), which reads
+// the panel's state for aria-expanded.
+(function () {
+  var panel = document.getElementById('backlog-panel');
+  // The markup carries `hidden` as well; setting it here too makes the closed
+  // state explicit rather than a property of how the page happened to render.
+  if (panel) panel.hidden = true;
+  var count = document.getElementById('video-count');
+  if (!count || !BACKLOG) return;
+  count.addEventListener('click', function (e) {
+    e.stopPropagation();   // ... or the document handler closes it again
+    toggleBacklogPanel();
+  });
+  count.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggleBacklogPanel();
+    }
+  });
+  // Tapping anywhere else closes it -- on a phone there is no Escape key and
+  // no hover to move away from.
+  document.addEventListener('click', function () {
+    if (backlogPanelOpen()) setBacklogPanel(false);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && backlogPanelOpen()) setBacklogPanel(false);
+  });
+})();
+
+setBacklogTooltip(detectLang());
 
 // ── Data loading (index first, summary chunks on demand) ──────────────────────
 async function gunzipB64(b64) {

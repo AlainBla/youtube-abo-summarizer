@@ -246,6 +246,34 @@ out offers the same video in the full archive.
 Both files must be deployed together (each has its own `.meta.json` update sidecar), and the link
 between them is a plain relative filename, so it works over http(s) and from `file://` alike.
 
+#### Backlog history
+
+Every `--user` run writes one line to `data/export_stats.jsonl` saying how many videos the personal
+view held: timestamp, user, `--read-days`, the time window, the personal count and the size of the
+whole archive. The personal page hangs that history on its video count — the number is dotted-underlined; hover it
+with a mouse, or tap/click it on a phone or tablet, where there is no hover at all:
+
+```
+Bestand heute: 389
+vor 7 Tagen: 412 (−23)
+vor 30 Tagen: 350 (+39)
+vor 3 Monaten: —
+```
+
+The panel closes on a second tap, on a tap anywhere else, or with Escape.
+
+A measurement is only comparable to measurements taken under the same rules, so each line carries
+user, `--read-days` and the window, and only lines matching the current run are plotted. Raising
+`--read-days` from 30 to 60 therefore starts a fresh series rather than showing a jump that was really
+a settings change; the old series stays in the file for the day the old setting comes back. A window
+the history does not reach back to shows a dash, never the oldest number there is. (`--channel` and
+`--videos` are *not* part of that key — a personal export restricted to one channel lands in the same
+series and will look like a collapse.)
+
+Nothing to configure, and nothing to clean up: the file is a few hundred bytes per week, lives in the
+gitignored `data/` directory, and a failed write costs the statistic, never the export. A plain export
+without `--user` writes nothing and shows no tooltip.
+
 To have cron produce this pair, set `EXPORT_USER` (and optionally `EXPORT_READ_DAYS`) in `cron.env`;
 `collect.sh` then passes them to its post-collection export. Note that this export still only runs
 when a collect run actually stored something — marking videos read does not, by itself, refresh the
@@ -645,6 +673,7 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 | `collect.py` | Collect-phase CLI: resolves channels, fetches videos/transcripts/summaries, writes to `data/` |
 | `report.py` | Report-phase CLI: reads `data/`, renders HTML, optional SMTP send |
 | `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel/tag/read/bookmark filters, sort (publish date, date added, channel, title), and pagination; `--user` renders a personal view plus the full archive beside it |
+| `export_stats.py` | Appends one line per personal export to `data/export_stats.jsonl` and reads the series back for the backlog tooltip; series are keyed by user, `--read-days` and time window |
 | `sync_state.py` | Read-only access to the sync server's per-user read and bookmark flags; shared by `export.py --user` and `ebook.py --user` |
 | `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries (also re-generates tags with `--force-summarize`); `--remap-tags` rewrites stored tags through the controlled vocabulary and `tag_aliases.json`, no LLM calls |
 | `recover_from_export.py` | Restores store entries from a previously exported HTML file; inserts missing DB rows and summary files; leaves existing entries untouched; supports `--dry-run` |

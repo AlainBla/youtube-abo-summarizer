@@ -517,6 +517,7 @@ def render_export_html(
     show_embed: bool = True,
     compress: bool = True,
     full_url: str | None = None,
+    backlog: dict | None = None,
 ) -> None:
     """Render and write a self-contained export HTML file with embedded video data.
 
@@ -529,6 +530,10 @@ def render_export_html(
     ``DecompressionStream``). ``compress=False`` embeds one plain
     ``{index, summaries}`` JSON object (no chunking) for browsers without
     ``DecompressionStream``.
+
+    ``backlog`` (personal exports only, see ``export_stats.py``) carries the
+    video counts of earlier runs -- today's, and those of 7, 30 and 90 days
+    ago -- which the page offers as a tooltip on its video count.
 
     ``full_url`` marks this export as a filtered view of a larger one (see
     ``export.py --user``): the header gains a link to that full archive, and
@@ -608,6 +613,12 @@ def render_export_html(
         manifest_url=Markup(json.dumps(manifest_url)),
         full_url=full_url,
         full_url_json=Markup(json.dumps(full_url)),
+        # None for every export but the personal one: only there does "how
+        # many videos are waiting for me" have a history worth plotting. The
+        # dict itself goes to the template as well -- the pre-rendered count
+        # only carries the hover affordance when there is something to show.
+        backlog=backlog,
+        backlog_json=Markup(json.dumps(backlog)),
         t=i18n_module.get_strings(lang),
     )
 

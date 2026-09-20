@@ -150,13 +150,17 @@ def test_the_pre_rendered_header_carries_the_archive_runtime():
         video("a", "2026-01-01T00:00:00Z", duration="1:02:03"),
         video("b", "2026-01-02T00:00:00Z", duration="7:12"),
     ])
-    assert "2 Videos &middot; 00:01:09</p>" in html
+    # The header is three spans since the backlog tooltip needs the count as
+    # its own node; the rendered line still reads as one.
+    assert '<span id="video-count">2 Videos</span>' in html
+    assert '<span id="meta-duration"> &middot; 00:01:09</span></p>' in html
     assert "const TOTAL_DURATION = '00:01:09';" in html
 
 
 def test_an_archive_without_any_duration_keeps_the_header_as_it_was():
     html = render_export([video("a", "2026-01-01T00:00:00Z", duration="")])
-    assert "1 Video</p>" in html
+    assert '<span id="video-count">1 Video</span>' in html
+    assert '<span id="meta-duration"></span></p>' in html
     assert "const TOTAL_DURATION = '';" in html
 
 
@@ -165,15 +169,22 @@ def test_the_header_survives_a_language_switch_and_ignores_the_filters():
         video("a", "2026-01-01T00:00:00Z", duration="1:02:03", title="Alpha"),
         video("b", "2026-01-02T00:00:00Z", duration="7:12", title="Beta"),
     ]
+    # The DOM stub keeps elements flat, so the header line is read back from
+    # its three parts the way a browser would concatenate them.
     snippet = """
+    function metaLine() {
+      return ['meta-generated', 'video-count', 'meta-duration']
+        .map(function (id) { return document.getElementById(id).textContent; })
+        .join('');
+    }
     setTimeout(function () {
       var out = [];
-      out.push(document.getElementById('page-meta').textContent);
+      out.push(metaLine());
       applyLang('en');
-      out.push(document.getElementById('page-meta').textContent);
+      out.push(metaLine());
       document.getElementById('search').value = 'Beta';
       applyFiltersAndSort(1);
-      out.push(document.getElementById('page-meta').textContent);
+      out.push(metaLine());
       console.log(JSON.stringify(out));
       process.exit(0);
     }, 300);
