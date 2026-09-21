@@ -563,7 +563,7 @@
     <span class="sync-user-email" id="sync-user-email"></span>
     <button id="sync-logout-btn" onclick="doLogout()">Abmelden</button>
   </div>
-  <div id="sync-ingest" style="display:none">
+  <div id="sync-ingest" style="display:none" data-ingest-id="" data-ingest-result="">
     <input type="text" id="ingest-input" placeholder="YouTube URL oder Video-ID" autocomplete="off">
     <button id="ingest-btn" onclick="doIngest()">Hinzufügen</button>
     <button id="ingest-wait-btn" style="display:none" onclick="startIngestWait()">Auf Zusammenfassung warten</button>
@@ -813,6 +813,7 @@ const I18N = {
     singleShowAll: 'Alle Videos anzeigen',
     singleLoading: function(id) { return 'Video ' + id + ' wird geladen\u2026'; },
     singleNotFound: function(id) { return 'Video ' + id + ' ist nicht in diesem Archiv.'; },
+    singleWaiting: function(id) { return 'Video ' + id + ' ist eingereiht \u2014 die Zusammenfassung ist noch nicht fertig. Diese Seite l\u00e4dt sich neu, sobald sie da ist.'; },
     fullArchive: 'Vollst\u00e4ndiges Archiv',
     labelLength: 'L\u00e4nge',
     waitBtn: 'Auf Zusammenfassung warten',
@@ -905,6 +906,7 @@ const I18N = {
     singleShowAll: 'Show all videos',
     singleLoading: function(id) { return 'Loading video ' + id + '\u2026'; },
     singleNotFound: function(id) { return 'Video ' + id + ' is not in this archive.'; },
+    singleWaiting: function(id) { return 'Video ' + id + ' is queued \u2014 its summary is not ready yet. This page reloads once it arrives.'; },
     fullArchive: 'Full archive',
     labelLength: 'Length',
     waitBtn: 'Wait for the summary',
@@ -1284,12 +1286,33 @@ function showIngestUI() {
   if (el) el.style.display = '';
 }
 
+// What became of a submission, written where a reader outside the page can
+// see it: data-ingest-id / data-ingest-result on the Ingest box. The
+// userscript used to infer this from the button's own mechanics, and that was
+// a race -- postIngest() re-enables the button before it clears the input, so
+// a fast 202 flips the flag back between two polls of the watcher, and a
+// cleared input that was never seen disabled reads as "already in the
+// archive". In the background tab the userscript opens, where timers are
+// clamped to a second, that was the usual outcome: a freshly queued video
+// reported as already present, and the archive opened at ?v=ID on a video it
+// does not have yet.
+function setIngestVerdict(videoId, state) {
+  var box = document.getElementById('sync-ingest');
+  if (!box) return;
+  box.dataset.ingestId = videoId || '';
+  box.dataset.ingestResult = state || '';
+}
+
 function doIngest() {
   var raw = (document.getElementById('ingest-input').value || '').trim();
   var videoId = extractVideoId(raw);
   var s = I18N[currentLang || 'de'];
+  // Clear first: a verdict left over from the previous submission must never
+  // be read as this one's.
+  setIngestVerdict('', '');
   if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
     updateSyncStatus(s.syncStatusIngestFailed);
+    setIngestVerdict(videoId, 'failed');
     return;
   }
   // Already here, summary and all: queueing it would put collect.py through a
@@ -1299,6 +1322,7 @@ function doIngest() {
     if (!known) return postIngest(videoId, s);
     document.getElementById('ingest-input').value = '';
     updateSyncStatus(s.alreadyInArchive);
+    setIngestVerdict(videoId, 'already');
     // Not in a background tab (the userscript opens one): reloading a 12 MB
     // archive nobody is looking at helps no one.
     if (document.visibilityState !== 'hidden') location.href = ingestWaitUrl(videoId);
@@ -1320,6 +1344,7 @@ function postIngest(videoId, s) {
     if (r.status === 401) {
       localStorage.removeItem('yt_sync_token');
       showSyncLoggedOut();
+      setIngestVerdict(videoId, 'logged-out');
       return null;
     }
     return r.json().then(function(body) { return {status: r.status, body: body}; });
@@ -1329,14 +1354,17 @@ function postIngest(videoId, s) {
     if (res.status === 200 || res.status === 202) {
       updateSyncStatus(s.syncStatusIngested);
       document.getElementById('ingest-input').value = '';
+      setIngestVerdict(videoId, 'queued');
       showWaitOffer(videoId);
     } else {
       updateSyncStatus(s.syncStatusIngestFailed);
+      setIngestVerdict(videoId, 'failed');
     }
   })
   .catch(function() {
     if (btn) btn.disabled = false;
     updateSyncStatus(s.syncStatusIngestFailed);
+    setIngestVerdict(videoId, 'failed');
   });
 }
 
@@ -1597,6 +1625,19 @@ function ingestWaitExpired(saved, now) {
   return !!saved && (now - saved.started) > WAIT_MAX_MS;
 }
 
+// Why a deep link shows no video. A wait running for this very video means
+// the archive is not missing it -- it has not been through collect.py yet.
+// Every new export reloads the page into ?v=ID (the manifest cannot say which
+// video it brought), so an export that belonged to something else lands here
+// as a matter of course, and "not in this archive" plus a link into the full
+// archive -- which does not have it either -- reads as a failure where the
+// truth is "not yet". An expired wait is not a wait: there the archive really
+// is the last word. Pure, so both branches are testable without a DOM.
+function singleMissingKey(videoId, saved, now) {
+  if (!saved || saved.video_id !== videoId) return 'notFound';
+  return ingestWaitExpired(saved, now) ? 'notFound' : 'waiting';
+}
+
 function ingestWaitUrl(videoId) {
   return location.href.split('#')[0].split('?')[0] + '?v=' + encodeURIComponent(videoId);
 }
@@ -1661,11 +1702,13 @@ function startIngestWait(videoId) {
   renderWaitStatus(loadIngestWait());
   if (waitTimer) clearInterval(waitTimer);
   waitTimer = setInterval(pollIngestWait, WAIT_POLL_MS);
+  refreshSingleMissingMessage();
 }
 
 function cancelIngestWait() {
   clearIngestWait();
   updateSyncStatus('');
+  refreshSingleMissingMessage();
 }
 
 function pollIngestWait() {
@@ -1678,6 +1721,7 @@ function pollIngestWait() {
     showWaitOffer(saved.video_id, s.waitContinue);
     var cancelBtn = document.getElementById('ingest-wait-cancel');
     if (cancelBtn) cancelBtn.style.display = '';
+    refreshSingleMissingMessage();
     return Promise.resolve();
   }
   renderWaitStatus(saved);
@@ -1748,6 +1792,24 @@ function singleVideoUrl(id) {
     try { base = new URL(FULL_URL, base).href; } catch (e) { base = FULL_URL; }
   }
   return base + '?v=' + encodeURIComponent(id);
+}
+
+// The deep-link message depends on whether a wait is running, and
+// singleMissingKey() is read once, at render time. A wait that ends -- or
+// starts -- while that message is on screen has to re-render it, or the page
+// keeps promising a reload that is no longer coming, or claims the video is
+// missing while a fresh wait runs. Deliberately not called from
+// clearIngestWait()/saveIngestWait(): renderPage() calls ingestWaitObserve(),
+// which clears the wait, and that would recurse.
+function refreshSingleMissingMessage() {
+  if (singleVideoId && dataReady) renderPage(currentPage, true);
+}
+
+function singleMissingHtml(id, s) {
+  if (singleMissingKey(id, loadIngestWait(), Date.now()) === 'waiting') {
+    return escHtml(s.singleWaiting(id));
+  }
+  return escHtml(s.singleNotFound(id)) + singleFullLink(id);
 }
 
 function singleFullLink(id) {
@@ -2329,7 +2391,7 @@ function renderPage(page, skipScroll) {
       ? slice.map(buildCard).join('')
       : '<p class="no-videos">'
         + (singleVideoId
-            ? escHtml(s.singleNotFound(singleVideoId)) + singleFullLink(singleVideoId)
+            ? singleMissingHtml(singleVideoId, s)
             : s.noVideos)
         + '</p>';
   }

@@ -130,3 +130,45 @@ def test_a_chain_without_an_action_row_yields_no_slot():
 
 def test_an_anchor_sitting_directly_under_body_yields_no_slot():
     assert _slot([{"tag": "LIKE-BUTTON-VIEW-MODEL"}]) is None
+
+
+# ── the verdict ───────────────────────────────────────────────────────────────
+# A submission's outcome is read off the archive's own data-ingest-* attributes.
+# Inferring it from the button's disabled flag was a race the script usually
+# lost in a background tab, and reported a freshly queued video as one that was
+# already in the archive.
+
+def test_an_archive_that_states_its_verdict_is_recognised():
+    assert _call("m.speaksVerdict({ingestResult: '', ingestId: ''})") is True
+
+
+def test_an_archive_exported_before_v1_8_states_nothing():
+    assert _call("m.speaksVerdict({})") is False
+    assert _call("m.speaksVerdict(null)") is False
+
+
+@pytest.mark.parametrize("result,expected", [
+    ("queued", "queued"),
+    ("already", "already"),
+    ("failed", "failed"),
+    ("logged-out", "logged-out"),
+    ("", None),          # the box as rendered: no verdict yet, keep waiting
+])
+def test_the_verdict_for_this_video_is_read_back(result, expected):
+    ds = json.dumps({"ingestId": "dQw4w9WgXcQ", "ingestResult": result})
+    assert _call("m.ingestVerdict(%s, 'dQw4w9WgXcQ')" % ds) == expected
+
+
+def test_a_verdict_about_another_video_is_not_this_ones():
+    ds = json.dumps({"ingestId": "abcdefgh123", "ingestResult": "already"})
+    assert _call("m.ingestVerdict(%s, 'dQw4w9WgXcQ')" % ds) is None
+
+
+@pytest.mark.parametrize("value,saw_disabled,expected", [
+    ("", True, "queued"),          # sent, answered, field cleared
+    ("", False, "already"),        # cleared without a request going out
+    ("dQw4w9WgXcQ", True, "failed"),
+    ("dQw4w9WgXcQ", False, None),  # nothing has happened yet
+])
+def test_the_old_reading_still_works_on_an_old_archive(value, saw_disabled, expected):
+    assert _call("m.legacyVerdict(%s, %s)" % (json.dumps(value), json.dumps(saw_disabled))) == expected

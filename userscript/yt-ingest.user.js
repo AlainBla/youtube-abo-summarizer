@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube → Archiv-Ingest
 // @namespace    youtube-abo-summarizer
-// @version      1.7.0
+// @version      1.8.0
 // @description  Adds a button on YouTube that queues the current video for transcription and summarisation, by driving the Ingest field of your own archive page.
 // @author       youtube-abo-summarizer
 // @match        https://www.youtube.com/*
@@ -135,10 +135,43 @@
     return null;
   }
 
+  // ── Reading the archive's verdict ─────────────────────────────────────────
+  // The archive writes what became of a submission onto the Ingest box:
+  // data-ingest-id names the video, data-ingest-result is queued / already /
+  // failed / logged-out. Until v1.8.0 this script inferred the verdict from
+  // the page's own mechanics instead -- the button is disabled while the
+  // request is in flight, and the input is cleared on 200/202 -- and that was
+  // a race it usually lost: doIngest() re-enables the button *before* it
+  // clears the input, so a fast 202 flipped the flag back between two polls,
+  // and a cleared input that had never been seen disabled was read as "already
+  // in the archive". In the background tab this script opens, timers are
+  // clamped to a second, so nearly every queued video was reported as already
+  // present -- and the relay then opened the archive at ?v=ID on a video that
+  // was only just queued: "Video … ist nicht in diesem Archiv."
+  function speaksVerdict(dataset) {
+    return !!dataset && 'ingestResult' in dataset;
+  }
+
+  // null means "no verdict yet, keep waiting".
+  function ingestVerdict(dataset, videoId) {
+    if (!dataset || dataset.ingestId !== videoId) return null;
+    return dataset.ingestResult || null;
+  }
+
+  // The pre-1.8.0 reading, kept for an archive that has not been re-exported
+  // yet: no worse there than what this script did before.
+  function legacyVerdict(inputValue, sawDisabled) {
+    if (inputValue === '') return sawDisabled ? 'queued' : 'already';
+    // Never disabled and the field still holds the ID: doIngest() bailed out
+    // before sending, which it only does on an unusable video ID.
+    return sawDisabled ? 'failed' : null;
+  }
+
   // Node can require this file for the pure helpers above; the browser parts
   // below are skipped there (no document).
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { videoIdFromUrl, isVideoId, archiveUrlFor, ingestIdFromHash, rowSlotFor };
+    module.exports = { videoIdFromUrl, isVideoId, archiveUrlFor, ingestIdFromHash, rowSlotFor,
+                       speaksVerdict, ingestVerdict, legacyVerdict };
   }
   if (typeof document === 'undefined') return;
 
@@ -202,47 +235,45 @@
 
     waitFor(visibleInput, WAIT_MS).then(function (input) {
       const btn = document.getElementById('ingest-btn');
+      const box = document.getElementById('sync-ingest');
       input.value = videoId;
       input.dispatchEvent(new Event('input', { bubbles: true }));
       btn.click();
 
-      // The verdict is read off the page's own mechanics, not off #sync-status:
+      // The verdict comes from the archive itself, never from #sync-status:
       // that line is localised and is written by the login and sync handlers
       // too, so a status change right after the Ingest box appears may have
-      // nothing to do with this submission. doIngest() instead disables the
-      // button while the request is in flight, re-enables it on the response,
-      // and clears the input only on 200/202.
+      // nothing to do with this submission.
+      const speaks = speaksVerdict(box.dataset);
+      log(speaks ? 'reading the verdict from the page' : 'old archive: inferring the verdict');
       let sawDisabled = false;
       return waitFor(function () {
+        if (speaks) return ingestVerdict(box.dataset, videoId);
         if (btn.disabled) { sawDisabled = true; return null; }
-        // Cleared without the button ever being disabled: doIngest() recognised
-        // the video as already in the archive and never sent a request. Saying
-        // "queued" there would be a lie, and the useful thing is to show it.
-        if (input.value === '') return sawDisabled ? { ok: true } : { ok: true, already: true };
-        // Never disabled and the field still holds the ID: doIngest() bailed
-        // out before sending, which it only does on an unusable video ID.
-        return sawDisabled ? { ok: false } : null;
+        return legacyVerdict(input.value, sawDisabled);
       }, WAIT_MS).catch(function () {
         // Sent, but no verdict within the window -- a failure of this
         // submission, not the "you are not logged in" case below.
-        return { ok: false };
+        return 'failed';
       });
     }, function () {
       return null;  // the Ingest box never appeared: logged out, or not allowed
-    }).then(function (res) {
-      if (!res) {
+    }).then(function (state) {
+      if (!state || state === 'logged-out') {
         banner(TEXT.notLoggedIn, false);
         report('not-logged-in', videoId);
         return;
       }
-      banner(res.already ? TEXT.alreadyThere : res.ok ? TEXT.queued : TEXT.failed, res.ok);
-      report(res.already ? 'already' : res.ok ? 'queued' : 'failed', videoId);
+      const ok = state === 'queued' || state === 'already';
+      banner(state === 'already' ? TEXT.alreadyThere : ok ? TEXT.queued : TEXT.failed, ok);
+      report(state, videoId);
+      log('verdict', state, videoId);
       // Ten seconds, not one and a half: the archive offers "wait for the
       // summary" after a successful ingest, and that offer is worth nothing in
       // a tab that is gone before it can be switched to. Chrome refuses
       // window.close() for a tab the script did not open with window.open
       // anyway, so this may do nothing -- the banner is the real report.
-      if (res.ok) setTimeout(function () { try { window.close(); } catch (e) {} }, 10000);
+      if (ok) setTimeout(function () { try { window.close(); } catch (e) {} }, 10000);
     });
   }
 
