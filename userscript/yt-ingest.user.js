@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube → Archiv-Ingest
 // @namespace    youtube-abo-summarizer
-// @version      1.6.0
+// @version      1.7.0
 // @description  Adds a button on YouTube that queues the current video for transcription and summarisation, by driving the Ingest field of your own archive page.
 // @author       youtube-abo-summarizer
 // @match        https://www.youtube.com/*
@@ -15,8 +15,12 @@
 // @noframes
 // ==/UserScript==
 
-// On m.youtube.com none of the desktop containers exist, so the button is the
-// floating one in the corner there.
+// Where the button ends up is measured, never assumed: a slot that renders it
+// at zero size, or scrolls it out of its own row (the action row scrolls
+// horizontally on a narrow viewport -- a tablet in portrait), is discarded and
+// the next one tried, down to the floating corner. m.youtube.com and a tablet
+// generally end up in that corner, which therefore has to clear the fixed
+// pivot bar at the bottom of the mobile layout.
 //
 // ── Configure two things before use ──────────────────────────────────────────
 //   1. ARCHIVE_URL below: the exported archive you are logged into.
@@ -105,10 +109,36 @@
     return isVideoId(id) ? id : null;
   }
 
+  // The like/dislike pill is the anchor, and the button belongs beside the
+  // whole pill, so walk up to the child of the action row itself. Returns null
+  // when the walk leaves the row entirely: until v1.7.0 it fell out at <body>
+  // and handed that back as the parent, so the chip was appended to the end of
+  // the document -- below the comments on a tablet in portrait, nearer the fold
+  // in landscape. It measures as perfectly visible down there, so nothing ever
+  // escalated it to the corner. `body` is a parameter rather than
+  // `document.body` so the walk is testable without a DOM.
+  function rowSlotFor(anchor, body) {
+    if (!anchor || !anchor.parentElement || anchor.parentElement === body) return null;
+    let node = anchor;
+    while (node.parentElement && node.parentElement !== body) {
+      const id = node.parentElement.id;
+      if (id === 'top-level-buttons-computed' || id === 'top-level-buttons') {
+        return { parent: node.parentElement, before: node.nextSibling };
+      }
+      node = node.parentElement;
+      if (node.tagName === 'YTD-MENU-RENDERER') {
+        return node.parentElement && node.parentElement !== body
+          ? { parent: node.parentElement, before: node.nextSibling }
+          : null;
+      }
+    }
+    return null;
+  }
+
   // Node can require this file for the pure helpers above; the browser parts
   // below are skipped there (no document).
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { videoIdFromUrl, isVideoId, archiveUrlFor, ingestIdFromHash };
+    module.exports = { videoIdFromUrl, isVideoId, archiveUrlFor, ingestIdFromHash, rowSlotFor };
   }
   if (typeof document === 'undefined') return;
 
@@ -239,10 +269,17 @@
 
   function styleAsFloating(btn) {
     btn.removeAttribute('style');
+    // Above the bottom of the screen, not at it: m.youtube.com and the tablet
+    // layout keep a fixed pivot bar (~48 px) down there, and the corner button
+    // used to sit underneath it. env() covers the phone/tablet safe areas and
+    // resolves to 0 where there are none.
     btn.style.cssText =
-      'position:fixed;right:20px;bottom:20px;z-index:9000;height:40px;padding:0 18px;' +
-      'border:none;border-radius:20px;background:' + BUTTON_BG + ';color:' + BUTTON_FG + ';' +
-      'font:500 14px/40px Roboto,Arial,sans-serif;cursor:pointer;' +
+      'position:fixed;z-index:9000;' +
+      'right:calc(16px + env(safe-area-inset-right, 0px));' +
+      'bottom:calc(72px + env(safe-area-inset-bottom, 0px));' +
+      'min-height:44px;padding:0 18px;' +
+      'border:none;border-radius:22px;background:' + BUTTON_BG + ';color:' + BUTTON_FG + ';' +
+      'font:500 15px/44px Roboto,Arial,sans-serif;cursor:pointer;' +
       'box-shadow:0 2px 10px rgba(0,0,0,0.5);';
   }
 
@@ -256,19 +293,7 @@
         const anchor = document.querySelector('segmented-like-dislike-button-view-model')
                     || document.querySelector('ytd-segmented-like-dislike-button-renderer')
                     || document.querySelector('like-button-view-model');
-        if (!anchor || !anchor.parentElement) return null;
-        // The pill is often wrapped once or twice inside the row; go up to the
-        // child of the row itself, so the button lands beside the whole pill
-        // rather than inside it.
-        let node = anchor;
-        while (node.parentElement
-               && node.parentElement.id !== 'top-level-buttons-computed'
-               && node.parentElement.id !== 'top-level-buttons'
-               && node.parentElement !== document.body) {
-          node = node.parentElement;
-          if (node.tagName === 'YTD-MENU-RENDERER') break;
-        }
-        return { parent: node.parentElement, before: node.nextSibling };
+        return rowSlotFor(anchor, document.body);
       },
     },
     {
@@ -293,7 +318,32 @@
   function isVisible(el) {
     if (!el || !el.isConnected) return false;
     const box = el.getBoundingClientRect();
-    return box.width > 0 && box.height > 0;
+    if (box.width <= 0 || box.height <= 0) return false;
+    return !isClippedHorizontally(el, box);
+  }
+
+  // A chip in the action row measures perfectly well while sitting outside the
+  // row's own scroll area: on a narrow viewport YouTube lets that row scroll
+  // sideways, and the last chip in it is simply not on screen.
+  // getBoundingClientRect knows nothing about that, so check the chip against
+  // every scroll container above it. Horizontally only -- vertically off screen
+  // is not clipping, the whole action row legitimately starts below the fold on
+  // a tablet, and a viewport test there would send every placement to the
+  // corner.
+  function isClippedHorizontally(el, box) {
+    let node = el.parentElement;
+    while (node && node !== document.body) {
+      let overflowX = 'visible';
+      try {
+        overflowX = getComputedStyle(node).overflowX;
+      } catch (e) {}
+      if (overflowX !== 'visible') {
+        const clip = node.getBoundingClientRect();
+        if (clip.width > 0 && (box.right > clip.right + 1 || box.left < clip.left - 1)) return true;
+      }
+      node = node.parentElement;
+    }
+    return false;
   }
 
   function flash(btn, text) {
@@ -329,9 +379,23 @@
     log('button placed: floating');
   }
 
+  // A slot that has already rendered the button unusably is not offered again:
+  // without that, upgradeFromFloating() keeps pulling it back out of the corner
+  // into the same broken spot, five times over, 800 ms apart.
+  function markUnusable(btn, index) {
+    const seen = (btn.dataset.unusable || '').split(',').filter(Boolean);
+    if (seen.indexOf(String(index)) === -1) seen.push(String(index));
+    btn.dataset.unusable = seen.join(',');
+  }
+
+  function isUnusable(btn, index) {
+    return (btn.dataset.unusable || '').split(',').indexOf(String(index)) !== -1;
+  }
+
   function tryPlacement(btn, index) {
     const plan = PLACEMENTS[index];
     if (!plan) return goFloating(btn);
+    if (isUnusable(btn, index)) return tryPlacement(btn, index + 1);
 
     let slot = null;
     try {
@@ -349,8 +413,12 @@
     // Inserting is not showing: YouTube's own CSS can collapse a foreign child
     // to nothing, and then the page just looks untouched. Measure, then move on.
     setTimeout(function () {
+      // placeButton() may have replaced this button in the meantime; measuring
+      // a detached node would resurrect it into the next slot as a duplicate.
+      if (!btn.isConnected) return;
       if (!isVisible(btn)) {
-        log('"' + plan.name + '" rendered it at zero size; trying the next spot');
+        log('"' + plan.name + '" rendered it where nobody can see it; trying the next spot');
+        markUnusable(btn, index);
         tryPlacement(btn, index + 1);
       }
     }, 800);
@@ -365,6 +433,7 @@
     const tries = parseInt(btn.dataset.upgradeTries || '0', 10);
     if (tries >= 5) return;  // stop rather than flicker between two spots
     for (let i = 0; i < PLACEMENTS.length; i++) {
+      if (isUnusable(btn, i)) continue;
       let slot = null;
       try {
         slot = PLACEMENTS[i].find();
@@ -388,8 +457,11 @@
     if (existing) {
       existing.dataset.videoId = videoId;
       // SPA navigation rebuilds the row: a chip whose parent went away has to
-      // be placed again, a floating one stays where it is.
-      if (existing.dataset.placement !== 'floating' && !isVisible(existing)) {
+      // be placed again, a floating one stays where it is. Connectedness, not
+      // visibility: this runs every 500 ms on a cold load, and a chip that is
+      // merely invisible belongs to the 800 ms measurement above, which would
+      // never get to run if this replaced the button first.
+      if (existing.dataset.placement !== 'floating' && !existing.isConnected) {
         existing.remove();
         tryPlacement(makeButton(videoId), 0);
       }

@@ -80,3 +80,53 @@ def test_the_archive_side_reads_back_what_the_youtube_side_wrote():
 @pytest.mark.parametrize("hash_", ["", "#", "#ingest=", "#ingest=short", "#other=dQw4w9WgXcQ"])
 def test_a_hash_without_a_usable_id_queues_nothing(hash_):
     assert _call("m.ingestIdFromHash(%s)" % json.dumps(hash_)) is None
+
+
+def _slot(chain, expr="m.rowSlotFor(anchor, body)"):
+    """Build a duck-typed parent chain (innermost first) and ask for the slot.
+
+    Each entry is {"id": ..., "tag": ...}; the last one's parent is the body.
+    """
+    code = (
+        "const m = require(%s);\n"
+        "const spec = %s;\n"
+        "const body = { id: 'body', tagName: 'BODY', parentElement: null };\n"
+        "let parent = body;\n"
+        "const nodes = [];\n"
+        "for (let i = spec.length - 1; i >= 0; i--) {\n"
+        "  const n = { id: spec[i].id || '', tagName: spec[i].tag || 'DIV',\n"
+        "              parentElement: parent, nextSibling: null };\n"
+        "  nodes.unshift(n); parent = n;\n"
+        "}\n"
+        "const anchor = nodes[0];\n"
+        "const slot = %s;\n"
+        "console.log(JSON.stringify(slot ? { id: slot.parent.id, tag: slot.parent.tagName } : null));\n"
+    ) % (json.dumps(SCRIPT), json.dumps(chain), expr)
+    out = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr[:2000]
+    return json.loads(out.stdout)
+
+
+def test_the_button_lands_in_the_action_row_when_there_is_one():
+    assert _slot([
+        {"tag": "SEGMENTED-LIKE-DISLIKE-BUTTON-VIEW-MODEL"},
+        {"tag": "DIV"},
+        {"id": "top-level-buttons-computed"},
+        {"id": "actions"},
+    ]) == {"id": "top-level-buttons-computed", "tag": "DIV"}
+
+
+def test_a_chain_without_an_action_row_yields_no_slot():
+    """The walk used to fall out at <body> and hand it back as the parent, and
+    the chip was appended to the end of the document -- below the comments in
+    tablet portrait, near the fold in landscape. It measures as visible there,
+    so nothing ever escalated it to the floating corner."""
+    assert _slot([
+        {"tag": "LIKE-BUTTON-VIEW-MODEL"},
+        {"id": "some-mobile-wrapper"},
+        {"id": "app"},
+    ]) is None
+
+
+def test_an_anchor_sitting_directly_under_body_yields_no_slot():
+    assert _slot([{"tag": "LIKE-BUTTON-VIEW-MODEL"}]) is None

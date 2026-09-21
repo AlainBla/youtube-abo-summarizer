@@ -454,8 +454,11 @@ Install it in Violentmonkey or Tampermonkey, then edit two lines at the top:
 const ARCHIVE_URL = 'https://sync.example.com/yt.html'; // <- the same URL
 ```
 
-On mobile (`m.youtube.com`) none of the desktop containers exist, so the button appears as a small
-floating one in the corner.
+Where the button ends up is measured, not assumed: it wants to sit beside the like/dislike pill, and
+a spot that renders it at zero size, scrolls it out of the sideways-scrolling action row (a tablet in
+portrait), or is not part of that row at all is discarded in favour of the next one — down to a
+floating button in the bottom right corner, placed above the mobile layout's fixed pivot bar. On
+mobile (`m.youtube.com`) and often on a tablet that corner is where it lands.
 
 (A `@match` cannot read a variable, hence twice. `userscript/*.local.user.js` is gitignored if you
 want to keep a filled-in copy in the repo.)
