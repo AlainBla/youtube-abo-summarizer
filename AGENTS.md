@@ -22,6 +22,7 @@ userscript/             # YouTube "Zusammenfassen" button (Violentmonkey)
 sync_state.py           # read-only per-user read/bookmark flags from the sync DB
 tags.py                 # controlled German tag vocabulary + canonicalize() gate
 transcripts.py          # youtube-transcript-api wrapper
+proxies.py              # proxy selection: probed SOCKS proxy first, Webshare second
 openrouter.py           # LLM client (OpenRouter / Ollama)
 renderer.py             # Jinja2 HTML renderer
 i18n.py                 # de/en UI string dicts
@@ -61,7 +62,9 @@ Generated at runtime (gitignored): `data/`, `last_run.json`, `*.html` output fil
 - Status values: `None` (success), `"ip_blocked"`, `"rate_limited"`, `"country_blocked"`, `"unavailable"`
 - `country_blocked` only when the `VideoUnplayable` reason mentions "country"/"region"; other `VideoUnplayable` causes → `unavailable`
 - `requests.exceptions.ProxyError` / `ConnectionError` → `unavailable`
-- Proxy retry: on `ip_blocked`, retries once via the configured proxy (if set); on `country_blocked`, retries once with a country-pinned Webshare proxy if `WEBSHARE_PROXY_URL` is set
+- Proxy order: one chain from `proxies.proxy_chain()` — SOCKS (`SOCKS_PROXY_URL`) first, Webshare second. `SOCKS_PROXY_URL` is probed before use (TCP connect + SOCKS5 greeting, cached per process), so a configured-but-dead tunnel is skipped rather than tried. A missing PySocks is part of the same verdict — `requests` would raise `InvalidSchema` (a `ValueError`, uncaught in `_fetch_original`) on the first transcript fetch
+- `transcripts.py` has **no** direct-first step (unlike `feeds.py`/`ytdlp_meta.py`): the chain's first entry is the first attempt. On `ip_blocked` it works down the rest of the chain, then the country-pinned Webshare URL; on `country_blocked`, the country-pinned Webshare URL (`PROXY_FALLBACK_COUNTRY`, default `DE`). `_country_proxy_url()` refuses non-http schemes, so a SOCKS URL is never rewritten
+- `feeds.py` cannot use `urllib` for a SOCKS proxy (`ProxyHandler` only speaks HTTP) — `_fetch_socks()` goes through `requests` + PySocks. yt-dlp takes `socks5h://` on `--proxy` natively
 
 ### Collect / cron wiring
 - `build_service()` is not safe to call blindly: it raises on a missing `client_secrets.json` (`FileNotFoundError`) or a refused refresh (`RefreshError`), and it **hangs** — browser prompt, no exception — when the token is missing or expired without a refresh token. Ask `youtube_client.has_usable_token()` first; `_lazy_service(require_token=True)` does that for every run that was not meant to authorise anything (`--file`, `--video`, explicit channels). `--auth` deliberately does not set it, so the first interactive authorisation still works in a terminal
@@ -147,6 +150,8 @@ The worker calls `collect.py --video=<id>` (the `=` form: a leading-dash video I
 | `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | Override OpenRouter; use for Ollama |
 | `SUMMARY_LANG` | Language name for LLM output (default: `German`) |
 | `TRANSCRIPT_LANGS` | BCP-47 priority list (default: `de,en`) |
+| `SOCKS_PROXY_URL` | Local SOCKS proxy, tried before Webshare; probed, skipped when unreachable |
+| `SOCKS_PROBE_TIMEOUT` | Seconds to wait for that probe (default: `2`) |
 | `WEBSHARE_PROXY_URL` | Residential proxy URL |
 | `PROXY_FALLBACK_COUNTRY` | Country code for geo-block retry (default: `DE`) |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | Email delivery |

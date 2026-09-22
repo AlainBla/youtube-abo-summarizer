@@ -3,6 +3,13 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 
+def _api_serving(transcript_list):
+    """A YouTubeTranscriptApi stand-in whose list() serves one transcript list."""
+    api = MagicMock()
+    api.list.return_value = transcript_list
+    return api
+
+
 def _entry(start=0.0, text="Hello world"):
     e = MagicMock()
     e.start = start
@@ -43,7 +50,7 @@ def _transcript_list(*transcripts):
 class TestGetTranscriptOriginalLanguage:
     def _call(self, transcript_list):
         import transcripts as tr
-        with patch.object(tr._api, "list", return_value=transcript_list):
+        with patch.object(tr, "_api_for", return_value=_api_serving(transcript_list)):
             return tr.get_transcript("vid123")
 
     def test_returns_three_tuple(self):
@@ -84,7 +91,7 @@ class TestGetTranscriptOriginalLanguage:
         tl.find_generated_transcript = MagicMock(side_effect=NoTranscriptFound("", [], []))
         tl.find_manually_created_transcript = MagicMock(side_effect=NoTranscriptFound("", [], []))
         import transcripts as tr
-        with patch.object(tr._api, "list", return_value=tl):
+        with patch.object(tr, "_api_for", return_value=_api_serving(tl)):
             text, lang, err = tr.get_transcript("vid123")
         assert text is None
         assert lang is None
@@ -95,7 +102,7 @@ class TestGetManualTranscript:
     def _call(self, transcript_list, preferred=None):
         import transcripts as tr
         kwargs = {"preferred_langs": preferred} if preferred else {}
-        with patch.object(tr._api, "list", return_value=transcript_list):
+        with patch.object(tr, "_api_for", return_value=_api_serving(transcript_list)):
             return tr.get_manual_transcript("vid123", **kwargs)
 
     def test_returns_manual_de_when_available(self):
@@ -127,3 +134,112 @@ class TestGetManualTranscript:
         tl = _transcript_list(gen_ja, manual_de, manual_en)
         text, lang = self._call(tl, preferred=["de", "en"])
         assert lang == "de"
+
+
+class TestProxyOrder:
+    """A reachable SOCKS proxy is what the first attempt goes through.
+
+    This module has never tried a direct connection first -- YouTube blocks a
+    server's own IP for transcript requests too readily -- so the ordering
+    here is: SOCKS, then Webshare, then the country-pinned Webshare URL.
+    """
+
+    def _apis(self, monkeypatch, behaviour):
+        """Patch transcripts._make_api and record the proxy URL of each api built."""
+        import transcripts as tr
+
+        built = []
+
+        def make(url):
+            built.append(url)
+            api = MagicMock()
+            outcome = behaviour(url)
+            if isinstance(outcome, Exception):
+                api.list.side_effect = outcome
+            else:
+                api.list.return_value = outcome
+            return api
+
+        tr._api_cache.clear()
+        monkeypatch.setattr(tr, "_make_api", make)
+        return built
+
+    def _socks_alive(self, monkeypatch, alive=True):
+        import socket
+        from test_proxies import _FakeSocket, _connects
+
+        monkeypatch.setenv("SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
+        sock = _FakeSocket() if alive else ConnectionRefusedError()
+        monkeypatch.setattr(socket, "create_connection", _connects(sock))
+
+    def test_the_socks_proxy_is_used_before_webshare(self, monkeypatch):
+        import transcripts as tr
+
+        self._socks_alive(monkeypatch)
+        monkeypatch.setenv("WEBSHARE_PROXY_URL", "http://user:pw@proxy.example:80")
+        tl = _transcript_list(_make_transcript("de", is_generated=True))
+        built = self._apis(monkeypatch, lambda url: tl)
+
+        text, lang, err = tr.get_transcript("vid123")
+        assert err is None
+        assert built == ["socks5h://127.0.0.1:9050"]
+
+    def test_an_unreachable_socks_proxy_leaves_webshare_as_the_primary(self, monkeypatch):
+        import transcripts as tr
+
+        self._socks_alive(monkeypatch, alive=False)
+        monkeypatch.setenv("WEBSHARE_PROXY_URL", "http://user:pw@proxy.example:80")
+        tl = _transcript_list(_make_transcript("de", is_generated=True))
+        built = self._apis(monkeypatch, lambda url: tl)
+
+        tr.get_transcript("vid123")
+        assert built == ["http://user:pw@proxy.example:80"]
+
+    def test_a_blocked_socks_proxy_falls_back_to_webshare(self, monkeypatch):
+        from youtube_transcript_api import IpBlocked
+        import transcripts as tr
+
+        self._socks_alive(monkeypatch)
+        monkeypatch.setenv("WEBSHARE_PROXY_URL", "http://user:pw@proxy.example:80")
+        tl = _transcript_list(_make_transcript("de", is_generated=True))
+        built = self._apis(
+            monkeypatch,
+            lambda url: IpBlocked("vid123") if url.startswith("socks") else tl,
+        )
+
+        text, lang, err = tr.get_transcript("vid123")
+        assert err is None
+        assert built[0].startswith("socks")
+        assert built[1] == "http://user:pw@proxy.example:80"
+
+    def test_the_country_retry_is_derived_from_webshare_not_from_socks(self, monkeypatch):
+        import transcripts as tr
+
+        self._socks_alive(monkeypatch)
+        monkeypatch.setenv("WEBSHARE_PROXY_URL", "http://user:pw@proxy.example:80")
+        monkeypatch.setattr(tr, "_FALLBACK_COUNTRY", "DE")
+        from youtube_transcript_api import VideoUnplayable
+
+        built = self._apis(
+            monkeypatch,
+            lambda url: VideoUnplayable("vid123", reason="Video not available in your country",
+                                        sub_reasons=[])
+            if "-DE" not in url else _transcript_list(_make_transcript("de", is_generated=True)),
+        )
+
+        text, lang, err = tr.get_transcript("vid123")
+        assert err is None
+        # The socks URL is never rewritten: -DE is a Webshare username convention.
+        assert built[-1] == "http://user-DE:pw@proxy.example:80"
+        assert not any(url.startswith("socks") and "-DE" in url for url in built)
+
+    def test_no_proxy_uses_a_direct_connection(self, monkeypatch):
+        import transcripts as tr
+
+        self._socks_alive(monkeypatch)
+        monkeypatch.setenv("WEBSHARE_PROXY_URL", "http://user:pw@proxy.example:80")
+        tl = _transcript_list(_make_transcript("de", is_generated=True))
+        built = self._apis(monkeypatch, lambda url: tl)
+
+        tr.get_transcript_no_proxy("vid123")
+        assert built == [None]

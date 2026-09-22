@@ -86,7 +86,7 @@ def parse_args():
     parser.add_argument(
         "--no-proxy",
         action="store_true",
-        help="Ignore WEBSHARE_PROXY_URL and fetch transcripts via direct connection.",
+        help="Ignore SOCKS_PROXY_URL and WEBSHARE_PROXY_URL and fetch via a direct connection.",
     )
     parser.add_argument(
         "--model",

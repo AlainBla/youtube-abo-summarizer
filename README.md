@@ -63,6 +63,8 @@ Place your Google OAuth credentials in `client_secrets.json` (downloaded from th
 | `SUMMARY_LANG` | No | Language for LLM-generated summaries (default: `German`); any name the model understands, e.g. `English` |
 | `TRANSCRIPT_LANGS` | No | Comma-separated transcript language priority list (default: `de,en`); falls back to any available language |
 | `VIDEO_TITLE_FILTERS` | No | Title blacklist for `collect.py`: comma-separated regex patterns, matched case-insensitively anywhere in the title, e.g. `Letsplay,Let.?s ?Play`. A match is skipped before the transcript and the LLM |
+| `SOCKS_PROXY_URL` | No | Local SOCKS proxy (Tor, an `ssh -D` tunnel, a VPN listener), e.g. `socks5h://127.0.0.1:9050`; a bare `host:port` is read as `socks5h://`. Tried **before** `WEBSHARE_PROXY_URL`, but only when the port answers a SOCKS handshake — a configured tunnel that is not running is skipped. Needs `PySocks` |
+| `SOCKS_PROBE_TIMEOUT` | No | Seconds to wait for that probe (default: `2`) |
 | `WEBSHARE_PROXY_URL` | No | Residential proxy URL for transcript fetching |
 | `PROXY_FALLBACK_COUNTRY` | No | Country code used for the geo-block retry (default: `DE`); appended to the Webshare username, e.g. `US`, `GB` |
 
@@ -683,10 +685,11 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 | `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html`; `update_tags()` writes only the tags column |
 | `tags.py` | Controlled German tag vocabulary (161 tags in ten groups) and the gate that enforces it: `canonicalize()` accepts an exact hit, a case-only difference, or a `tag_aliases.json` alias, rejects everything else, deduplicates and caps at `MAX_TAGS` (3); CLI: `--list`, `--candidates [--min N]`, `--build-aliases [--limit N] [--model M] [--dry-run]` |
 | `summarize.py` | All-in-one CLI: fetch + render in a single pass (no store involvement) |
+| `proxies.py` | Proxy selection shared by `transcripts.py`, `feeds.py` and `ytdlp_meta.py`: `proxy_chain()` returns a probed `SOCKS_PROXY_URL` first and `WEBSHARE_PROXY_URL` second, empty under `--no-proxy`; the SOCKS probe (TCP connect + SOCKS5 greeting, cached per process) is what keeps a configured-but-dead tunnel from being used |
 | `feeds.py` | Quota-free video discovery through the channel RSS feed; returns `None` when the ~15-entry feed cannot cover the window, so the caller falls back to the API for that channel |
 | `youtube_client.py` | YouTube Data API v3 wrapper (OAuth, subscriptions, video search, channel resolution); derives a channel's uploads playlist ID (`UC…` → `UU…`) instead of spending a quota unit per channel per run on `channels().list` |
-| `ytdlp_meta.py` | Quota-free single-video metadata via yt-dlp, used by `collect.py --video`; same dict shape as the API path, `None` on failure, one proxy retry |
-| `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling; on `ip_blocked` retries via proxy; on `country_blocked` retries with country-pinned proxy; `requests.exceptions.ProxyError` / `ConnectionError` caught and mapped to `unavailable`; logs proxy config on startup |
+| `ytdlp_meta.py` | Quota-free single-video metadata via yt-dlp, used by `collect.py --video`; same dict shape as the API path, `None` on failure, retried through each proxy in turn (SOCKS before Webshare) |
+| `transcripts.py` | `youtube-transcript-api` wrapper; language selection, timestamp formatting, error handling; the first request already goes through the best proxy available (SOCKS before Webshare, no direct-first step); on `ip_blocked` it works down the rest of the chain, on `country_blocked` it retries with a country-pinned Webshare proxy; `requests.exceptions.ProxyError` / `ConnectionError` caught and mapped to `unavailable`; logs proxy config on startup |
 | `openrouter.py` | LLM client (OpenRouter by default, or any OpenAI-compatible endpoint); returns `(summary_html, tags)` tuple — structured HTML with chronological sections, proportional depth, and timestamp links, plus 2–3 tags extracted from a `<!-- tags: ... -->` comment appended by the model and run through `tags.canonicalize()`, so only entries from the controlled vocabulary are ever stored; `max_tokens=16384`; rejects unusable output (`SummaryRejected`) when the response was truncated at the output cap or degenerated into a repetition loop, so the video is stored without a summary instead of with garbage; repairs timestamp links whose `t=` offset does not match the visible `MM:SS` label and anchors the model closed with the wrong tag |
 | `renderer.py` | Jinja2 renderer; writes the final HTML report; accepts `lang=` kwarg; sanitizes summaries at render time to strip any trailing incomplete HTML tag (guards against LLM output truncated mid-tag) |
 | `i18n.py` | UI string dicts for `de` (default) and `en`; `get_strings()` and `resolve_lang()` helpers used by the renderer |
@@ -711,7 +714,14 @@ The YouTube Data API has a daily quota of **10,000 units**. Fetching videos from
 ### IP blocking
 YouTube actively blocks transcript requests from **datacenter IP addresses**. If the tool runs on a server or VPS, most transcript fetches will be blocked. Symptoms: the HTML report shows "IP blocked" notices for the majority of videos.
 
-**Mitigation**: Set `WEBSHARE_PROXY_URL` in `.env` to route transcript requests through a residential proxy. The tool includes full support for [Webshare](https://webshare.io) proxies via `youtube-transcript-api`'s `GenericProxyConfig`. Geo-blocked videos are automatically retried via a country-pinned Webshare proxy (see `PROXY_FALLBACK_COUNTRY` above).
+**Mitigation**: configure a proxy. Two kinds are supported and they are tried in a fixed order — SOCKS first, residential second:
+
+1. `SOCKS_PROXY_URL` — a local SOCKS proxy: Tor, an `ssh -D 9050 user@host` tunnel, a VPN's own listener. It costs nothing per request, so it is used before the metered one. It is **probed** before each run's first use (a TCP connect plus, for SOCKS5, the greeting handshake): a tunnel that is configured but not currently running is skipped with a note on stderr instead of failing every fetch, and a port held by something that is not a proxy is rejected rather than trusted. Requires `PySocks` (in `requirements.txt`) — without it the proxy is skipped with a note rather than used, because `requests` cannot open a SOCKS connection at all. `socks5h://` keeps DNS resolution on the proxy side.
+2. `WEBSHARE_PROXY_URL` — a residential proxy, used when no SOCKS proxy answers or when the SOCKS one is itself blocked. Full support for [Webshare](https://webshare.io) via `youtube-transcript-api`'s `GenericProxyConfig`. Geo-blocked videos are automatically retried via a country-pinned Webshare proxy (see `PROXY_FALLBACK_COUNTRY` above).
+
+`--no-proxy` on `collect.py` and `repair.py` ignores both.
+
+`transcripts.py` sends its **first** request through the best available proxy — a blocked datacenter IP is the normal case there. `feeds.py` and `ytdlp_meta.py` try a direct connection first and reach for the chain only when that fails.
 
 ### LLM cost and availability
 When using OpenRouter, summarization costs money per token and depends on API availability. As an alternative, point the tool at a local [Ollama](https://ollama.com) instance (free, offline) by setting `LLM_BASE_URL=http://localhost:11434/v1` and `LLM_MODEL=<model>` in `.env`.

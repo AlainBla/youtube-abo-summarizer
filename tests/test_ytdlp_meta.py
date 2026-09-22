@@ -178,3 +178,70 @@ def test_no_proxy_skips_the_retry(monkeypatch):
     monkeypatch.setattr(subprocess, "run", _fake_run(None, returncode=1, record=calls))
     assert ytdlp_meta.get_video_metadata("abc123", no_proxy=True) is None
     assert len(calls) == 1
+
+
+def _socks_listening(monkeypatch, alive=True):
+    import socket
+    from test_proxies import _FakeSocket, _connects
+
+    monkeypatch.setenv("SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
+    monkeypatch.setattr(
+        socket, "create_connection",
+        _connects(_FakeSocket() if alive else ConnectionRefusedError()),
+    )
+
+
+def _proxy_of(cmd):
+    return cmd[cmd.index("--proxy") + 1] if "--proxy" in cmd else None
+
+
+def test_the_socks_proxy_is_tried_before_webshare(monkeypatch):
+    calls = []
+    _socks_listening(monkeypatch)
+    monkeypatch.setenv("WEBSHARE_PROXY_URL", "http://user:pw@proxy.example:80")
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        if "--proxy" not in cmd:
+            return _Completed(returncode=1, stdout="")
+        return _Completed(returncode=0, stdout=json.dumps(_info()))
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert ytdlp_meta.get_video_metadata("abc123") is not None
+    assert [_proxy_of(c) for c in calls] == [None, "socks5h://127.0.0.1:9050"]
+
+
+def test_webshare_is_the_second_retry_when_socks_also_fails(monkeypatch):
+    calls = []
+    _socks_listening(monkeypatch)
+    monkeypatch.setenv("WEBSHARE_PROXY_URL", "http://user:pw@proxy.example:80")
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        proxy = _proxy_of(cmd)
+        if proxy is None or proxy.startswith("socks"):
+            return _Completed(returncode=1, stdout="")
+        return _Completed(returncode=0, stdout=json.dumps(_info()))
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert ytdlp_meta.get_video_metadata("abc123") is not None
+    assert [_proxy_of(c) for c in calls] == [
+        None, "socks5h://127.0.0.1:9050", "http://user:pw@proxy.example:80",
+    ]
+
+
+def test_an_unreachable_socks_tunnel_is_not_tried_at_all(monkeypatch):
+    calls = []
+    _socks_listening(monkeypatch, alive=False)
+    monkeypatch.setenv("WEBSHARE_PROXY_URL", "http://user:pw@proxy.example:80")
+    monkeypatch.setattr(subprocess, "run", _fake_run(None, returncode=1, record=calls))
+    assert ytdlp_meta.get_video_metadata("abc123") is None
+    assert [_proxy_of(c) for c in calls] == [None, "http://user:pw@proxy.example:80"]
+
+
+def test_no_proxy_skips_the_socks_tunnel_too(monkeypatch):
+    calls = []
+    _socks_listening(monkeypatch)
+    monkeypatch.setattr(subprocess, "run", _fake_run(None, returncode=1, record=calls))
+    assert ytdlp_meta.get_video_metadata("abc123", no_proxy=True) is None
+    assert len(calls) == 1

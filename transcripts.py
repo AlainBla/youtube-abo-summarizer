@@ -11,10 +11,20 @@ from youtube_transcript_api import (
 )
 from youtube_transcript_api.proxies import GenericProxyConfig
 
+import proxies
+
 load_dotenv()
 
 _langs_env = os.getenv("TRANSCRIPT_LANGS", "de,en")
 PREFERRED_LANGS = [l.strip() for l in _langs_env.split(",") if l.strip()]
+
+_FALLBACK_COUNTRY = os.getenv("PROXY_FALLBACK_COUNTRY", "DE").upper()
+
+# One API object per proxy URL. Building them lazily rather than at import time
+# is what lets proxies.socks_proxy_url() probe the tunnel: a probe is a network
+# syscall, and `import transcripts` happens in repair.py --fix-links and in the
+# test suite, neither of which fetches anything.
+_api_cache: dict[str | None, YouTubeTranscriptApi] = {}
 
 
 def _make_api(proxy_url: str | None) -> YouTubeTranscriptApi:
@@ -22,13 +32,35 @@ def _make_api(proxy_url: str | None) -> YouTubeTranscriptApi:
     return YouTubeTranscriptApi(proxy_config=cfg)
 
 
-_FALLBACK_COUNTRY = os.getenv("PROXY_FALLBACK_COUNTRY", "DE").upper()
+def _api_for(proxy_url: str | None) -> YouTubeTranscriptApi:
+    if proxy_url not in _api_cache:
+        _api_cache[proxy_url] = _make_api(proxy_url)
+    return _api_cache[proxy_url]
+
+
+def _primary_api() -> YouTubeTranscriptApi:
+    """The API object the first attempt uses: the best proxy, or direct.
+
+    Unlike feeds.py and ytdlp_meta.py this module has never tried a direct
+    connection first -- YouTube blocks a server's own IP for transcript
+    requests far more readily than for a watch page or a feed, so the proxy is
+    the primary path here, not the retry.
+    """
+    chain = proxies.proxy_chain()
+    return _api_for(chain[0] if chain else None)
 
 
 def _country_proxy_url(proxy_url: str, country: str) -> str | None:
-    """Derive a country-pinned Webshare proxy URL by appending -COUNTRY to the username."""
+    """Derive a country-pinned Webshare proxy URL by appending -COUNTRY to the username.
+
+    Webshare-specific, hence the scheme guard: a SOCKS tunnel has no such
+    convention, and rewriting its credentials would produce a URL that only
+    fails.
+    """
     try:
         p = urlparse(proxy_url)
+        if not p.scheme.lower().startswith("http"):
+            return None
         if not p.username or f"-{country}" in p.username.upper():
             return None
         netloc = f"{p.username}-{country}:{p.password}@{p.hostname}:{p.port}"
@@ -37,18 +69,13 @@ def _country_proxy_url(proxy_url: str, country: str) -> str | None:
         return None
 
 
-_proxy_url = os.getenv("WEBSHARE_PROXY_URL")
-_api = _make_api(_proxy_url)
-_fallback_api = _make_api(_country_proxy_url(_proxy_url, _FALLBACK_COUNTRY)) if _proxy_url else None
-
 def log_proxy_config(no_proxy: bool = False) -> None:
-    if _proxy_url:
-        from urllib.parse import urlparse as _up
-        _p = _up(_proxy_url)
-        suffix = " (IGNORED)" if no_proxy else ""
-        print(f"[transcripts] Proxy: {_p.scheme}://{_p.hostname}:{_p.port} (user={_p.username}){suffix}", flush=True)
-    else:
+    lines = proxies.describe(no_proxy=no_proxy)
+    if not lines:
         print("[transcripts] Kein Proxy konfiguriert — direkte Verbindung.", flush=True)
+        return
+    for line in lines:
+        print(f"[transcripts] {line}", flush=True)
 
 
 def _fetch_original(api: YouTubeTranscriptApi, video_id: str) -> tuple[str | None, str | None, str | None]:
@@ -128,9 +155,24 @@ def _fetch_manual(api: YouTubeTranscriptApi, video_id: str, preferred_langs: lis
 
 
 def get_transcript_no_proxy(video_id: str) -> tuple[str | None, str | None, str | None]:
-    """Like get_transcript() but always uses a direct connection, ignoring any configured proxy."""
-    direct_api = _make_api(None)
-    return _fetch_original(direct_api, video_id)
+    """Like get_transcript() but always uses a direct connection, ignoring every proxy."""
+    return _fetch_original(_api_for(None), video_id)
+
+
+def _blocked_retry_urls(chain: list[str]) -> list[str]:
+    """The URLs to try after the primary one answered "blocked", in order.
+
+    Whatever is left of the chain first -- with a SOCKS tunnel in front, that
+    is the Webshare proxy, which is exactly the point of the ordering -- and
+    the country-pinned Webshare URL last, because it was the only retry this
+    module had before and a Webshare-only setup must keep it.
+    """
+    urls = list(chain[1:])
+    for url in chain:
+        pinned = _country_proxy_url(url, _FALLBACK_COUNTRY)
+        if pinned and pinned not in urls:
+            urls.append(pinned)
+    return urls
 
 
 def get_transcript(video_id: str) -> tuple[str | None, str | None, str | None]:
@@ -140,17 +182,27 @@ def get_transcript(video_id: str) -> tuple[str | None, str | None, str | None]:
     error_reason is None on success, otherwise one of:
       "ip_blocked", "rate_limited", "unavailable", "country_blocked"
     """
-    text, lang, reason = _fetch_original(_api, video_id)
-    if reason == "ip_blocked" and _fallback_api is not None:
-        print(f"    [RETRY] IP geblockt, versuche Proxy für video_id={video_id}.")
-        text, lang, reason = _fetch_original(_fallback_api, video_id)
+    chain = proxies.proxy_chain()
+    text, lang, reason = _fetch_original(_api_for(chain[0] if chain else None), video_id)
+
+    if reason == "ip_blocked":
+        for url in _blocked_retry_urls(chain):
+            print(f"    [RETRY] IP geblockt, versuche {proxies.redact(url)} für video_id={video_id}.")
+            text, lang, reason = _fetch_original(_api_for(url), video_id)
+            if reason != "ip_blocked":
+                break
+
     if reason == "country_blocked":
-        if _fallback_api is not None:
+        for url in chain:
+            pinned = _country_proxy_url(url, _FALLBACK_COUNTRY)
+            if not pinned:
+                continue
             print(f"    [RETRY] Video geo-gesperrt, versuche {_FALLBACK_COUNTRY}-Proxy für video_id={video_id}.")
-            text, lang, reason = _fetch_original(_fallback_api, video_id)
+            text, lang, reason = _fetch_original(_api_for(pinned), video_id)
             if reason != "country_blocked":
                 return text, lang, reason
         print(f"    [BLOCKED] Video in dieser Region gesperrt (country_blocked) für video_id={video_id}.")
+
     return text, lang, reason
 
 
@@ -158,7 +210,7 @@ def get_manual_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_
     """Return (transcript_text, lang_code) for the best manually created DE/EN transcript.
     Returns (None, None) if no manual transcript is available in preferred_langs.
     """
-    return _fetch_manual(_api, video_id, preferred_langs)
+    return _fetch_manual(_primary_api(), video_id, preferred_langs)
 
 
 def _to_text(entries) -> str:

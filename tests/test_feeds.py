@@ -189,3 +189,102 @@ def test_the_feed_url_is_the_channel_feed(monkeypatch):
     monkeypatch.setattr(feeds, "_fetch", _serve(_feed([]), record=calls))
     feeds.get_channel(CHANNEL)
     assert calls[0][0] == f"https://www.youtube.com/feeds/videos.xml?channel_id={CHANNEL}"
+
+
+def _socks_listening(monkeypatch, alive=True):
+    import socket
+    from test_proxies import _FakeSocket, _connects
+
+    monkeypatch.setenv("SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
+    monkeypatch.setattr(
+        socket, "create_connection",
+        _connects(_FakeSocket() if alive else ConnectionRefusedError()),
+    )
+
+
+def test_the_socks_proxy_is_tried_before_webshare(monkeypatch):
+    # Direct stays the first attempt -- a healthy IP should not pay a proxy's
+    # latency -- but the first retry is the local tunnel, not the metered one.
+    calls = []
+    _socks_listening(monkeypatch)
+    monkeypatch.setenv("WEBSHARE_PROXY_URL", "http://user:pw@proxy.example:80")
+    xml = _feed([
+        _entry("newvid", "2026-09-05T10:00:00+00:00"),
+        _entry("oldvid", "2026-08-20T10:00:00+00:00"),
+    ])
+
+    def fetch(url, proxy=None, timeout=None):
+        calls.append(proxy)
+        if proxy is None:
+            raise urllib.error.URLError("blocked")
+        return xml
+
+    monkeypatch.setattr(feeds, "_fetch", fetch)
+    assert feeds.get_new_videos_rss(CHANNEL, SINCE) is not None
+    assert calls == [None, "socks5h://127.0.0.1:9050"]
+
+
+def test_webshare_is_the_second_retry_when_socks_also_fails(monkeypatch):
+    calls = []
+    _socks_listening(monkeypatch)
+    monkeypatch.setenv("WEBSHARE_PROXY_URL", "http://user:pw@proxy.example:80")
+    xml = _feed([
+        _entry("newvid", "2026-09-05T10:00:00+00:00"),
+        _entry("oldvid", "2026-08-20T10:00:00+00:00"),
+    ])
+
+    def fetch(url, proxy=None, timeout=None):
+        calls.append(proxy)
+        if proxy is None or proxy.startswith("socks"):
+            raise urllib.error.URLError("blocked")
+        return xml
+
+    monkeypatch.setattr(feeds, "_fetch", fetch)
+    assert feeds.get_new_videos_rss(CHANNEL, SINCE) is not None
+    assert calls == [None, "socks5h://127.0.0.1:9050", "http://user:pw@proxy.example:80"]
+
+
+def test_an_unreachable_socks_tunnel_is_not_tried_at_all(monkeypatch):
+    calls = []
+    _socks_listening(monkeypatch, alive=False)
+    monkeypatch.setenv("WEBSHARE_PROXY_URL", "http://user:pw@proxy.example:80")
+    monkeypatch.setattr(feeds, "_fetch", _serve(urllib.error.URLError("blocked"), record=calls))
+    assert feeds.get_new_videos_rss(CHANNEL, SINCE) is None
+    assert [proxy for _url, proxy in calls] == [None, "http://user:pw@proxy.example:80"]
+
+
+def test_no_proxy_skips_the_socks_tunnel_too(monkeypatch):
+    calls = []
+    _socks_listening(monkeypatch)
+    monkeypatch.setattr(feeds, "_fetch", _serve(urllib.error.URLError("blocked"), record=calls))
+    assert feeds.get_new_videos_rss(CHANNEL, SINCE, no_proxy=True) is None
+    assert len(calls) == 1
+
+
+def test_a_socks_proxy_is_fetched_through_requests_not_urllib(monkeypatch):
+    # urllib's ProxyHandler cannot speak SOCKS at all; it would raise or try an
+    # HTTP CONNECT against a proxy that does not understand one.
+    sent = {}
+
+    class _Resp:
+        content = b"<feed/>"
+
+        def raise_for_status(self):
+            pass
+
+    def get(url, headers=None, proxies=None, timeout=None):
+        sent.update(url=url, proxies=proxies)
+        return _Resp()
+
+    import requests
+    monkeypatch.setattr(requests, "get", get)
+    monkeypatch.setattr(urllib.request, "build_opener", _boom)
+    assert feeds._fetch("https://example/feed", proxy="socks5h://127.0.0.1:9050") == b"<feed/>"
+    assert sent["proxies"] == {
+        "http": "socks5h://127.0.0.1:9050",
+        "https": "socks5h://127.0.0.1:9050",
+    }
+
+
+def _boom(*args, **kwargs):
+    raise AssertionError("urllib must not be used for a SOCKS proxy")

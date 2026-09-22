@@ -14,9 +14,10 @@ API, and a fallback is only useful if it is reached.
 """
 
 import json
-import os
 import subprocess
 import sys
+
+import proxies
 
 # A watch page fetch is a couple of requests; through a proxy it can crawl.
 # Generous, but bounded -- the ingest worker runs under cron every minute.
@@ -117,21 +118,25 @@ def _run(url: str, proxy: str | None) -> dict | None:
 def get_video_metadata(video_id: str, no_proxy: bool = False) -> dict | None:
     """Metadata for one video, without spending API quota.
 
-    Tries a direct fetch first and retries once through WEBSHARE_PROXY_URL --
-    the same order transcripts.py uses, and for the same reason: the server's
-    own IP is the one YouTube blocks, but a working IP should not pay for the
-    proxy. Returns None if neither attempt produced usable metadata.
+    Tries a direct fetch first and then each proxy in proxies.proxy_chain() --
+    a reachable SOCKS tunnel before the metered Webshare proxy. Direct first
+    for the same reason feeds.py does it: the server's own IP is the one
+    YouTube blocks, but a working IP should not pay for a proxy. Returns None
+    if no attempt produced usable metadata.
     """
     # The full watch URL, never the bare ID: IDs starting with "-" are read as
     # a flag by yt-dlp's own argument parser.
     url = f"https://www.youtube.com/watch?v={video_id}"
 
     info = _run(url, None)
-    if info is None and not no_proxy:
-        proxy = os.getenv("WEBSHARE_PROXY_URL")
-        if proxy:
-            print("    [yt-dlp] Direkter Abruf fehlgeschlagen — Wiederholung über den Proxy.", file=sys.stderr)
-            info = _run(url, proxy)
+    for proxy in proxies.proxy_chain(no_proxy=no_proxy):
+        if info is not None:
+            break
+        print(
+            f"    [yt-dlp] Direkter Abruf fehlgeschlagen — Wiederholung über {proxies.redact(proxy)}.",
+            file=sys.stderr,
+        )
+        info = _run(url, proxy)
     if not info:
         return None
 

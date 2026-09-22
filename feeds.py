@@ -14,12 +14,13 @@ list that quietly omits videos. The caller then pays for the API for that one
 channel — correctness first, quota second.
 """
 
-import os
 import sys
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+
+import proxies
 
 FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 
@@ -34,6 +35,8 @@ _UA = "Mozilla/5.0 (compatible; youtube-abo-summarizer/1.0)"
 
 def _fetch(url: str, proxy: str | None = None, timeout: int = _TIMEOUT) -> bytes:
     """Fetch a URL, optionally through a proxy. Raises on any failure."""
+    if proxy and proxy.lower().startswith("socks"):
+        return _fetch_socks(url, proxy, timeout)
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     if proxy:
         opener = urllib.request.build_opener(
@@ -45,30 +48,49 @@ def _fetch(url: str, proxy: str | None = None, timeout: int = _TIMEOUT) -> bytes
         return resp.read()
 
 
-def _fetch_feed(channel_id: str, no_proxy: bool = False) -> bytes | None:
-    """Feed bytes for a channel, or None. Direct first, one retry via proxy.
+def _fetch_socks(url: str, proxy: str, timeout: int) -> bytes:
+    """Fetch through a SOCKS proxy, which urllib cannot do.
 
-    Same order and reasoning as transcripts.py and ytdlp_meta.py: the server's
-    own IP is the one that gets blocked, but a healthy IP should not pay the
-    proxy's latency.
+    urllib's ProxyHandler only ever speaks HTTP: handed a socks5:// URL it
+    raises rather than tunnelling. requests does speak SOCKS (through PySocks,
+    see requirements.txt) and is already installed as youtube-transcript-api's
+    own HTTP client, so the SOCKS attempt goes through it.
+
+    Every requests exception derives from OSError, which _fetch_feed already
+    catches, so even a missing PySocks reads as "this proxy did not work"
+    rather than crashing the run.
+    """
+    import requests
+
+    resp = requests.get(
+        url,
+        headers={"User-Agent": _UA},
+        proxies={"http": proxy, "https": proxy},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.content
+
+
+def _fetch_feed(channel_id: str, no_proxy: bool = False) -> bytes | None:
+    """Feed bytes for a channel, or None. Direct first, then each proxy in turn.
+
+    Direct first because the server's own IP is usually fine and a healthy IP
+    should not pay a proxy's latency -- the same reasoning ytdlp_meta.py
+    follows. The retries come from proxies.proxy_chain(), which puts a
+    reachable SOCKS tunnel ahead of the metered Webshare proxy.
     """
     url = FEED_URL.format(channel_id=channel_id)
-    try:
-        return _fetch(url)
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        if no_proxy:
-            print(f"    [rss] {channel_id}: {exc}", file=sys.stderr)
-            return None
-        proxy = os.getenv("WEBSHARE_PROXY_URL")
-        if not proxy:
-            print(f"    [rss] {channel_id}: {exc}", file=sys.stderr)
-            return None
+    attempts: list[str | None] = [None] + proxies.proxy_chain(no_proxy=no_proxy)
 
-    try:
-        return _fetch(url, proxy=proxy)
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        print(f"    [rss] {channel_id} (über Proxy): {exc}", file=sys.stderr)
-        return None
+    for index, proxy in enumerate(attempts):
+        try:
+            return _fetch(url, proxy=proxy)
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            if index == len(attempts) - 1:
+                where = "" if proxy is None else f" (über {proxies.redact(proxy)})"
+                print(f"    [rss] {channel_id}{where}: {exc}", file=sys.stderr)
+    return None
 
 
 def _parse(payload: bytes):
