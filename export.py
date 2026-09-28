@@ -56,7 +56,12 @@ def record_backlog(user, read_days, all_videos, hours, personal_count, total_cou
         "personal_count": personal_count,
         "total_count": total_count,
     })
-    return export_stats.backlog(export_stats.series(export_stats.load(), fp), now)
+    history = export_stats.series(export_stats.load(), fp)
+    result = export_stats.backlog(history, now)
+    if result is not None:
+        # The panel draws these as a chart; the tooltip text ignores them.
+        result["daily"] = export_stats.daily(history, now)
+    return result
 
 
 def parse_args():

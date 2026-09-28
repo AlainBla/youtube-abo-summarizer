@@ -145,7 +145,7 @@ def test_tapping_the_count_opens_a_panel_with_the_same_text():
     var out = {before: panel.hidden};
     toggleBacklogPanel();
     out.open = panel.hidden;
-    out.text = panel.textContent;
+    out.text = document.getElementById('backlog-text').textContent;
     out.expanded = document.getElementById('video-count').getAttribute('aria-expanded');
     toggleBacklogPanel();
     out.closedAgain = panel.hidden;
@@ -188,7 +188,7 @@ def test_an_open_panel_follows_a_language_switch():
     setTimeout(function () {
       toggleBacklogPanel();
       applyLang('en');
-      console.log(JSON.stringify(document.getElementById('backlog-panel').textContent));
+      console.log(JSON.stringify(document.getElementById('backlog-text').textContent));
       process.exit(0);
     }, 300);
     """
@@ -205,6 +205,65 @@ def test_an_export_without_history_has_no_panel_to_open():
     """
     out = json.loads(run_node(_script(None), snippet).strip().splitlines()[-1])
     assert out is True
+
+
+# ── the chart: one point per day ─────────────────────────────────────────────
+
+DAILY = [["2026-09-01", 400], ["2026-09-02", 410], ["2026-09-05", 380]]
+
+
+def _chart(expr, backlog=None):
+    b = dict(BACKLOG, daily=DAILY) if backlog is None else backlog
+    snippet = "console.log(JSON.stringify(%s));" % expr
+    return json.loads(run_node(_script(b), snippet).strip().splitlines()[-1])
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_points_are_spaced_by_date_so_a_missing_day_stays_a_gap():
+    g = _chart("backlogChartPoints(%s)" % json.dumps(DAILY))
+    xs = [p["x"] for p in g["points"]]
+    # 1 day, then 3 days: the second step is three times the first.
+    assert abs((xs[2] - xs[1]) - 3 * (xs[1] - xs[0])) < 1e-6
+    ys = {p["count"]: p["y"] for p in g["points"]}
+    # Higher backlog is higher on screen, i.e. a smaller y.
+    assert ys[410] < ys[400] < ys[380]
+    assert (g["lo"], g["hi"]) == (380, 410)
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_one_day_is_not_a_trend_and_draws_no_chart():
+    assert _chart("backlogChartPoints([['2026-09-01', 400]])") is None
+    assert _chart("backlogChartSvg([['2026-09-01', 400]], I18N.de)") == ""
+    assert _chart("backlogChartSvg(undefined, I18N.de)") == ""
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_a_flat_history_still_draws_a_line():
+    g = _chart("backlogChartPoints([['2026-09-01', 400], ['2026-09-02', 400]])")
+    assert g["points"][0]["y"] == g["points"][1]["y"]
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_the_svg_marks_every_day_and_labels_both_ends():
+    svg = _chart("backlogChartSvg(%s, I18N.de)" % json.dumps(DAILY))
+    # One dot per day, plus the (hidden) hover highlight.
+    assert svg.count("<circle") == len(DAILY) + 1
+    assert "01.09." in svg and "05.09." in svg
+    assert 'aria-label="Bestand pro Tag, 3 Tage"' in svg
+    en = _chart("backlogChartSvg(%s, I18N.en)" % json.dumps(DAILY))
+    assert "Sep 1" in en and "Sep 5" in en
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_opening_the_panel_draws_the_chart():
+    snippet = """
+    toggleBacklogPanel();
+    console.log(JSON.stringify(document.getElementById('backlog-chart').innerHTML));
+    process.exit(0);
+    """
+    out = json.loads(run_node(_script(dict(BACKLOG, daily=DAILY)), snippet)
+                     .strip().splitlines()[-1])
+    assert out.count("<circle") == len(DAILY) + 1
 
 
 # ── export.py: record first, then read the series back ───────────────────────
@@ -225,7 +284,8 @@ def stats_file(tmp_path, monkeypatch):
 def test_the_first_run_records_itself_and_reports_only_today(stats_file):
     out = export.record_backlog("me@example.com", 30, True, None,
                                 personal_count=389, total_count=5000, now=NOW)
-    assert out == {"now": 389, "d7": None, "d30": None, "d90": None}
+    assert out == {"now": 389, "d7": None, "d30": None, "d90": None,
+                   "daily": [["2026-09-20", 389]]}
     assert len(export_stats.load(stats_file)) == 1
 
 
@@ -235,6 +295,7 @@ def test_a_later_run_sees_the_earlier_one(stats_file):
     out = export.record_backlog("me@example.com", 30, True, None,
                                 personal_count=389, total_count=5000, now=NOW)
     assert out["now"] == 389 and out["d7"] == 412
+    assert out["daily"] == [["2026-09-12", 412], ["2026-09-20", 389]]
 
 
 def test_changing_read_days_starts_a_new_series_instead_of_bending_the_old(stats_file):
@@ -244,7 +305,8 @@ def test_changing_read_days_starts_a_new_series_instead_of_bending_the_old(stats
     # which must not read as "the backlog collapsed".
     out = export.record_backlog("me@example.com", 7, True, None,
                                 personal_count=120, total_count=5000, now=NOW)
-    assert out == {"now": 120, "d7": None, "d30": None, "d90": None}
+    assert out == {"now": 120, "d7": None, "d30": None, "d90": None,
+                   "daily": [["2026-09-20", 120]]}
     # ... and the old series is still there, untouched, for the day the old
     # setting comes back.
     assert len(export_stats.load(stats_file)) == 2

@@ -262,6 +262,12 @@ vor 30 Tagen: 350 (+39)
 vor 3 Monaten: —
 ```
 
+The panel (not the hover tooltip) also draws the last 90 days as a small line chart, one dot per
+day — each day's value is the last count recorded on it (UTC day). A day without an export has no
+dot, and the points are spaced by date, so a gap shows as a gap. Hover or drag across the chart to
+read a single day; otherwise the readout names the latest one. With fewer than two days recorded
+there is no chart.
+
 The panel closes on a second tap, on a tap anywhere else, or with Escape.
 
 A measurement is only comparable to measurements taken under the same rules, so each line carries

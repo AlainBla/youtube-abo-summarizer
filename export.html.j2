@@ -44,11 +44,15 @@
       color: #bbb;
       font-size: 0.85rem;
       line-height: 1.5;
-      /* The panel prints the very text of the tooltip, newlines and all, so
-         the two can never say different things. */
-      white-space: pre-line;
       max-width: 22rem;
     }
+    /* The panel prints the very text of the tooltip, newlines and all, so
+       the two can never say different things. */
+    #backlog-text { white-space: pre-line; }
+    #backlog-chart:empty { display: none; }
+    #backlog-chart { margin-top: 0.5rem; }
+    #backlog-chart svg { display: block; width: 100%; height: auto; touch-action: none; }
+    .bl-readout { color: #ddd; font-variant-numeric: tabular-nums; min-height: 1.3em; }
     .full-link {
       color: #aaa;
       font-size: 0.85rem;
@@ -541,7 +545,7 @@
     <div>
       <h1 id="page-title">YouTube Export</h1>
       <p class="meta" id="page-meta"><span id="meta-generated">{{ generated_date }} &mdash; </span><span id="video-count"{% if backlog %} class="has-backlog"{% endif %}>{{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}</span><span id="meta-duration">{% if total_duration %} &middot; {{ total_duration }}{% endif %}</span></p>
-      <div id="backlog-panel" hidden></div>
+      <div id="backlog-panel" hidden><div id="backlog-text"></div><div id="backlog-chart"></div></div>
     </div>
     <div class="header-links">
       {% if full_url %}<a class="full-link" id="full-link" href="{{ full_url }}">{{ t.full_archive }}</a>{% endif %}
@@ -739,6 +743,8 @@ const I18N = {
     videoCount: function(n) { return n + ' Video' + (n !== 1 ? 's' : ''); },
     backlogToday: 'Bestand heute',
     backlogAgo: {d7: 'vor 7 Tagen', d30: 'vor 30 Tagen', d90: 'vor 3 Monaten'},
+    backlogChartLabel: function (n) { return 'Bestand pro Tag, ' + n + (n === 1 ? ' Tag' : ' Tage'); },
+    backlogDay: function (iso) { return iso.slice(8, 10) + '.' + iso.slice(5, 7) + '.'; },
     searchPlaceholder: 'Titel oder Zusammenfassung durchsuchen\u2026',
     allChannels: 'Alle',
     allTags: 'Alle',
@@ -832,6 +838,11 @@ const I18N = {
     videoCount: function(n) { return n + ' video' + (n !== 1 ? 's' : ''); },
     backlogToday: 'Backlog today',
     backlogAgo: {d7: '7 days ago', d30: '30 days ago', d90: '3 months ago'},
+    backlogChartLabel: function (n) { return 'Backlog per day, ' + n + (n === 1 ? ' day' : ' days'); },
+    backlogDay: function (iso) {
+      var m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return m[parseInt(iso.slice(5, 7), 10) - 1] + ' ' + parseInt(iso.slice(8, 10), 10);
+    },
     searchPlaceholder: 'Search title or summary\u2026',
     allChannels: 'All',
     allTags: 'All',
@@ -1913,6 +1924,131 @@ function backlogTooltipText(b, s) {
   return lines.join('\n');
 }
 
+// ── Backlog chart: one point per day ────────────────────────────────────────
+var BL_W = 320, BL_H = 110;
+var BL_PAD = {left: 42, right: 8, top: 8, bottom: 20};
+
+function backlogDayNumber(iso) {
+  // Whole days since the epoch; the points are placed by date, so a day
+  // without a run stays a visible gap rather than closing up.
+  return Math.round(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86400000);
+}
+
+function backlogChartPoints(daily) {
+  // Pure geometry, so the placement is testable without a DOM. Fewer than
+  // two days is not a trend -- no chart at all.
+  if (!Array.isArray(daily) || daily.length < 2) return null;
+  var days = daily.map(function (d) { return backlogDayNumber(d[0]); });
+  var counts = daily.map(function (d) { return d[1]; });
+  var d0 = days[0], d1 = days[days.length - 1];
+  var lo = Math.min.apply(null, counts), hi = Math.max.apply(null, counts);
+  if (hi === lo) { lo -= 1; hi += 1; }   // a flat line sits in the middle
+  var pw = BL_W - BL_PAD.left - BL_PAD.right;
+  var ph = BL_H - BL_PAD.top - BL_PAD.bottom;
+  var span = Math.max(1, d1 - d0);
+  return {
+    lo: Math.min.apply(null, counts), hi: Math.max.apply(null, counts),
+    points: daily.map(function (d, i) {
+      return {
+        day: d[0], count: d[1],
+        x: BL_PAD.left + (days[i] - d0) / span * pw,
+        y: BL_PAD.top + (hi - d[1]) / (hi - lo) * ph
+      };
+    })
+  };
+}
+
+function backlogChartSvg(daily, s) {
+  var g = backlogChartPoints(daily);
+  if (!g) return '';
+  var pts = g.points, n = pts.length;
+  var r1 = function (v) { return Math.round(v * 10) / 10; };
+  var yOf = function (c) {
+    return pts.filter(function (p) { return p.count === c; })[0].y;
+  };
+  var spacing = (BL_W - BL_PAD.left - BL_PAD.right) / Math.max(1, n - 1);
+  var r = Math.max(1.5, Math.min(3.5, spacing * 0.35));
+  var baseY = BL_H - BL_PAD.bottom;
+  var out = [];
+  out.push('<div class="bl-readout"></div>');
+  out.push('<svg viewBox="0 0 ' + BL_W + ' ' + BL_H + '" role="img" aria-label="' +
+           escHtml(s.backlogChartLabel(n)) + '">');
+  // Recessive frame: a baseline and one gridline each at max and min.
+  [g.hi, g.lo].forEach(function (c, i) {
+    if (i === 1 && g.hi === g.lo) return;
+    var y = r1(yOf(c));
+    out.push('<line x1="' + BL_PAD.left + '" x2="' + (BL_W - BL_PAD.right) + '" y1="' + y +
+             '" y2="' + y + '" stroke="#2c2c2c" stroke-width="1"/>');
+    out.push('<text x="' + (BL_PAD.left - 6) + '" y="' + y + '" dy="0.32em" text-anchor="end"' +
+             ' fill="#888" font-size="10">' + c + '</text>');
+  });
+  out.push('<text x="' + BL_PAD.left + '" y="' + (BL_H - 5) + '" fill="#888" font-size="10">' +
+           escHtml(s.backlogDay(pts[0].day)) + '</text>');
+  out.push('<text x="' + (BL_W - BL_PAD.right) + '" y="' + (BL_H - 5) +
+           '" text-anchor="end" fill="#888" font-size="10">' +
+           escHtml(s.backlogDay(pts[n - 1].day)) + '</text>');
+  out.push('<line class="bl-guide" x1="0" x2="0" y1="' + BL_PAD.top + '" y2="' + baseY +
+           '" stroke="#555" stroke-width="1" visibility="hidden"/>');
+  out.push('<polyline fill="none" stroke="#6ea8fe" stroke-width="2" stroke-linejoin="round"' +
+           ' stroke-linecap="round" points="' +
+           pts.map(function (p) { return r1(p.x) + ',' + r1(p.y); }).join(' ') + '"/>');
+  pts.forEach(function (p) {
+    out.push('<circle cx="' + r1(p.x) + '" cy="' + r1(p.y) + '" r="' + r1(r) +
+             '" fill="#6ea8fe" stroke="#1a1a1a" stroke-width="1"/>');
+  });
+  out.push('<circle class="bl-hi" r="' + r1(r + 1.5) + '" fill="#6ea8fe" stroke="#1a1a1a"' +
+           ' stroke-width="2" visibility="hidden"/>');
+  // One transparent hit area over the whole plot: the nearest day wins, so
+  // a point three pixels wide is still easy to land on with a finger.
+  out.push('<rect class="bl-hit" x="' + BL_PAD.left + '" y="0" width="' +
+           (BL_W - BL_PAD.left - BL_PAD.right) + '" height="' + BL_H + '" fill="transparent"/>');
+  out.push('</svg>');
+  return out.join('');
+}
+
+function backlogReadoutText(p, s) {
+  return p ? s.backlogDay(p.day) + ': ' + p.count : '';
+}
+
+function renderBacklogChart() {
+  var box = document.getElementById('backlog-chart');
+  if (!box || !BACKLOG) return;
+  var s = backlogStrings();
+  box.innerHTML = backlogChartSvg(BACKLOG.daily, s);
+  var g = backlogChartPoints(BACKLOG.daily);
+  if (!g || !box.querySelector) return;
+  var svg = box.querySelector('svg');
+  var readout = box.querySelector('.bl-readout');
+  var hi = box.querySelector('.bl-hi');
+  var guide = box.querySelector('.bl-guide');
+  if (!svg || !readout || !hi || !guide) return;
+  var last = g.points[g.points.length - 1];
+  function show(p, active) {
+    readout.textContent = backlogReadoutText(p, s);
+    hi.setAttribute('cx', p.x); hi.setAttribute('cy', p.y);
+    hi.setAttribute('visibility', 'visible');
+    guide.setAttribute('x1', p.x); guide.setAttribute('x2', p.x);
+    guide.setAttribute('visibility', active ? 'visible' : 'hidden');
+  }
+  function track(e) {
+    var rect = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    var x = (e.clientX - rect.left) / rect.width * BL_W;
+    var best = g.points[0];
+    g.points.forEach(function (p) {
+      if (Math.abs(p.x - x) < Math.abs(best.x - x)) best = p;
+    });
+    show(best, true);
+  }
+  svg.addEventListener('pointermove', track);
+  svg.addEventListener('pointerdown', track);
+  svg.addEventListener('pointerleave', function () { show(last, false); });
+  // Taps inside the chart must not reach the document handler that closes
+  // the panel.
+  svg.addEventListener('click', function (e) { e.stopPropagation(); });
+  show(last, false);
+}
+
 // The language the backlog text was last written in. Kept separately from
 // currentLang because the tooltip is set from detectLang() before bootstrap()
 // ever calls applyLang(), and the panel must not open in a different language
@@ -1935,8 +2071,11 @@ function setBacklogTooltip(lang) {
   el.setAttribute('tabindex', '0');
   el.setAttribute('aria-expanded', backlogPanelOpen() ? 'true' : 'false');
   el.setAttribute('aria-controls', 'backlog-panel');
-  var panel = document.getElementById('backlog-panel');
-  if (panel && backlogPanelOpen()) panel.textContent = text;
+  var textBox = document.getElementById('backlog-text');
+  if (textBox && backlogPanelOpen()) {
+    textBox.textContent = text;
+    renderBacklogChart();
+  }
 }
 
 function backlogPanelOpen() {
@@ -1949,7 +2088,9 @@ function setBacklogPanel(open) {
   var el = document.getElementById('video-count');
   if (!panel || !BACKLOG) return;
   if (open) {
-    panel.textContent = backlogTooltipText(BACKLOG, backlogStrings());
+    var textBox = document.getElementById('backlog-text');
+    if (textBox) textBox.textContent = backlogTooltipText(BACKLOG, backlogStrings());
+    renderBacklogChart();
   }
   panel.hidden = !open;
   if (el) el.setAttribute('aria-expanded', open ? 'true' : 'false');

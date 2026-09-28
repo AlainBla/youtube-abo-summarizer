@@ -30,6 +30,9 @@ STATS_PATH = store.DATA_DIR / "export_stats.jsonl"
 
 # The tooltip's columns, in days. 90 is spoken of as "3 Monate" in the UI.
 BACKLOG_WINDOWS = (7, 30, 90)
+# How far back the panel's chart of daily datapoints reaches -- the longest
+# tooltip window, so the chart never shows less history than the text names.
+DAILY_DAYS = 90
 
 
 def window_label(all_videos: bool, hours: int | None) -> str:
@@ -152,3 +155,25 @@ def backlog(entries: list[dict], now: datetime, windows=BACKLOG_WINDOWS) -> dict
     for days in windows:
         result[f"d{days}"] = _count_at(ordered, now - timedelta(days=days))
     return result
+
+
+def daily(entries: list[dict], now: datetime, days: int = DAILY_DAYS) -> list[list]:
+    """One datapoint per UTC day for the panel's chart: ``[["2026-09-24", 2559], ...]``.
+
+    A day's value is the last count recorded on it, the same at-or-before rule
+    as _count_at(): the backlog at the end of that day. Oldest first, today
+    included, nothing after `now`. A day without a run has no entry at all --
+    the chart spaces points by date, so a gap stays visible as a gap instead
+    of being filled with an invented number.
+    """
+    first_day = (now - timedelta(days=days - 1)).astimezone(timezone.utc).date()
+    by_day = {}
+    for entry in sorted(entries, key=lambda e: e.get("ts") or ""):
+        ts = _parse_ts(entry.get("ts"))
+        count = entry.get("personal_count")
+        if ts is None or ts > now or not isinstance(count, int):
+            continue
+        day = ts.astimezone(timezone.utc).date()
+        if day >= first_day:
+            by_day[day.isoformat()] = count
+    return [[day, count] for day, count in sorted(by_day.items())]

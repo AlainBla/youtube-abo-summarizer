@@ -153,3 +153,31 @@ def test_a_naive_timestamp_is_read_as_utc():
 def test_an_unreadable_timestamp_is_ignored_rather_than_fatal():
     entries = [{"ts": "irgendwann", **FP, "personal_count": 999}, _entry(0, 389)]
     assert export_stats.backlog(entries, NOW)["now"] == 389
+
+
+# ── the chart's daily datapoints ─────────────────────────────────────────────
+
+def test_daily_keeps_the_last_count_of_each_day():
+    entries = [
+        {"ts": "2026-09-18T08:00:00+00:00", **FP, "personal_count": 400},
+        {"ts": "2026-09-18T20:00:00+00:00", **FP, "personal_count": 395},
+        {"ts": "2026-09-20T09:00:00+00:00", **FP, "personal_count": 389},
+    ]
+    # No run on the 19th: no point, not an invented one.
+    assert export_stats.daily(entries, NOW) == [
+        ["2026-09-18", 395], ["2026-09-20", 389],
+    ]
+
+
+def test_daily_reaches_back_ninety_days_and_never_past_now():
+    entries = [_entry(95, 200), _entry(89, 300), _entry(0, 389),
+               {"ts": (NOW + timedelta(hours=1)).isoformat(), **FP, "personal_count": 1}]
+    days = export_stats.daily(entries, NOW)
+    assert [c for _, c in days] == [300, 389]
+
+
+def test_daily_skips_unreadable_records():
+    entries = [{"ts": "irgendwann", **FP, "personal_count": 999},
+               {"ts": NOW.isoformat(), **FP, "personal_count": "viele"},
+               _entry(0, 389)]
+    assert export_stats.daily(entries, NOW) == [["2026-09-20", 389]]
