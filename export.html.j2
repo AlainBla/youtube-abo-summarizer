@@ -29,6 +29,9 @@
       flex-wrap: wrap;
     }
     .page-header h1 { font-size: 1.8rem; font-weight: 700; color: #fff; }
+    /* The title reloads the page as it stands, ?v= deep link included. */
+    .title-link { color: inherit; text-decoration: none; }
+    .title-link:hover { text-decoration: underline; }
     .page-header .meta { color: #888; font-size: 0.9rem; margin-top: 0.25rem; }
     /* Only the personal export has a history behind its count; the dotted
        underline is what tells a reader there is something to open. Tap or
@@ -543,7 +546,7 @@
 <header class="page-header">
   <div class="header-row">
     <div>
-      <h1 id="page-title">YouTube Export</h1>
+      <h1><a id="page-title" class="title-link" href="" onclick="location.reload(); return false;">YouTube Export</a></h1>
       <p class="meta" id="page-meta"><span id="meta-generated">{{ generated_date }} &mdash; </span><span id="video-count"{% if backlog %} class="has-backlog"{% endif %}>{{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}</span><span id="meta-duration">{% if total_duration %} &middot; {{ total_duration }}{% endif %}</span></p>
       <div id="backlog-panel" hidden><div id="backlog-text"></div><div id="backlog-chart"></div></div>
     </div>
