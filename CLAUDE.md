@@ -258,6 +258,10 @@ python export.py --all --sync-url https://sync.example.com --output archive.html
 Users log in via magic link (email → click link → session stored in browser localStorage).
 State syncs automatically on page load and on each read/bookmark toggle.
 
+Changes made while logged out are not lost: `syncToggle()` stamps the local timestamp (`yt_read_ts`/`yt_bookmark_ts`) *before* checking for a session, so the first merge after the next login (`applyServerState()`) sees them as locally newer and pushes them up. Before that, a logged-out toggle carried no timestamp, was never pushed, and was overwritten by any server entry for the same video. The push goes out through `pushLocalEntries()` in batches of `SYNC_PUSH_BATCH` (500), because `/api/state` rejects a POST with more than 2000 entries; a failed batch leaves the local timestamps newer than the server's, so the next merge offers the same entries again.
+
+A manual resync hides behind the sync status line: clicking `#sync-status` (tooltip only, no visible button) runs `syncFullResync()`, which first stamps every mark that has no local timestamp at all (`stampUntrackedLocal()` — marks set before the fix above, or migrated from the old cookie), then pulls, merges and pushes, and reports how many entries it uploaded. Stamping is safe because an untracked mark cannot have a server entry: the first merge after login gives every server entry a local timestamp. Pinned by `tests/test_export_sync_offline.py`.
+
 ### On-demand video ingest
 
 `POST /api/ingest` lets authorised users queue a video for fetching and summarisation without waiting for the next scheduled collect run. The endpoint appends the video ID to a queue file and returns 202 immediately; a separate cron job (`ingest_worker.sh`) processes the queue.

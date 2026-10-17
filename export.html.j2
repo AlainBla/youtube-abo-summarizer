@@ -794,6 +794,12 @@ const I18N = {
     syncStatusSyncing: 'Synchronisiere\u2026',
     syncStatusSynced: 'Synchronisiert',
     syncStatusFailed: 'Sync fehlgeschlagen',
+    syncResyncHint: 'Klicken f\u00fcr vollst\u00e4ndigen Abgleich',
+    syncStatusResyncing: 'Vollst\u00e4ndiger Abgleich\u2026',
+    syncStatusResynced: function (n) {
+      return 'Abgeglichen \u2014 ' + n + (n === 1 ? ' lokale \u00c4nderung' : ' lokale \u00c4nderungen')
+        + ' hochgeladen';
+    },
     ingestPlaceholder: 'YouTube URL oder Video-ID',
     ingestBtn: 'Hinzuf\u00fcgen',
     syncStatusIngesting: 'Wird hinzugef\u00fcgt\u2026',
@@ -892,6 +898,11 @@ const I18N = {
     syncStatusSyncing: 'Syncing\u2026',
     syncStatusSynced: 'Synced',
     syncStatusFailed: 'Sync failed',
+    syncResyncHint: 'Click for a full resync',
+    syncStatusResyncing: 'Full resync\u2026',
+    syncStatusResynced: function (n) {
+      return 'Resynced \u2014 ' + n + (n === 1 ? ' local change' : ' local changes') + ' uploaded';
+    },
     ingestPlaceholder: 'YouTube URL or video ID',
     ingestBtn: 'Add',
     syncStatusIngesting: 'Adding video\u2026',
@@ -1122,8 +1133,11 @@ function showSyncLoggedOut() {
   updateSyncStatus(I18N[currentLang || 'de'].syncStatusNotLoggedIn);
 }
 
-// Merge server state into local cookies + localStorage.
-// Returns { read: pushBackEntries, bookmark: pushBackEntries } of locally-newer entries.
+// Merge server state into local cookies + localStorage, then push every
+// locally-newer entry back. That includes everything toggled while logged out:
+// syncToggle() stamps a timestamp whether or not there is a session, so the
+// first merge after a login carries those changes up. Returns the push's
+// promise (the number of entries sent); fire-and-forget callers ignore it.
 function applyServerState(serverData) {
   var readTs = getLocalTs('read');
   var bookmarkTs = getLocalTs('bookmark');
@@ -1170,22 +1184,52 @@ function applyServerState(serverData) {
   saveSet(COOKIE_READ, readSet);
   saveSet(COOKIE_BOOKMARK, bookmarkSet);
 
-  var hasPushBack = (
-    Object.keys(pushBack.read).length + Object.keys(pushBack.bookmark).length > 0
-  );
-  if (hasPushBack) {
-    var tok = getSyncToken();
-    fetch(SYNC_URL + '/api/state', {
-      method: 'POST',
-      headers: {'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json'},
-      body: JSON.stringify(pushBack)
-    }).then(function(r) {
-      if (r && r.status === 401) {
-        localStorage.removeItem('yt_sync_token');
-        showSyncLoggedOut();
+  var pushed = pushLocalEntries(pushBack);
+  pushed.catch(function () {});  // retried by the next merge
+  return pushed;
+}
+
+// The server rejects a POST carrying more than 2000 entries, and a backlog
+// built up while logged out (or a full resync) can easily exceed that, so the
+// push goes out in sequential batches. Resolves to the number of entries sent;
+// a failure leaves the local timestamps newer than the server's, so the next
+// merge simply offers the same entries again.
+var SYNC_PUSH_BATCH = 500;
+
+function pushLocalEntries(pushBack) {
+  var batches = [];
+  var current = {read: {}, bookmark: {}};
+  var n = 0;
+  var total = 0;
+  ['read', 'bookmark'].forEach(function (type) {
+    Object.keys(pushBack[type]).forEach(function (vid) {
+      current[type][vid] = pushBack[type][vid];
+      total++;
+      if (++n === SYNC_PUSH_BATCH) {
+        batches.push(current);
+        current = {read: {}, bookmark: {}};
+        n = 0;
       }
-    }).catch(function() {});  // fire-and-forget
-  }
+    });
+  });
+  if (n) batches.push(current);
+  var chain = Promise.resolve();
+  batches.forEach(function (batch) {
+    chain = chain.then(function () {
+      return fetch(SYNC_URL + '/api/state', {
+        method: 'POST',
+        headers: {'Authorization': 'Bearer ' + getSyncToken(), 'Content-Type': 'application/json'},
+        body: JSON.stringify(batch)
+      }).then(function (r) {
+        if (r && r.status === 401) {
+          localStorage.removeItem('yt_sync_token');
+          showSyncLoggedOut();
+        }
+        if (!r || !r.ok) throw new Error('push failed');
+      });
+    });
+  });
+  return chain.then(function () { return total; });
 }
 
 // Re-issue both sync requests (used after 'online' events; the initial pair is
@@ -1288,6 +1332,56 @@ function pullServerState() {
       );
     })
     .catch(function() {});  // silent on background poll
+}
+
+// Marks that carry no local timestamp at all: set before syncToggle() stamped
+// logged-out changes, or migrated from the old cookie. The server never had
+// an entry for them -- any server entry would have given them a timestamp on
+// the first merge -- so stamping them now only adds what the server lacks.
+function stampUntrackedLocal() {
+  var now = getIsoNow();
+  [['read', readSet], ['bookmark', bookmarkSet]].forEach(function (pair) {
+    var localTs = getLocalTs(pair[0]);
+    pair[1].forEach(function (vid) {
+      if (!localTs[vid]) localTs[vid] = now;
+    });
+    saveLocalTs(pair[0], localTs);
+  });
+}
+
+// The manual trigger behind a click on the sync status line: stamp untracked
+// marks, pull, merge, and push everything the server is missing.
+function syncFullResync() {
+  var token = getSyncToken();
+  if (!token) return Promise.resolve(null);
+  var s = I18N[currentLang || 'de'];
+  updateSyncStatus(s.syncStatusResyncing);
+  stampUntrackedLocal();
+  return fetch(SYNC_URL + '/api/state', {headers: {'Authorization': 'Bearer ' + token}})
+    .then(function (r) {
+      if (r.status === 401) {
+        localStorage.removeItem('yt_sync_token');
+        showSyncLoggedOut();
+        return null;
+      }
+      if (!r.ok) throw new Error('pull failed');
+      return r.json();
+    })
+    .then(function (serverData) {
+      if (!serverData) return null;
+      var pushed = applyServerState(serverData);
+      if (dataReady) applyFiltersAndSort(currentPage);
+      return pushed;
+    })
+    .then(function (n) {
+      if (n === null) return null;
+      updateSyncStatus(I18N[currentLang || 'de'].syncStatusResynced(n));
+      return n;
+    })
+    .catch(function () {
+      updateSyncStatus(I18N[currentLang || 'de'].syncStatusFailed);
+      return null;
+    });
 }
 
 function extractVideoId(raw) {
@@ -1409,12 +1503,15 @@ function doLogout() {
 }
 
 function syncToggle(type, videoId, value) {
-  var token = getSyncToken();
-  if (!token) return;
+  // Stamp first, session or not: a toggle without a timestamp is invisible to
+  // applyServerState(), so a change made while logged out would never reach
+  // the server -- and a server entry for the same video would overwrite it.
   var ts = getIsoNow();
   var localTs = getLocalTs(type);
   localTs[videoId] = ts;
   saveLocalTs(type, localTs);
+  var token = getSyncToken();
+  if (!token) return;
   var body = {};
   body[type] = {};
   body[type][videoId] = {value: value, ts: ts};
@@ -2183,6 +2280,8 @@ function applyLang(lang) {
     if (ingestInput) ingestInput.placeholder = s.ingestPlaceholder;
     var ingestBtn = document.getElementById('ingest-btn');
     if (ingestBtn) ingestBtn.textContent = s.ingestBtn;
+    var statusEl = document.getElementById('sync-status');
+    if (statusEl) statusEl.title = s.syncResyncHint;
   })();
   {% endif %}
   renderUpdateBanner();
@@ -2855,6 +2954,11 @@ startUpdatePolling();
 
 {% if sync_url %}
 setTimeout(warnIfInsecure, 0);
+// Deliberately unadvertised: the status line itself is the resync button,
+// with only a tooltip to say so.
+document.getElementById('sync-status').addEventListener('click', function () {
+  if (getSyncToken()) syncFullResync();
+});
 window.addEventListener('online', function () {
   if (getSyncToken()) { window.__syncBoot = startSyncRequests(); initSync(); }
 });

@@ -411,6 +411,8 @@ python export.py --all --sync-url https://sync.example.com --output archive.html
 Users log in via magic link (email → click link → session stored in browser localStorage).
 State syncs automatically on page load and on each read/bookmark toggle.
 
+Changes made while logged out are kept with a timestamp and uploaded on the next login. To force a full resync by hand, click the sync status text in the sync bar (e.g. "Synchronisiert — 12:34"); it also uploads read/bookmark marks set before this behaviour existed.
+
 The server only accepts magic-link redirect URIs whose origin matches its own
 `BASE_URL`, or any `file://` URI. The export page mirrors that rule client-side
 and shows a single `alert()` on load when login cannot work from where the page
