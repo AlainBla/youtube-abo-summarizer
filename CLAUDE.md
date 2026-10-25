@@ -203,7 +203,7 @@ Every export also installs as a web app with offline reading: `webapp.write_app_
 - **Network first.** The worker answers only the page itself, its manifest and its icons: from the network whenever it can, caching the response, and from the cache only when the network fails. A cache-first worker would keep a stale export on screen and silently defeat the update banner and every re-export. All `?v=` deep links share one cache entry (the query-less page URL), so a link opens offline too.
 - **Hands off the rest.** `.meta.json` and the sync API (`/sync/…`) are never answered from cache — the banner's polling and sync behave exactly as without a worker.
 - **One app per page.** Scope `/yt.html` vs. `/yt.full.html`, manifest `id` = the page, `APP_NAMES` gives "YouTube-Archiv" and "YouTube-Archiv (alle)" (`render(…, app="full")` in `export.py` for the sidecar), so both install side by side and never answer for each other. The manifest's own `scope` is `./` — the directory — so the header link between the two and the sync server's passkey pages under `/sync/` stay inside the app window.
-- **Login in the app is the passkey.** An installed iOS web app has storage separate from Safari, and a magic link from a mail client opens in the browser, so the session lands there. Passkeys live in the device keychain and are shared: register once in the browser, then "Passkey" inside the app.
+- **Login in the app: passkey or the mailed code.** An installed iOS web app has storage separate from Safari, and a magic link from a mail client opens in the browser, so the session lands there. Passkeys live in the device keychain and are shared (register once in the browser, then "Passkey" inside the app); without one, the six-digit code from the same mail is typed into the app (see "Login code").
 - `--no-app` (`app=None`) writes none of the files and renders `const PWA = null`.
 - Tests: `tests/test_webapp.py` — PNG structure and colours, the files and tags, separate apps, `--no-app`, registration only over http(s), and the worker itself in Node against a fake `fetch`/Cache API (network first, offline fallback, one entry for every `?v=`, sidecar and sync untouched).
 - Apache needs nothing beyond serving `.webmanifest` (Debian's `mime.types` maps it to `application/manifest+json`) and `.js`.
@@ -270,6 +270,10 @@ python export.py --all --sync-url https://sync.example.com --output archive.html
 
 Users log in via magic link (email → click link → session stored in browser localStorage).
 State syncs automatically on page load and on each read/bookmark toggle.
+
+### Login code
+
+The magic-link mail also carries a six-digit code, for a device where the link opens in the wrong place: an installed web app on iOS has storage separate from Safari, and a mail client opens links in the browser, so the session would land there. `request_link()` stores one live code per address in `login_codes` (`_store_login_code()`; a new request replaces the old code), as an HMAC keyed with `SECRET_KEY` (`_code_hash()`), never in clear. `POST /auth/verify-code {email, code}` answers `{session}` through `_create_session()`: same 15-minute lifetime as the link (`LOGIN_CODE_TTL`), single use, deleted after `LOGIN_CODE_MAX_ATTEMPTS` (5) wrong guesses, `CODE_RATE_LIMIT_MAX` (20) verify attempts per IP and window, `ALLOWED_EMAILS` checked again. Spaces in the code and the address's case are ignored. In the archive, "Link senden" reveals `#sync-code-row` (`showCodeEntry()`); `syncVerifyCode()` posts the code, stores the session, clears `window.__syncBoot` (its requests ran without a token) and calls `initSync()`. Tests: `sync-server/tests/test_login_code.py`, `tests/test_export_login_code.py`.
 
 ### Passkeys
 

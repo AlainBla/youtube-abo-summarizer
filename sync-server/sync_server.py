@@ -1,7 +1,10 @@
 """Sync server — persists read/bookmark state per user, magic-link and passkey auth."""
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import sqlite3
 import sys
 import time
@@ -69,6 +72,17 @@ serializer = URLSafeTimedSerializer(SECRET_KEY)
 RATE_LIMIT_MAX = 3
 RATE_LIMIT_WINDOW = 600  # seconds
 
+# The mail carries a six-digit code beside the link, for a device where the
+# link would open in the wrong place -- an installed web app on iOS has its own
+# storage, and a link from the mail client always lands in the browser. Same
+# lifetime as the link; one live code per address (a new request replaces it);
+# it dies after LOGIN_CODE_MAX_ATTEMPTS wrong guesses, and with at most
+# RATE_LIMIT_MAX codes per address per window a guess succeeds with odds of
+# about 1 in 66 000 per ten minutes.
+LOGIN_CODE_TTL = 900  # seconds, = the magic link's max_age
+LOGIN_CODE_MAX_ATTEMPTS = 5
+CODE_RATE_LIMIT_MAX = 20  # verify attempts per IP per window
+
 # Passkeys: the relying party is the sync server's own host, and every ceremony
 # runs on a page it serves itself, so the expected origin is BASE_URL's origin.
 # An archive opened from file:// or another host could not run one at all.
@@ -130,6 +144,12 @@ def init_db(path: str = DB_PATH) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_rate_limit_key_time
             ON rate_limit_hits (key, hit_at);
+        CREATE TABLE IF NOT EXISTS login_codes (
+            email       TEXT PRIMARY KEY,
+            code_hash   TEXT NOT NULL,             -- HMAC, never the code itself
+            expires_at  REAL NOT NULL,
+            attempts    INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS passkeys (
             id          TEXT PRIMARY KEY,          -- credential ID, base64url
             user_id     INTEGER NOT NULL REFERENCES users(id),
@@ -257,12 +277,34 @@ def _create_session(user_id: int) -> str:
     return session_token
 
 
-def _send_magic_link(email: str, link: str) -> None:
+def _code_hash(email: str, code: str) -> str:
+    return hmac.new(SECRET_KEY.encode(), f"{email}:{code}".encode(), hashlib.sha256).hexdigest()
+
+
+def _store_login_code(email: str) -> str:
+    """Create the address's one live login code (replacing any older one)."""
+    code = f"{secrets.randbelow(10**6):06d}"
+    db = get_db()
+    db.execute(
+        "INSERT OR REPLACE INTO login_codes (email, code_hash, expires_at, attempts) "
+        "VALUES (?, ?, ?, 0)",
+        (email, _code_hash(email, code), time.time() + LOGIN_CODE_TTL),
+    )
+    db.commit()
+    return code
+
+
+def _send_magic_link(email: str, link: str, code: str) -> None:
     msg = EmailMessage()
     msg["Subject"] = "Your login link for YouTube Export Sync"
     msg["From"] = SMTP_FROM
     msg["To"] = email
-    msg.set_content(f"Click to log in:\n\n{link}\n\nExpires in 15 minutes.")
+    msg.set_content(
+        f"Click to log in:\n\n{link}\n\n"
+        f"Or enter this code where you asked for the link (e.g. in the installed app):\n\n"
+        f"    {code[:3]} {code[3:]}\n\n"
+        f"Both expire in 15 minutes."
+    )
     if SMTP_PORT == 465:
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as smtp:
             smtp.login(SMTP_USER, SMTP_PASS)
@@ -303,11 +345,58 @@ def request_link():
         f"?token={urlquote(token)}"
         f"&redirect_uri={urlquote(redirect_uri)}"
     )
+    code = _store_login_code(email)
     try:
-        _send_magic_link(email, link)
+        _send_magic_link(email, link, code)
     except Exception as exc:
         print(f"[sync] SMTP error for {email}: {exc}", file=sys.stderr)
     return jsonify({}), 200
+
+
+@app.route("/auth/verify-code", methods=["OPTIONS", "POST"])
+def verify_code():
+    """Exchange email + the mailed six-digit code for a session token."""
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    code = re.sub(r"\s+", "", str(data.get("code") or ""))
+    if not email or not re.fullmatch(r"\d{6}", code):
+        return jsonify({"error": "email and six-digit code required"}), 400
+
+    ip = request.remote_addr or "unknown"
+    if not _rate_check(f"code-ip:{ip}", CODE_RATE_LIMIT_MAX):
+        return jsonify({"error": "too many attempts"}), 429
+
+    db = get_db()
+    row = db.execute(
+        "SELECT code_hash, expires_at, attempts FROM login_codes WHERE email = ?", (email,)
+    ).fetchone()
+    invalid = (jsonify({"error": "invalid or expired code"}), 400)
+    if row is None:
+        return invalid
+    if row["expires_at"] <= time.time():
+        db.execute("DELETE FROM login_codes WHERE email = ?", (email,))
+        db.commit()
+        return invalid
+    if not hmac.compare_digest(row["code_hash"], _code_hash(email, code)):
+        if row["attempts"] + 1 >= LOGIN_CODE_MAX_ATTEMPTS:
+            db.execute("DELETE FROM login_codes WHERE email = ?", (email,))
+        else:
+            db.execute("UPDATE login_codes SET attempts = attempts + 1 WHERE email = ?", (email,))
+        db.commit()
+        return invalid
+    # Single use, whatever happens next.
+    db.execute("DELETE FROM login_codes WHERE email = ?", (email,))
+    db.commit()
+    if ALLOWED_EMAILS and email not in ALLOWED_EMAILS:
+        return jsonify({"error": "forbidden"}), 403
+
+    db.execute(
+        "INSERT OR IGNORE INTO users (email, created_at) VALUES (?, ?)", (email, _now_iso())
+    )
+    user = db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+    return jsonify({"session": _create_session(user["id"])})
 
 
 @app.route("/auth/verify")

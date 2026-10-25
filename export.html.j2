@@ -575,6 +575,10 @@
     <input type="email" id="sync-email" placeholder="E-Mail für Sync" autocomplete="email">
     <button id="sync-send-btn" onclick="syncRequestLink()">Link senden</button>
     <button id="sync-passkey-btn" onclick="syncPasskeyLogin()">Passkey</button>
+    <span id="sync-code-row" style="display:none">
+      <input type="text" id="sync-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="Code aus der Mail" onkeydown="if (event.key === 'Enter') syncVerifyCode()">
+      <button id="sync-code-btn" onclick="syncVerifyCode()">Anmelden</button>
+    </span>
   </div>
   <div id="sync-user" style="display:none">
     <span class="sync-user-email" id="sync-user-email"></span>
@@ -809,7 +813,11 @@ const I18N = {
     syncPasskeysTitle: 'Passkeys f\u00fcr diesen Account verwalten',
     syncStatusNotLoggedIn: 'Nicht angemeldet',
     syncStatusSending: 'Link wird gesendet\u2026',
-    syncStatusSent: 'Link gesendet \u2014 E-Mail pr\u00fcfen',
+    syncStatusSent: 'Link gesendet \u2014 Link \u00f6ffnen oder Code eingeben',
+    syncCodePlaceholder: 'Code aus der Mail',
+    syncCodeBtn: 'Anmelden',
+    syncStatusCodeWrong: 'Code falsch oder abgelaufen',
+    syncStatusCodeLimit: 'Zu viele Versuche \u2014 bitte sp\u00e4ter erneut',
     syncStatusSyncing: 'Synchronisiere\u2026',
     syncStatusSynced: 'Synchronisiert',
     syncStatusFailed: 'Sync fehlgeschlagen',
@@ -918,7 +926,11 @@ const I18N = {
     syncPasskeysTitle: 'Manage the passkeys for this account',
     syncStatusNotLoggedIn: 'Not logged in',
     syncStatusSending: 'Sending link\u2026',
-    syncStatusSent: 'Link sent \u2014 check your email',
+    syncStatusSent: 'Link sent \u2014 open it or enter the code',
+    syncCodePlaceholder: 'Code from the email',
+    syncCodeBtn: 'Log in',
+    syncStatusCodeWrong: 'Wrong or expired code',
+    syncStatusCodeLimit: 'Too many attempts \u2014 try again later',
     syncStatusSyncing: 'Syncing\u2026',
     syncStatusSynced: 'Synced',
     syncStatusFailed: 'Sync failed',
@@ -1510,8 +1522,53 @@ function syncRequestLink() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({email: email, redirect_uri: loginRedirectUri()})
   })
-  .then(function() { updateSyncStatus(s.syncStatusSent); })
+  .then(function() {
+    updateSyncStatus(s.syncStatusSent);
+    showCodeEntry();
+  })
   .catch(function() { updateSyncStatus(s.syncStatusFailed); });
+}
+
+// The mail also carries a six-digit code: in an installed web app (own
+// storage on iOS) the link would open in the browser and log in the wrong
+// place, so the code is typed here instead and the session lands right here.
+function showCodeEntry() {
+  var row = document.getElementById('sync-code-row');
+  if (row) row.style.display = '';
+  var input = document.getElementById('sync-code');
+  if (input) input.focus();
+}
+
+function syncVerifyCode() {
+  var email = (document.getElementById('sync-email').value || '').trim();
+  var code = (document.getElementById('sync-code').value || '').replace(/\s+/g, '');
+  var s = I18N[currentLang || 'de'];
+  if (!email || !/^\d{6}$/.test(code)) {
+    updateSyncStatus(s.syncStatusCodeWrong);
+    return;
+  }
+  fetch(SYNC_URL + '/auth/verify-code', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email: email, code: code})
+  })
+  .then(function (r) {
+    if (r.status === 429) throw new Error('limit');
+    if (!r.ok) throw new Error('wrong');
+    return r.json();
+  })
+  .then(function (data) {
+    localStorage.setItem('yt_sync_token', data.session);
+    document.getElementById('sync-code').value = '';
+    document.getElementById('sync-code-row').style.display = 'none';
+    window.__syncBoot = null;  // the boot requests ran without a token
+    initSync();
+  })
+  .catch(function (e) {
+    var msg = e && e.message;
+    updateSyncStatus(msg === 'limit' ? s.syncStatusCodeLimit
+                     : msg === 'wrong' ? s.syncStatusCodeWrong : s.syncStatusFailed);
+  });
 }
 
 // Passkey ceremonies run on the sync server's own pages: WebAuthn binds a
@@ -2332,6 +2389,10 @@ function applyLang(lang) {
     if (logoutEl) logoutEl.textContent = s.syncLogout;
     var passkeyEl = document.getElementById('sync-passkey-btn');
     if (passkeyEl) { passkeyEl.textContent = s.syncPasskeyLogin; passkeyEl.title = s.syncPasskeyLoginTitle; }
+    var codeEl = document.getElementById('sync-code');
+    if (codeEl) codeEl.placeholder = s.syncCodePlaceholder;
+    var codeBtn = document.getElementById('sync-code-btn');
+    if (codeBtn) codeBtn.textContent = s.syncCodeBtn;
     var passkeysEl = document.getElementById('sync-passkeys-btn');
     if (passkeysEl) { passkeysEl.textContent = s.syncPasskeys; passkeysEl.title = s.syncPasskeysTitle; }
     if (!window.PublicKeyCredential) {

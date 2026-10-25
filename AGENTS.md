@@ -122,6 +122,7 @@ Two traps that will produce a book that looks fine in a permissive reader but fa
 |---|---|---|
 | `/auth/request-link` | POST | Send magic-link email |
 | `/auth/verify` | GET | Validate token, create session, redirect |
+| `/auth/verify-code` | POST | Exchange `{email, code}` (the six-digit code from the login mail) for `{session}`; single use, 15 min, 5 wrong guesses kill it |
 | `/auth/passkey` | GET | Passkey login page (`?redirect_uri=`, validated like the magic link) |
 | `/auth/passkey/manage` | GET | Passkey management page; session arrives in the URL fragment |
 | `/auth/passkey/login/options` | POST | WebAuthn assertion options (discoverable, UV required); 20/10 min per IP |

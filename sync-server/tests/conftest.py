@@ -42,11 +42,11 @@ def client(app):
 
 @pytest.fixture
 def mock_smtp(monkeypatch):
-    """Patch _send_magic_link; returns list of {email, link} dicts."""
+    """Patch _send_magic_link; returns list of {email, link, code} dicts."""
     sent = []
 
-    def fake_send(email: str, link: str) -> None:
-        sent.append({"email": email, "link": link})
+    def fake_send(email: str, link: str, code: str) -> None:
+        sent.append({"email": email, "link": link, "code": code})
 
     monkeypatch.setattr(sync_server, "_send_magic_link", fake_send)
     return sent
