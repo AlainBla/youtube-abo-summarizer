@@ -71,9 +71,17 @@ RATE_LIMIT_MAX = 3
 RATE_LIMIT_WINDOW = 600  # seconds
 
 # Passkeys: the relying party is the sync server's own host, and every ceremony
-# runs on a page it serves itself, so the expected origin is exactly BASE_URL.
+# runs on a page it serves itself, so the expected origin is BASE_URL's origin.
 # An archive opened from file:// or another host could not run one at all.
+def _origin_of(url: str) -> str:
+    """scheme://host[:port] of url — BASE_URL may carry a path (/sync behind
+    a reverse proxy), an origin never does."""
+    p = urlparse(url)
+    return f"{p.scheme}://{p.netloc}"
+
+
 WEBAUTHN_RP_ID = urlparse(BASE_URL).hostname or ""
+WEBAUTHN_ORIGIN = _origin_of(BASE_URL)
 WEBAUTHN_RP_NAME = "YouTube Export Sync"
 WEBAUTHN_CHALLENGE_TTL = 300  # seconds
 # Each login page load asks for options, so the magic-link limit (3 per 10 min)
@@ -388,7 +396,9 @@ def passkey_login_page():
     redirect_uri = request.args.get("redirect_uri", "")
     if not _valid_redirect_uri(redirect_uri):
         return "Invalid redirect URI.", 400
-    return render_template("passkey.html", mode="login", redirect_uri=redirect_uri)
+    return render_template(
+        "passkey.html", mode="login", redirect_uri=redirect_uri, api_base=BASE_URL
+    )
 
 
 @app.route("/auth/passkey/manage")
@@ -396,7 +406,9 @@ def passkey_manage_page():
     redirect_uri = request.args.get("redirect_uri", "")
     if not _valid_redirect_uri(redirect_uri):
         return "Invalid redirect URI.", 400
-    return render_template("passkey.html", mode="manage", redirect_uri=redirect_uri)
+    return render_template(
+        "passkey.html", mode="manage", redirect_uri=redirect_uri, api_base=BASE_URL
+    )
 
 
 @app.route("/auth/passkey/login/options", methods=["POST"])
@@ -438,7 +450,7 @@ def passkey_login_verify():
             credential=credential,
             expected_challenge=challenge,
             expected_rp_id=WEBAUTHN_RP_ID,
-            expected_origin=BASE_URL,
+            expected_origin=WEBAUTHN_ORIGIN,
             credential_public_key=row["public_key"],
             credential_current_sign_count=row["sign_count"],
             require_user_verification=True,
@@ -502,7 +514,7 @@ def passkey_register_verify():
             credential=credential,
             expected_challenge=challenge,
             expected_rp_id=WEBAUTHN_RP_ID,
-            expected_origin=BASE_URL,
+            expected_origin=WEBAUTHN_ORIGIN,
             require_user_verification=True,
         )
     except WebAuthnException as exc:

@@ -25,6 +25,8 @@
   li { display: flex; justify-content: space-between; gap: .5rem; align-items: center;
        padding: .5rem 0; border-bottom: 1px solid #272727; }
   .meta { color: #888; font-size: .85rem; }
+  .account { font-size: 1.05rem; }
+  .account strong { color: #fff; }
   a { color: #3ea6ff; }
 </style>
 </head>
@@ -35,6 +37,7 @@
   {% if mode == "login" %}
   <div class="row"><button id="login-btn"></button></div>
   {% else %}
+  <p id="account" class="account"></p>
   <ul id="list"></ul>
   <div class="row" id="add-row">
     <input id="name" maxlength="64" autocomplete="off">
@@ -48,6 +51,9 @@
 <script>
 const MODE = {{ mode|tojson }};
 const REDIRECT_URI = {{ redirect_uri|tojson }};
+// BASE_URL, which may carry a path prefix (/sync behind a reverse proxy), so
+// root-relative URLs would miss the server.
+const API = {{ api_base|tojson }};
 
 const STRINGS = {
   de: {
@@ -57,6 +63,8 @@ const STRINGS = {
     namePlaceholder: 'Name, z.B. "Handy"',
     addBtn: 'Passkey hinzufügen',
     deleteBtn: 'Entfernen',
+    account: 'Konto: ',
+    confirmAdd: function (email) { return 'Passkey f\u00fcr das Konto ' + email + ' anlegen?\n\nNur best\u00e4tigen, wenn das deine Adresse ist.'; },
     confirmDelete: 'Diesen Passkey entfernen?',
     none: 'Noch kein Passkey eingerichtet.',
     created: 'angelegt',
@@ -78,6 +86,8 @@ const STRINGS = {
     namePlaceholder: 'Name, e.g. "Phone"',
     addBtn: 'Add passkey',
     deleteBtn: 'Remove',
+    account: 'Account: ',
+    confirmAdd: function (email) { return 'Create a passkey for the account ' + email + '?\n\nOnly confirm if this is your address.'; },
     confirmDelete: 'Remove this passkey?',
     none: 'No passkey set up yet.',
     created: 'created',
@@ -176,10 +186,10 @@ async function login() {
   const btn = document.getElementById('login-btn');
   btn.disabled = true;
   try {
-    const options = decodeOptions(await postJson('/auth/passkey/login/options'));
+    const options = decodeOptions(await postJson(API + '/auth/passkey/login/options'));
     msg(s.working);
     const cred = await navigator.credentials.get({publicKey: options});
-    const result = await postJson('/auth/passkey/login/verify', {
+    const result = await postJson(API + '/auth/passkey/login/verify', {
       credential: encodeCredential(cred),
       redirect_uri: REDIRECT_URI
     });
@@ -206,13 +216,30 @@ function takeSession() {
 }
 
 let TOKEN = '';
+// The session arrives through a URL anyone could send, so the account it
+// belongs to is shown and confirmed before a passkey is bound to it —
+// otherwise a crafted link could make a victim register their passkey in
+// someone else's account.
+let EMAIL = '';
+
+async function loadAccount() {
+  const r = await fetch(API + '/api/whoami', {headers: {'Authorization': 'Bearer ' + TOKEN}});
+  if (!r.ok) return false;
+  EMAIL = (await r.json()).email || '';
+  const el = document.getElementById('account');
+  el.textContent = s.account;
+  const strong = document.createElement('strong');
+  strong.textContent = EMAIL;
+  el.appendChild(strong);
+  return true;
+}
 
 function fmtDate(iso) {
   return iso ? iso.slice(0, 10) : '';
 }
 
 async function loadList() {
-  const r = await fetch('/api/passkeys', {headers: {'Authorization': 'Bearer ' + TOKEN}});
+  const r = await fetch(API + '/api/passkeys', {headers: {'Authorization': 'Bearer ' + TOKEN}});
   if (r.status === 401) {
     TOKEN = '';
     try { sessionStorage.removeItem('passkey_session'); } catch (e) {}
@@ -251,13 +278,14 @@ async function loadList() {
 }
 
 async function addPasskey() {
+  if (!EMAIL || !confirm(s.confirmAdd(EMAIL))) return;
   const btn = document.getElementById('add-btn');
   btn.disabled = true;
   try {
-    const options = decodeOptions(await postJson('/auth/passkey/register/options', {}, TOKEN));
+    const options = decodeOptions(await postJson(API + '/auth/passkey/register/options', {}, TOKEN));
     msg(s.working);
     const cred = await navigator.credentials.create({publicKey: options});
-    await postJson('/auth/passkey/register/verify', {
+    await postJson(API + '/auth/passkey/register/verify', {
       credential: encodeCredential(cred),
       name: document.getElementById('name').value
     }, TOKEN);
@@ -272,7 +300,7 @@ async function addPasskey() {
 
 async function removePasskey(id) {
   if (!confirm(s.confirmDelete)) return;
-  await fetch('/api/passkeys/' + encodeURIComponent(id), {
+  await fetch(API + '/api/passkeys/' + encodeURIComponent(id), {
     method: 'DELETE',
     headers: {'Authorization': 'Bearer ' + TOKEN}
   });
@@ -301,7 +329,7 @@ if (MODE === 'login') {
     document.getElementById('add-row').hidden = true;
     msg(s.noSession, true);
   } else {
-    loadList();
+    loadAccount().then(loadList);
   }
 }
 </script>

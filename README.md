@@ -445,7 +445,7 @@ binds a passkey to the origin that created it — a `file://` archive or one
 hosted elsewhere could not run them. Consequences:
 
 - The relying party ID is the host of `BASE_URL`, and the expected origin is
-  `BASE_URL` exactly. Changing `BASE_URL` to another host invalidates every
+  its scheme and host (a path such as `/sync` is fine). Changing `BASE_URL` to another host invalidates every
   registered passkey (log in by link, add a new one).
 - Passkeys need HTTPS (`http://localhost` excepted) — the production setup with
   Nginx and TLS already provides that.

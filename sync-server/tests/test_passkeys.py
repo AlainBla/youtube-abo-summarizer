@@ -371,3 +371,32 @@ def test_magic_link_unaffected_without_webauthn(client, mock_smtp, monkeypatch):
                     json={"email": "user@example.com", "redirect_uri": "http://testserver/"})
     assert r.status_code == 200
     assert len(mock_smtp) == 1
+
+
+# ── BASE_URL with a path prefix (behind a reverse proxy at /sync) ─────────────
+
+def test_origin_strips_path():
+    assert sync_server._origin_of("https://example.com/sync") == "https://example.com"
+    assert sync_server._origin_of("http://localhost:5000") == "http://localhost:5000"
+
+
+def test_ceremonies_work_with_path_prefix(client, session_token, authenticator, monkeypatch):
+    """The browser reports the origin without a path; verification must too."""
+    monkeypatch.setattr(sync_server, "BASE_URL", "http://testserver/sync")
+    assert _register(client, session_token, authenticator).status_code == 201
+    r, _ = _login(client, authenticator, redirect_uri="http://testserver/yt.html")
+    assert r.status_code == 200
+
+
+def test_page_calls_api_under_base_url(client, monkeypatch):
+    monkeypatch.setattr(sync_server, "BASE_URL", "http://testserver/sync")
+    html = client.get("/auth/passkey?redirect_uri=http://testserver/").get_data(as_text=True)
+    assert 'const API = "http://testserver/sync"' in html
+    assert "postJson('/auth" not in html and "fetch('/api" not in html
+
+
+def test_manage_page_confirms_account():
+    """A session handed over by URL is shown and confirmed before registering."""
+    html = open(os.path.join(os.path.dirname(sync_server.__file__), "templates", "passkey.html")).read()
+    assert "loadAccount()" in html
+    assert "confirm(s.confirmAdd(EMAIL))" in html

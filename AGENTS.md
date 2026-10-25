@@ -135,7 +135,7 @@ Two traps that will produce a book that looks fine in a permissive reader but fa
 | `/api/session` | DELETE | Log out (delete session token) |
 | `/api/ingest` | POST | Append video ID to `INGEST_QUEUE` file; returns 202 |
 
-Passkeys are an addition to the magic link, never a replacement: registration needs an existing session. Ceremonies run only on the server's own `templates/passkey.html` (RP ID = host of `BASE_URL`, origin = `BASE_URL`), because the archive may be `file://`. Challenges are single-use rows in `webauthn_challenges`, deleted before they are checked. Tests in `sync-server/tests/test_passkeys.py` use a software authenticator with real signatures — keep it that way rather than mocking `verify_*_response`.
+Passkeys are an addition to the magic link, never a replacement: registration needs an existing session. Ceremonies run only on the server's own `templates/passkey.html` (RP ID = host of `BASE_URL`, origin = its scheme and host — `BASE_URL` may carry a `/sync` path), because the archive may be `file://`. Challenges are single-use rows in `webauthn_challenges`, deleted before they are checked. Tests in `sync-server/tests/test_passkeys.py` use a software authenticator with real signatures — keep it that way rather than mocking `verify_*_response`.
 
 `POST /api/ingest` requires:
 - Bearer token belonging to a user whose email is in `INGEST_EMAILS`
