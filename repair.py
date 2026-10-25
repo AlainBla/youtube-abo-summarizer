@@ -351,13 +351,18 @@ def main():
             fetch_fn = tr.get_transcript_no_proxy if args.no_proxy else tr.get_transcript
             transcript, lang, t_error = fetch_fn(vid_id)
             time.sleep(2)
+            # update_video_with_summary() writes summary_model and tags
+            # unconditionally, so the stored ones are passed back: a failed
+            # fetch (or a summary rejected after a successful one) must not
+            # strip a video that still has its summary of its tags.
+            keep = {"summary_model": entry.get("summary_model"), "tags": entry.get("tags") or None}
             if transcript:
                 n_transcript_ok += 1
                 store.update_video_with_summary(vid_id, transcript, None, t_error,
-                                                transcript_lang=lang)
+                                                transcript_lang=lang, **keep)
             else:
                 print(f"    Still unavailable: {t_error or 'unavailable'}")
-                store.update_video_with_summary(vid_id, None, None, t_error)
+                store.update_video_with_summary(vid_id, None, None, t_error, **keep)
                 n_transcript_fail += 1
                 continue
 
