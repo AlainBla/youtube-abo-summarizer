@@ -147,7 +147,7 @@ Passkeys are an addition to the magic link, never a replacement: registration ne
 
 The worker calls `collect.py --video=<id>` (the `=` form: a leading-dash video ID is otherwise parsed as a flag). That path takes its metadata from `ytdlp_meta.get_video_metadata()` — yt-dlp, no token, no quota — and only falls back to the Data API, whose service is built lazily and behind `require_token=True` — so a dead token makes the ingest fail fast instead of hanging in `build_service()`'s browser flow.
 
-**Production**: use Gunicorn behind Nginx, not `python sync_server.py`. Add `ProxyFix` so the rate limiter sees real client IPs. See README for the full systemd + Nginx setup.
+**Production**: Gunicorn behind a reverse proxy, never `python sync_server.py`. `sync-server/yt-sync.service` is a systemd **user** unit (runs as the repo owner, `loginctl enable-linger`, `systemctl --user enable --now yt-sync`). Set `TRUSTED_PROXIES=1` behind one proxy, or the per-IP rate limits become a single global one. See README for setup.
 
 ## Environment variables
 

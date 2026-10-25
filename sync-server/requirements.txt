@@ -1,5 +1,6 @@
 flask
 itsdangerous
 python-dotenv
+gunicorn
 pytest
 webauthn>=2.0

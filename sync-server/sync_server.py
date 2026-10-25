@@ -90,6 +90,16 @@ PASSKEY_RATE_LIMIT_MAX = 20
 
 app = Flask(__name__)
 
+# Behind a reverse proxy every request arrives from 127.0.0.1, which turns the
+# per-IP rate limits into one global limit: a stranger reloading the login page
+# would lock everyone out. TRUSTED_PROXIES is the number of proxies in front
+# (1 for Apache/Nginx on the same host); 0, the default, trusts no
+# X-Forwarded-* header, which is right when clients connect directly.
+TRUSTED_PROXIES = int(os.environ.get("TRUSTED_PROXIES", "0") or 0)
+if TRUSTED_PROXIES:
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=TRUSTED_PROXIES, x_proto=TRUSTED_PROXIES)
+
 
 # ── Database ──────────────────────────────────────────────────────────────────
 

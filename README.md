@@ -77,7 +77,8 @@ Place your Google OAuth credentials in `client_secrets.json` (downloaded from th
 | `ALLOWED_EMAILS` | No | Comma-separated allowlist for magic-link login (empty = any email) |
 | `INGEST_EMAILS` | No | Comma-separated emails allowed to trigger on-demand video ingest (empty = nobody) |
 | `INGEST_QUEUE` | No | Absolute path to the ingest queue file (required for ingest), e.g. `/path/to/data/ingest_queue.txt` |
-| `PORT` | No | Port to listen on (default: `5000`) |
+| `PORT` | No | Port for `python sync_server.py` (default: `5000`); the systemd unit binds gunicorn to `127.0.0.1:5000` itself |
+| `TRUSTED_PROXIES` | No | Number of reverse proxies in front (`1` behind Apache/Nginx); default `0`. Needed for per-client rate limits behind a proxy |
 
 ## Usage — two-phase pipeline (recommended)
 
@@ -526,42 +527,27 @@ A `file://` archive gets no wait button: there is no manifest there to poll.
 
 ### Production deployment
 
-`python sync_server.py` starts Flask's development server — not suitable for production. Use **Gunicorn + systemd + Nginx**:
+`python sync_server.py` starts Flask's development server — not suitable for production, and it dies with the terminal it was started in. Use **Gunicorn + a systemd user service + a reverse proxy**:
 
-**1. Install Gunicorn**
+**1. Install** (Gunicorn is in `requirements.txt`)
 
 ```bash
 cd sync-server
-pip install gunicorn
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
-**2. systemd service** — `/etc/systemd/system/yt-sync.service`:
-
-```ini
-[Unit]
-Description=YouTube Export Sync Server
-After=network.target
-
-[Service]
-User=www-data
-WorkingDirectory=/path/to/youtube-abo-summarizer/sync-server
-EnvironmentFile=/path/to/youtube-abo-summarizer/sync-server/.env
-ExecStart=/path/to/.venv/bin/gunicorn \
-    --workers 2 \
-    --bind 127.0.0.1:5000 \
-    --access-logfile /var/log/yt-sync/access.log \
-    --error-logfile /var/log/yt-sync/error.log \
-    sync_server:app
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
+**2. systemd user service** — `sync-server/yt-sync.service` ships with the repository. It runs as the account that owns the checkout, `sync.db` and the ingest queue, so no root is needed:
 
 ```bash
-sudo mkdir -p /var/log/yt-sync && sudo chown www-data /var/log/yt-sync
-sudo systemctl enable --now yt-sync
+mkdir -p ~/.config/systemd/user
+cp sync-server/yt-sync.service ~/.config/systemd/user/
+loginctl enable-linger "$USER"        # start at boot, keep running after logout
+systemctl --user daemon-reload
+systemctl --user enable --now yt-sync
+journalctl --user -u yt-sync -f       # logs (access log included)
 ```
+
+The unit assumes the checkout at `~/repos/youtube-abo-summarizer`; edit the two paths in it otherwise. Configuration stays in `sync-server/.env`. Gunicorn runs two workers on `127.0.0.1:5000` and is restarted 5 s after any exit.
 
 **3. Nginx reverse proxy** — `/etc/nginx/sites-available/yt-sync`:
 
@@ -596,14 +582,17 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d sync.example.com
 ```
 
-**4. ProxyFix** — add near the top of `sync_server.py` so Flask sees the real client IP (required for the rate limiter to work correctly behind Nginx):
+An Apache front works the same way, including under a path prefix — then `BASE_URL` carries the path too (`BASE_URL=https://example.com/sync`):
 
-```python
-from werkzeug.middleware.proxy_fix import ProxyFix
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+```apache
+ProxyPreserveHost On
+ProxyPass        /sync/ http://127.0.0.1:5000/
+ProxyPassReverse /sync/ http://127.0.0.1:5000/
 ```
 
-After code changes: `sudo systemctl restart yt-sync`
+**4. Real client IP** — set `TRUSTED_PROXIES=1` in `sync-server/.env` when one proxy sits in front. The app then reads the client address from `X-Forwarded-For` (Werkzeug's `ProxyFix`). Without it every request appears to come from `127.0.0.1` and the per-IP rate limits act as one global limit — a stranger reloading the login page would lock everybody out. Leave it at `0` when clients connect directly, or anyone could dodge the limit with an invented header.
+
+After code changes: `systemctl --user restart yt-sync`
 
 ## Usage — repair
 

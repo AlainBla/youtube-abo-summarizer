@@ -314,16 +314,11 @@ Two lines are host-specific and must be edited after installing: `ARCHIVE_URL` a
 
 ### Production deployment
 
-`python sync_server.py` is for development only. In production: **Gunicorn + systemd + Nginx**.
+`python sync_server.py` is for development only. In production: **Gunicorn + a systemd user service + a reverse proxy** (Nginx or Apache).
 
-- Gunicorn: `gunicorn --workers 2 --bind 127.0.0.1:5000 sync_server:app`
-- Nginx terminates TLS and proxies to `127.0.0.1:5000`
-- Add `ProxyFix` so Flask sees the real client IP (needed for the rate limiter):
-  ```python
-  from werkzeug.middleware.proxy_fix import ProxyFix
-  app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
-  ```
-- See README for full systemd unit and Nginx config.
+- `sync-server/yt-sync.service` is a **user** unit (`~/.config/systemd/user/`, `loginctl enable-linger`, `systemctl --user enable --now yt-sync`): it runs as the account that owns `sync.db` and the ingest queue, so neither root nor a `www-data` user is involved. Paths are `%h/repos/youtube-abo-summarizer/sync-server`; gunicorn, 2 workers, `127.0.0.1:5000`, `Restart=always`, access log to the journal. Gunicorn is in `sync-server/requirements.txt`.
+- `TRUSTED_PROXIES` (env, default `0`) wraps the app in Werkzeug's `ProxyFix(x_for=n, x_proto=n)` at import time. Behind a proxy every request otherwise comes from `127.0.0.1`, so the per-IP rate limits (`ip:…`, `passkey:…`) collapse into one global limit; with it off by default a directly reachable server does not let a client invent its address through `X-Forwarded-For`. `tests/test_proxy_fix.py` pins both sides, each in its own interpreter because the wrap happens at import.
+- See README for the install steps and the Nginx/Apache snippets.
 
 ## All-in-one mode (legacy)
 
