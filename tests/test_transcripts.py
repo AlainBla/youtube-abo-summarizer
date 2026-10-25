@@ -243,3 +243,98 @@ class TestProxyOrder:
 
         tr.get_transcript_no_proxy("vid123")
         assert built == [None]
+
+
+# ── Original language from YouTube's audio-track data (AI dubbing) ───────────
+#
+# Since autumn 2026 many English videos carry ~20 AI-dubbed audio tracks, each
+# with an auto-generated caption track, listed alphabetically by language name:
+# "Arabic (auto-generated)" first. Taking the first ASR track as the original
+# stored 181 Arabic transcripts, whose quotes then leaked into summaries.
+
+DUB_LANGS = ["ar", "bn", "nl", "en", "fr", "de", "uk"]
+
+
+def _track(code, asr=True):
+    t = {"baseUrl": f"https://example.com/{code}", "languageCode": code,
+         "name": {"runs": [{"text": code}]}, "isTranslatable": True}
+    if asr:
+        t["kind"] = "asr"
+    return t
+
+
+def _dubbed_captions(manual_en=False):
+    """Captions JSON shaped like the real one: original English ASR at index 3."""
+    tracks = [_track(c) for c in DUB_LANGS]
+    order = [3] + [i for i in range(len(tracks)) if i != 3]
+    if manual_en:
+        tracks.insert(3, _track("en-US", asr=False))   # manual track, index 3
+        order = [3, 4] + [i for i in range(len(tracks)) if i not in (3, 4)]
+    audio = [{"audioTrackId": f"{c}.10", "captionTrackIndices": order} for c in ("pt-BR", "fr-FR", "de-DE")]
+    audio.append({"audioTrackId": "en-US.4", "captionTrackIndices": order})
+    return {"captionTracks": tracks, "audioTracks": audio, "defaultAudioTrackIndex": 0}
+
+
+def test_original_language_skips_arabic_dub():
+    from transcripts import _original_language
+    assert _original_language(_dubbed_captions()) == "en"
+
+
+def test_original_language_prefers_listed_manual_track():
+    from transcripts import _original_language
+    assert _original_language(_dubbed_captions(manual_en=True)) == "en-US"
+
+
+def test_original_language_independent_of_default_audio_track():
+    from transcripts import _original_language
+    cj = _dubbed_captions()
+    for d in range(len(cj["audioTracks"])):
+        cj["defaultAudioTrackIndex"] = d
+        assert _original_language(cj) == "en"
+
+
+def test_original_language_unknown_without_audio_tracks():
+    from transcripts import _original_language
+    assert _original_language({"captionTracks": [_track("en")]}) is None
+    assert _original_language({"captionTracks": [], "audioTracks": [{"captionTrackIndices": [5]}]}) is None
+
+
+def test_list_transcripts_reads_hint_from_one_request():
+    import transcripts as tr
+    from youtube_transcript_api import YouTubeTranscriptApi
+    api = YouTubeTranscriptApi()
+    calls = []
+    fetcher = MagicMock()
+    fetcher._fetch_captions_json.side_effect = lambda vid: calls.append(vid) or _dubbed_captions()
+    api._fetcher = fetcher
+    tl, hint = tr._list_transcripts(api, "vid")
+    assert hint == "en"
+    assert calls == ["vid"]
+    assert {t.language_code for t in tl} == set(DUB_LANGS)
+
+
+def test_fetch_original_uses_hint_not_first_asr_track():
+    import transcripts as tr
+    tl = _transcript_list(*[_make_transcript(c, True, text=f"text-{c}") for c in DUB_LANGS])
+    with patch.object(tr, "_list_transcripts", return_value=(tl, "en")):
+        text, lang, err = tr._fetch_original(MagicMock(), "vid")
+    assert (lang, err) == ("en", None)
+    assert "text-en" in text
+
+
+def test_fetch_original_hint_prefers_manual_over_asr_same_language():
+    import transcripts as tr
+    tl = _transcript_list(_make_transcript("ar", True, "arabic"),
+                          _make_transcript("en", True, "asr"),
+                          _make_transcript("en-US", False, "manual"))
+    with patch.object(tr, "_list_transcripts", return_value=(tl, "en-US")):
+        text, lang, _ = tr._fetch_original(MagicMock(), "vid")
+    assert lang == "en-US" and "manual" in text
+
+
+def test_fetch_original_without_hint_keeps_old_behaviour():
+    import transcripts as tr
+    tl = _transcript_list(_make_transcript("uk", True, "ukrainian"))
+    with patch.object(tr, "_list_transcripts", return_value=(tl, None)):
+        _, lang, _ = tr._fetch_original(MagicMock(), "vid")
+    assert lang == "uk"

@@ -1,6 +1,7 @@
 """Fetch and clean YouTube video transcripts."""
 
 import os
+from collections import Counter
 from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
@@ -9,6 +10,7 @@ from youtube_transcript_api import (
     YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled,
     IpBlocked, RequestBlocked, VideoUnplayable, CouldNotRetrieveTranscript,
 )
+from youtube_transcript_api._transcripts import TranscriptList
 from youtube_transcript_api.proxies import GenericProxyConfig
 
 import proxies
@@ -78,12 +80,69 @@ def log_proxy_config(no_proxy: bool = False) -> None:
         print(f"[transcripts] {line}", flush=True)
 
 
+def _original_language(captions_json: dict) -> str | None:
+    """The original spoken language according to YouTube's audio-track data.
+
+    A video with AI dubbing carries one audio track per language and an
+    auto-generated caption track for each of them, listed alphabetically by
+    language *name* -- so "Arabic (auto-generated)" comes first and used to be
+    taken for the original. Every audio track lists its caption tracks, and the
+    first one it lists is the original speech (the manual track if there is
+    one, else the original ASR) for all of them alike; that index is used, by
+    majority, so it does not depend on which dub YouTube picks as the default
+    for this request. None when the data is missing.
+    """
+    tracks = captions_json.get("captionTracks") or []
+    firsts = [
+        a["captionTrackIndices"][0]
+        for a in captions_json.get("audioTracks") or []
+        if a.get("captionTrackIndices")
+    ]
+    if not firsts:
+        return None
+    idx = Counter(firsts).most_common(1)[0][0]
+    if not 0 <= idx < len(tracks):
+        return None
+    return tracks[idx].get("languageCode") or None
+
+
+def _list_transcripts(api: YouTubeTranscriptApi, video_id: str):
+    """(TranscriptList, original-language hint) from a single request.
+
+    api.list() discards the audio-track data the hint is read from, so the
+    captions JSON is fetched through the same internal call list() makes and
+    the list built from it with the library's own factory. Anything that is
+    not the real class (a test double), or a library whose internals moved,
+    takes the plain api.list() path without a hint.
+    """
+    fetcher = getattr(api, "_fetcher", None) if isinstance(api, YouTubeTranscriptApi) else None
+    if fetcher is not None and hasattr(fetcher, "_fetch_captions_json"):
+        captions_json = fetcher._fetch_captions_json(video_id)
+        return (
+            TranscriptList.build(fetcher._http_client, video_id, captions_json),
+            _original_language(captions_json),
+        )
+    return api.list(video_id), None
+
+
+def _base_lang(code: str) -> str:
+    return code.split("-")[0].lower()
+
+
 def _fetch_original(api: YouTubeTranscriptApi, video_id: str) -> tuple[str | None, str | None, str | None]:
     """Fetch transcript in the video's original language. Returns (text, lang_code, error)."""
     try:
-        transcript_list = api.list(video_id)
+        transcript_list, hint = _list_transcripts(api, video_id)
         # Convert to list once so we can iterate multiple times safely
         all_transcripts = list(transcript_list)
+
+        # YouTube said which language is spoken: take that language's manual
+        # track, else its ASR track ("en-US" manual and "en" ASR are one language).
+        if hint:
+            for generated in (False, True):
+                for t in all_transcripts:
+                    if t.is_generated == generated and _base_lang(t.language_code) == _base_lang(hint):
+                        return _to_text(t.fetch()), t.language_code, None
 
         # Find original language via the first auto-generated transcript
         orig_lang = None
