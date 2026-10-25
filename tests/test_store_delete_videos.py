@@ -7,6 +7,7 @@ matters as much as the row.
 """
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -84,8 +85,11 @@ def test_an_empty_selection_touches_nothing(store):
 
 
 def test_prune_older_than_still_deletes_by_date_through_the_same_path(store, tmp_path):
+    # "neu" relative to today: a fixed date ages past the 30-day cutoff and
+    # turns this test red on its own (it did, 30 days after it was written).
+    recent = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     _add("alt", published="2020-01-01T00:00:00Z")
-    _add("neu", published="2026-09-01T10:00:00Z")
+    _add("neu", published=recent)
     (tmp_path / "summaries" / "alt.html").write_text("<p>alt</p>", encoding="utf-8")
 
     assert store.prune_older_than(days=30) == 1

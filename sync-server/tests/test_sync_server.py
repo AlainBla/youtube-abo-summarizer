@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 import sync_server
 
@@ -168,31 +170,51 @@ def test_whoami_can_ingest_false_by_default(client, session_token):
     assert r.get_json().get("can_ingest") is False
 
 
-def test_whoami_can_ingest_false_without_collect_script(client, session_token, monkeypatch, tmp_path):
-    # INGEST_EMAILS set but COLLECT_SCRIPT not set → False
+def test_whoami_can_ingest_false_without_queue(client, session_token, monkeypatch):
+    # INGEST_EMAILS set but INGEST_QUEUE not set → False
     monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", "")
+    monkeypatch.setattr(sync_server, "INGEST_QUEUE", "")
     r = client.get("/api/whoami", headers={"Authorization": f"Bearer {session_token}"})
     assert r.get_json().get("can_ingest") is False
 
 
-def test_whoami_can_ingest_true(client, session_token, monkeypatch):
-    # Both INGEST_EMAILS and COLLECT_SCRIPT set for this user → True
+def test_whoami_can_ingest_true(client, session_token, monkeypatch, tmp_path):
+    # Both INGEST_EMAILS and INGEST_QUEUE set for this user → True
     monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", "/some/collect.py")
+    monkeypatch.setattr(sync_server, "INGEST_QUEUE", str(tmp_path / "queue.txt"))
     r = client.get("/api/whoami", headers={"Authorization": f"Bearer {session_token}"})
     assert r.get_json().get("can_ingest") is True
 
 
-def test_whoami_can_ingest_false_email_not_in_list(client, session_token, monkeypatch):
-    # COLLECT_SCRIPT set, but user's email not in INGEST_EMAILS → False
+def test_whoami_can_ingest_false_email_not_in_list(client, session_token, monkeypatch, tmp_path):
+    # INGEST_QUEUE set, but user's email not in INGEST_EMAILS → False
     monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"other@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", "/some/collect.py")
+    monkeypatch.setattr(sync_server, "INGEST_QUEUE", str(tmp_path / "queue.txt"))
     r = client.get("/api/whoami", headers={"Authorization": f"Bearer {session_token}"})
     assert r.get_json().get("can_ingest") is False
 
 
 # ── POST /api/ingest ─────────────────────────────────────────────────────────
+#
+# The endpoint only appends the ID to INGEST_QUEUE and answers 202;
+# ingest_worker.sh runs collect.py later. Nothing here may start a process.
+
+@pytest.fixture
+def queue(monkeypatch, tmp_path):
+    """INGEST_QUEUE in tmp_path, user@example.com allowed; returns the path."""
+    path = tmp_path / "ingest_queue.txt"
+    monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
+    monkeypatch.setattr(sync_server, "INGEST_QUEUE", str(path))
+    return path
+
+
+def _ingest(client, token, video_id="dQw4w9WgXcQ"):
+    return client.post(
+        "/api/ingest",
+        json={"video_id": video_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
 
 def test_ingest_options_preflight(client):
     r = client.options("/api/ingest")
@@ -204,136 +226,70 @@ def test_ingest_no_token(client):
     assert r.status_code == 401
 
 
-def test_ingest_forbidden_not_in_ingest_emails(client, session_token, monkeypatch, tmp_path):
-    script = tmp_path / "collect.py"
-    script.write_text("# fake")
+def test_ingest_forbidden_not_in_ingest_emails(client, session_token, queue, monkeypatch):
     monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"other@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", str(script))
-    r = client.post(
-        "/api/ingest",
-        json={"video_id": "dQw4w9WgXcQ"},
-        headers={"Authorization": f"Bearer {session_token}"},
-    )
+    r = _ingest(client, session_token)
     assert r.status_code == 403
     assert r.get_json()["error"] == "forbidden"
+    assert not queue.exists()
 
 
-def test_ingest_invalid_video_id(client, session_token, monkeypatch, tmp_path):
-    script = tmp_path / "collect.py"
-    script.write_text("# fake")
-    monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", str(script))
-    for bad_id in ["tooshort", "this_is_too_long_id!!", "has space     ", "", None]:
+def test_ingest_invalid_video_id(client, session_token, queue):
+    for bad_id in ["tooshort", "this_is_too_long_id!!", "has space  ", "", None]:
         # None is coerced to "" via str(... or ""), which also fails the regex
-        r = client.post(
-            "/api/ingest",
-            json={"video_id": bad_id},
-            headers={"Authorization": f"Bearer {session_token}"},
-        )
+        r = _ingest(client, session_token, bad_id)
         assert r.status_code == 400, f"expected 400 for {bad_id!r}"
         assert r.get_json()["error"] == "invalid video_id"
+    assert not queue.exists()
 
 
 def test_ingest_authz_checked_before_config(client, session_token, monkeypatch):
-    # 403 must take priority over 500-config (spec validation order: 401 → 403 → 400 → 500)
+    # 403 must take priority over 500-config (validation order: 401 → 403 → 400 → 500)
     monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"other@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", "/some/path/collect.py")  # non-empty but not checked
-    r = client.post(
-        "/api/ingest",
-        json={"video_id": "dQw4w9WgXcQ"},
-        headers={"Authorization": f"Bearer {session_token}"},
-    )
-    assert r.status_code == 403
+    monkeypatch.setattr(sync_server, "INGEST_QUEUE", "")
+    assert _ingest(client, session_token).status_code == 403
 
 
-def test_ingest_not_configured_no_script(client, session_token, monkeypatch):
-    monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", "")
-    r = client.post(
-        "/api/ingest",
-        json={"video_id": "dQw4w9WgXcQ"},
-        headers={"Authorization": f"Bearer {session_token}"},
-    )
+def test_ingest_not_configured(client, session_token, queue, monkeypatch):
+    monkeypatch.setattr(sync_server, "INGEST_QUEUE", "")
+    r = _ingest(client, session_token)
     assert r.status_code == 500
     assert r.get_json()["error"] == "ingest not configured"
 
 
-def test_ingest_not_configured_script_missing(client, session_token, monkeypatch):
-    monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", "/nonexistent/collect.py")
-    r = client.post(
-        "/api/ingest",
-        json={"video_id": "dQw4w9WgXcQ"},
-        headers={"Authorization": f"Bearer {session_token}"},
-    )
+def test_ingest_success_appends_to_queue(client, session_token, queue):
+    r = _ingest(client, session_token)
+    assert r.status_code == 202
+    assert r.get_json() == {"queued": True}
+    assert queue.read_text() == "dQw4w9WgXcQ\n"
+
+
+def test_ingest_appends_rather_than_overwrites(client, session_token, queue):
+    queue.write_text("aaaaaaaaaaa\n")
+    assert _ingest(client, session_token).status_code == 202
+    assert queue.read_text().splitlines() == ["aaaaaaaaaaa", "dQw4w9WgXcQ"]
+
+
+def test_ingest_accepts_id_starting_with_dash(client, session_token, queue):
+    # Real IDs can start with "-"; ingest_worker.sh passes --video=<id> for that reason.
+    assert _ingest(client, session_token, "-abcdefghij").status_code == 202
+    assert queue.read_text() == "-abcdefghij\n"
+
+
+def test_ingest_queue_write_failure(client, session_token, queue, monkeypatch, tmp_path):
+    # A directory where the queue file should be: open() fails with an OSError.
+    monkeypatch.setattr(sync_server, "INGEST_QUEUE", str(tmp_path))
+    r = _ingest(client, session_token)
     assert r.status_code == 500
-    assert r.get_json()["error"] == "ingest not configured"
+    assert r.get_json()["error"]
 
 
-def test_ingest_success(client, session_token, monkeypatch, tmp_path):
-    script = tmp_path / "collect.py"
-    script.write_text("import sys; sys.exit(0)")
-    monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", str(script))
-    r = client.post(
-        "/api/ingest",
-        json={"video_id": "dQw4w9WgXcQ"},
-        headers={"Authorization": f"Bearer {session_token}"},
-    )
-    assert r.status_code == 200
-    assert r.get_json() == {"ok": True}
-
-
-def test_ingest_collect_failure_with_stderr(client, session_token, monkeypatch, tmp_path):
-    script = tmp_path / "collect.py"
-    script.write_text("import sys; sys.stderr.write('something went wrong'); sys.exit(1)")
-    monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", str(script))
-    r = client.post(
-        "/api/ingest",
-        json={"video_id": "dQw4w9WgXcQ"},
-        headers={"Authorization": f"Bearer {session_token}"},
-    )
-    assert r.status_code == 500
-    assert r.get_json()["error"] == "something went wrong"
-
-
-def test_ingest_collect_failure_empty_stderr(client, session_token, monkeypatch, tmp_path):
-    script = tmp_path / "collect.py"
-    script.write_text("import sys; sys.exit(1)")
-    monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", str(script))
-    r = client.post(
-        "/api/ingest",
-        json={"video_id": "dQw4w9WgXcQ"},
-        headers={"Authorization": f"Bearer {session_token}"},
-    )
-    assert r.status_code == 500
-    assert r.get_json()["error"] == "collect.py exited with non-zero status"
-
-
-def test_ingest_timeout(client, session_token, monkeypatch, tmp_path):
-    script = tmp_path / "collect.py"
-    script.write_text("# fake")
-    monkeypatch.setattr(sync_server, "INGEST_EMAILS", {"user@example.com"})
-    monkeypatch.setattr(sync_server, "COLLECT_SCRIPT", str(script))
-
-    class FakeProc:
-        def communicate(self, timeout=None):
-            if timeout is not None:
-                raise sync_server.subprocess.TimeoutExpired(cmd=[], timeout=120)
-            return b"", b""
-        def kill(self):
-            pass
-
-    monkeypatch.setattr(sync_server.subprocess, "Popen", lambda *a, **kw: FakeProc())
-    r = client.post(
-        "/api/ingest",
-        json={"video_id": "dQw4w9WgXcQ"},
-        headers={"Authorization": f"Bearer {session_token}"},
-    )
-    assert r.status_code == 500
-    assert r.get_json()["error"] == "timeout"
+def test_ingest_starts_no_process(client, session_token, queue, monkeypatch):
+    def boom(*a, **kw):
+        raise AssertionError("ingest must not start a process")
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert _ingest(client, session_token).status_code == 202
 
 
 # ── GET /api/state ────────────────────────────────────────────────────────────
