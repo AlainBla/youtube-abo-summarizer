@@ -118,6 +118,12 @@ def parse_args():
              "Use for browsers without DecompressionStream support.",
     )
     parser.add_argument(
+        "--no-app",
+        action="store_true",
+        help="Do not write the web-app files (manifest, service worker, icons) "
+             "next to the output; the page then cannot be installed or read offline.",
+    )
+    parser.add_argument(
         "--channel",
         metavar="CHANNEL_ID",
         default=None,
@@ -267,7 +273,7 @@ def main():
         for e in entries
     ]
 
-    def render(selection, path, full_url=None, backlog=None):
+    def render(selection, path, full_url=None, backlog=None, app="archive"):
         renderer.render_export_html(
             selection, path,
             lang=args.lang or "de",
@@ -276,6 +282,7 @@ def main():
             compress=not args.no_compress,
             full_url=full_url,
             backlog=backlog,
+            app=None if args.no_app else app,
         )
 
     if args.user:
@@ -291,7 +298,7 @@ def main():
         # it must already be there by the time that page can be opened. Both
         # get their own .meta.json sidecar, so both notice their own updates.
         print(f"Rendering {len(videos)} video(s) → {full_path}")
-        render(videos, full_path)
+        render(videos, full_path, app="full")
         print(f"Rendering {len(personal)} of {len(videos)} video(s) "
               f"for {args.user} → {output_path}")
         # Only the personal page carries the backlog history: the sidecar is

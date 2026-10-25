@@ -189,3 +189,6 @@ pytest
 ```
 
 Tests live under `tests/` (and `sync-server/tests/` for the sync server). There are no mocked database layers — integration tests use real SQLite.
+
+### Web app (`webapp.py`)
+Every export writes `<output>.webmanifest`, a service worker `<output>.sw.js` (scope: exactly that page) and shared icons next to the HTML. The worker is **network first** and handles only the page, its manifest and icons — never `.meta.json` or the sync API; a cache-first worker would hide every re-export behind a stale page. `--no-app` skips it all. Tests in `tests/test_webapp.py` run the worker in Node against a fake fetch/Cache API.

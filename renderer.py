@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 
 import nh3
 
+import webapp
+
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
@@ -518,6 +520,7 @@ def render_export_html(
     compress: bool = True,
     full_url: str | None = None,
     backlog: dict | None = None,
+    app: str | None = "archive",
 ) -> None:
     """Render and write a self-contained export HTML file with embedded video data.
 
@@ -539,6 +542,11 @@ def render_export_html(
     ``export.py --user``): the header gains a link to that full archive, and
     share links plus the "not in this archive" state resolve against it, so a
     copied link keeps working for someone whose filter differs.
+
+    ``app`` names the kind of web app the page installs as (a key of
+    ``webapp.APP_NAMES``): manifest, service worker and icons are written next
+    to it (see ``webapp.py``). ``None`` writes none of them and leaves the page
+    without the install and offline hooks.
 
     Alongside the HTML a manifest sidecar ``<output_path>.meta.json`` is written
     (after the HTML, never before it). The page embeds the same manifest and
@@ -595,6 +603,10 @@ def render_export_html(
     # directory up -- serve the archive under its real path if that applies.
     manifest_url = os.path.basename(manifest_path)
 
+    # Before the HTML: the page links them, and a worker or manifest arriving a
+    # moment before the page it describes is harmless, the reverse is not.
+    pwa = webapp.write_app_files(output_path, lang, app) if app else None
+
     html = template.render(
         compressed=compress,
         index_b64=index_b64,
@@ -619,6 +631,8 @@ def render_export_html(
         # only carries the hover affordance when there is something to show.
         backlog=backlog,
         backlog_json=Markup(json.dumps(backlog)),
+        pwa=pwa,
+        pwa_json=Markup(json.dumps(pwa)),
         t=i18n_module.get_strings(lang),
     )
 

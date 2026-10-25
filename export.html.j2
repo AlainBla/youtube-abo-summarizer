@@ -4,6 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>YouTube Export — {{ generated_date }}</title>
+  {% if pwa %}
+  <link rel="manifest" href="{{ pwa.manifest_url }}">
+  <meta name="theme-color" content="#0f0f0f">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="{{ pwa.title }}">
+  <link rel="apple-touch-icon" href="{{ pwa.apple_icon }}">
+  {% endif %}
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -734,6 +743,9 @@ const MANIFEST_URL = {{ manifest_url }};
 // Set when this page is a filtered view of a larger export (export.py --user).
 // Null in an ordinary export, where this page *is* the whole archive.
 const FULL_URL = {{ full_url_json }};
+// Web-app files written next to this page (webapp.py), or null for an export
+// made with --no-app.
+const PWA = {{ pwa_json }};
 const UPDATE_POLL_MS = 5 * 60 * 1000;
 // Upper bounds offered by #length-filter, in minutes, in the order the
 // <option>s stand in -- applyLang() writes their labels from this list, so a
@@ -1598,6 +1610,18 @@ function updatePollable() {
   // A file:// archive has no server to ask, and fetch would fail anyway.
   return /^https?:$/.test(location.protocol);
 }
+
+// Installable app with offline reading: the worker is scoped to exactly this
+// page (scope "./yt.html"), so the personal view and the full archive each get
+// their own and never answer for each other. Network first (see webapp.py), so
+// it cannot keep a stale export on screen. Browsers refuse service workers on
+// file://, and on plain http except localhost -- a failed registration just
+// leaves the page as it always was.
+function registerAppWorker() {
+  if (!PWA || !updatePollable() || !('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register(PWA.sw_url, {scope: PWA.scope}).catch(function () {});
+}
+registerAppWorker();
 
 function arrivedVideos(current, pending) {
   // How many videos the pending export *added*, independent of what it
