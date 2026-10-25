@@ -752,6 +752,7 @@ const I18N = {
     backlogDay: function (iso) { return iso.slice(8, 10) + '.' + iso.slice(5, 7) + '.'; },
     searchPlaceholder: 'Titel oder Zusammenfassung durchsuchen\u2026',
     allChannels: 'Alle',
+    otherChannels: 'Andere',
     allTags: 'Alle',
     allVideos: 'Alle',
     labelFrom: 'Ab',
@@ -860,6 +861,7 @@ const I18N = {
     },
     searchPlaceholder: 'Search title or summary\u2026',
     allChannels: 'All',
+    otherChannels: 'Other',
     allTags: 'All',
     allVideos: 'All',
     labelFrom: 'From',
@@ -2249,6 +2251,8 @@ function applyLang(lang) {
 
   // channel-filter first option
   document.querySelector('#channel-filter option[value=""]').textContent = s.allChannels;
+  var otherOpt = document.querySelector('#channel-filter option[value="' + OTHER_CHANNELS + '"]');
+  if (otherOpt) otherOpt.textContent = otherChannelsLabel(s, otherOpt.dataset.channels);
   // tag-filter first option
   document.querySelector('#tag-filter option[value=""]').textContent = s.allTags;
 
@@ -2324,25 +2328,61 @@ function applyLang(lang) {
 }
 
 // ── Populate channel filter dropdown ──────────────────────────────────────────
-function populateChannelFilter() {
-  var seen = {};
+// Channels with fewer than CHANNEL_MIN_VIDEOS videos in this archive share one
+// entry, OTHER_CHANNELS, at the end of the list: a long tail of one-off
+// channels otherwise buries the ones worth filtering by.
+const CHANNEL_MIN_VIDEOS = 5;
+const OTHER_CHANNELS = '__other__';
+var smallChannels = new Set();
+
+// Pure: [{id, title, count}] sorted by title, split at minVideos.
+function groupChannels(videos, minVideos) {
+  var byId = {};
   var channels = [];
-  VIDEOS.forEach(function(v) {
-    if (!seen[v.channel_id]) {
-      seen[v.channel_id] = true;
-      channels.push({id: v.channel_id, title: v.channel_title});
+  videos.forEach(function(v) {
+    var c = byId[v.channel_id];
+    if (!c) {
+      c = byId[v.channel_id] = {id: v.channel_id, title: v.channel_title, count: 0};
+      channels.push(c);
     }
+    c.count++;
   });
   channels.sort(function(a, b) {
     return a.title.localeCompare(b.title, undefined, {sensitivity: 'base'});
   });
+  return {
+    listed: channels.filter(function(c) { return c.count >= minVideos; }),
+    other: channels.filter(function(c) { return c.count < minVideos; })
+  };
+}
+
+function otherChannelsLabel(s, n) {
+  return s.otherChannels + ' (' + n + ')';
+}
+
+function populateChannelFilter() {
+  var groups = groupChannels(VIDEOS, CHANNEL_MIN_VIDEOS);
+  smallChannels = new Set(groups.other.map(function(c) { return c.id; }));
   var sel = document.getElementById('channel-filter');
-  channels.forEach(function(c) {
+  groups.listed.forEach(function(c) {
     var opt = document.createElement('option');
     opt.value = c.id;
     opt.textContent = c.title;
     sel.appendChild(opt);
   });
+  if (groups.other.length) {
+    var opt = document.createElement('option');
+    opt.value = OTHER_CHANNELS;
+    opt.dataset.channels = groups.other.length;
+    opt.textContent = otherChannelsLabel(I18N[currentLang || 'de'], groups.other.length);
+    sel.appendChild(opt);
+  }
+}
+
+function channelMatches(filter, v) {
+  if (!filter) return true;
+  if (filter === OTHER_CHANNELS) return smallChannels.has(v.channel_id);
+  return v.channel_id === filter;
 }
 
 // ── Populate tag filter dropdown ───────────────────────────────────────────────
@@ -2371,6 +2411,16 @@ function setTagFilter(tag) {
 
 function setChannelFilter(channelId) {
   var sel = document.getElementById('channel-filter');
+  // A channel folded into OTHER_CHANNELS has no entry of its own; clicking its
+  // name on a card still filters to that one channel, so give it one.
+  var known = Array.prototype.some.call(sel.options, function(o) { return o.value === channelId; });
+  if (channelId && !known) {
+    var v = VIDEOS.find(function(x) { return x.channel_id === channelId; });
+    var opt = document.createElement('option');
+    opt.value = channelId;
+    opt.textContent = v ? v.channel_title : channelId;
+    sel.appendChild(opt);
+  }
   sel.value = (sel.value === channelId) ? '' : channelId;
   applyFiltersAndSort();
 }
@@ -2558,7 +2608,7 @@ function applyFiltersAndSort(page) {
   const maxMinutes = parseInt(document.getElementById('length-filter').value, 10);
 
   filtered = VIDEOS.filter(function(v) {
-    if (channelId && v.channel_id !== channelId) return false;
+    if (!channelMatches(channelId, v)) return false;
     if (tagFilter && !(v.tags || []).includes(tagFilter)) return false;
     if (readFilter === 'read' && !readSet.has(v.video_id)) return false;
     if (readFilter === 'unread' && readSet.has(v.video_id)) return false;
