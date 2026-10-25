@@ -428,6 +428,35 @@ is being viewed:
 This assumes `--sync-url` and the server's `BASE_URL` point at the same origin;
 if they differ, the page warns based on `--sync-url`.
 
+#### Passkeys
+
+Once logged in by magic link, a user can add a passkey and log in with it from
+then on; the magic link stays as the fallback (lost device, new browser).
+
+- **Add:** "Passkeys" in the sync bar (shown while logged in) opens the sync
+  server's `/auth/passkey/manage` page, which lists, adds and removes the
+  account's passkeys.
+- **Log in:** "Passkey" next to "Link senden" opens `/auth/passkey`; after the
+  device confirms, the server redirects back to the archive with `#session=`,
+  exactly like the magic link.
+
+Both ceremonies run on pages served by the sync server itself, because WebAuthn
+binds a passkey to the origin that created it — a `file://` archive or one
+hosted elsewhere could not run them. Consequences:
+
+- The relying party ID is the host of `BASE_URL`, and the expected origin is
+  `BASE_URL` exactly. Changing `BASE_URL` to another host invalidates every
+  registered passkey (log in by link, add a new one).
+- Passkeys need HTTPS (`http://localhost` excepted) — the production setup with
+  Nginx and TLS already provides that.
+- Passkeys are discoverable (no email to type) and require user verification
+  (PIN, fingerprint, face). Each challenge is single-use and expires after
+  5 minutes; `ALLOWED_EMAILS` is checked again on every passkey login.
+
+An existing deployment needs `pip install -r requirements.txt` (new dependency:
+`webauthn`); the new tables are created on the next start. Until then the
+server runs as before and the passkey pages answer 503.
+
 ### On-demand video ingest
 
 `POST /api/ingest` lets authorised users queue a video for fetching and summarisation without waiting for the next scheduled collection run. The endpoint appends the video ID to a queue file and returns 202 immediately; processing happens asynchronously via a cron job.
@@ -705,7 +734,7 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 | `export.html.j2` | Export template: dark-theme CSS, controls bar, JS-rendered cards, search/date/channel/tag/read/bookmark/length filters (each with a visible label), sort, pagination; the header shows the archive's total runtime and the results count that of the current selection, both as `dd:hh:mm` behind the video count; channel name on each card is clickable and toggles the channel filter; in-page language selector with flag emoji (cookie `yt_lang`, browser fallback); full `de`/`en` string set in the embedded `I18N` object; sync bar shows "Ingest" button when `can_ingest` is true |
 | `state.py` | Reads/writes `last_run.json` (per-channel ISO timestamps) |
 | `send_mail.py` | SMTP email sender |
-| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth (STARTTLS port 587 or SSL port 465), per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` appends video ID to `INGEST_QUEUE` and returns 202; `/api/whoami` returns `can_ingest` flag |
+| `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth (STARTTLS port 587 or SSL port 465) plus passkey login (WebAuthn, pages in `sync-server/templates/passkey.html`), per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` appends video ID to `INGEST_QUEUE` and returns 202; `/api/whoami` returns `can_ingest` flag |
 | `userscript/yt-ingest.user.js` | Browser userscript: a "Zusammenfassen" button on YouTube that queues the current video through your logged-in archive page |
 | `ingest_worker.sh` | Cron script that drains `INGEST_QUEUE` by calling `collect.py --video <id>` for each entry; logs to `data/ingest_worker.log` |
 

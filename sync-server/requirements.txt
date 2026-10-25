@@ -2,3 +2,4 @@ flask
 itsdangerous
 python-dotenv
 pytest
+webauthn>=2.0

@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Passkey</title>
+<style>
+  :root { color-scheme: dark; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: #0f0f0f; color: #e8e8e8;
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 32rem; margin: 3rem auto; padding: 0 16px; }
+  h1 { font-size: 1.3rem; margin: 0 0 1rem; }
+  button { background: #3ea6ff; color: #0f0f0f; border: 0; border-radius: 6px;
+           padding: .55rem 1rem; font: inherit; font-weight: 600; cursor: pointer; }
+  button.secondary { background: #272727; color: #e8e8e8; font-weight: 400; }
+  button:disabled { opacity: .5; cursor: default; }
+  input { background: #181818; color: #e8e8e8; border: 1px solid #3a3a3a;
+          border-radius: 6px; padding: .5rem; font: inherit; }
+  .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: 1rem 0; }
+  #msg { min-height: 1.5em; color: #aaa; }
+  #msg.error { color: #ff6b6b; }
+  ul { list-style: none; padding: 0; }
+  li { display: flex; justify-content: space-between; gap: .5rem; align-items: center;
+       padding: .5rem 0; border-bottom: 1px solid #272727; }
+  .meta { color: #888; font-size: .85rem; }
+  a { color: #3ea6ff; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title"></h1>
+
+  {% if mode == "login" %}
+  <div class="row"><button id="login-btn"></button></div>
+  {% else %}
+  <ul id="list"></ul>
+  <div class="row" id="add-row">
+    <input id="name" maxlength="64" autocomplete="off">
+    <button id="add-btn"></button>
+  </div>
+  {% endif %}
+
+  <p id="msg" role="status"></p>
+  <p><a id="back" href="{{ redirect_uri }}"></a></p>
+</main>
+<script>
+const MODE = {{ mode|tojson }};
+const REDIRECT_URI = {{ redirect_uri|tojson }};
+
+const STRINGS = {
+  de: {
+    loginTitle: 'Mit Passkey anmelden',
+    loginBtn: 'Passkey verwenden',
+    manageTitle: 'Passkeys verwalten',
+    namePlaceholder: 'Name, z.B. "Handy"',
+    addBtn: 'Passkey hinzufügen',
+    deleteBtn: 'Entfernen',
+    confirmDelete: 'Diesen Passkey entfernen?',
+    none: 'Noch kein Passkey eingerichtet.',
+    created: 'angelegt',
+    lastUsed: 'zuletzt benutzt',
+    unnamed: '(ohne Namen)',
+    added: 'Passkey hinzugefügt.',
+    working: 'Bitte am Gerät bestätigen …',
+    cancelled: 'Abgebrochen.',
+    failed: 'Fehlgeschlagen: ',
+    unknownKey: 'Dieser Passkey ist hier nicht (mehr) registriert. Bitte per Link anmelden.',
+    noSession: 'Nicht angemeldet. Bitte zuerst im Archiv per Link anmelden.',
+    unsupported: 'Dieser Browser unterstützt keine Passkeys.',
+    back: 'Zurück zum Archiv'
+  },
+  en: {
+    loginTitle: 'Sign in with a passkey',
+    loginBtn: 'Use passkey',
+    manageTitle: 'Manage passkeys',
+    namePlaceholder: 'Name, e.g. "Phone"',
+    addBtn: 'Add passkey',
+    deleteBtn: 'Remove',
+    confirmDelete: 'Remove this passkey?',
+    none: 'No passkey set up yet.',
+    created: 'created',
+    lastUsed: 'last used',
+    unnamed: '(unnamed)',
+    added: 'Passkey added.',
+    working: 'Confirm on your device …',
+    cancelled: 'Cancelled.',
+    failed: 'Failed: ',
+    unknownKey: 'This passkey is not registered here (any more). Please sign in by link.',
+    noSession: 'Not signed in. Please sign in by link in the archive first.',
+    unsupported: 'This browser does not support passkeys.',
+    back: 'Back to the archive'
+  }
+};
+const s = STRINGS[(navigator.language || '').toLowerCase().indexOf('de') === 0 ? 'de' : 'en'];
+
+function msg(text, isError) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.className = isError ? 'error' : '';
+}
+
+// ── base64url <-> ArrayBuffer ─────────────────────────────────────────────────
+
+function b64ToBuf(str) {
+  const b64 = str.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((str.length + 3) % 4);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
+}
+
+function bufToB64(buf) {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// The server sends py_webauthn's options_to_json(): every binary field is a
+// base64url string. navigator.credentials wants ArrayBuffers in those places.
+function decodeOptions(opts) {
+  opts.challenge = b64ToBuf(opts.challenge);
+  if (opts.user) opts.user.id = b64ToBuf(opts.user.id);
+  ['allowCredentials', 'excludeCredentials'].forEach(function (key) {
+    (opts[key] || []).forEach(function (c) { c.id = b64ToBuf(c.id); });
+  });
+  return opts;
+}
+
+function encodeCredential(cred) {
+  const r = cred.response;
+  const response = {clientDataJSON: bufToB64(r.clientDataJSON)};
+  if (r.attestationObject) {
+    response.attestationObject = bufToB64(r.attestationObject);
+    if (r.getTransports) response.transports = r.getTransports();
+  } else {
+    response.authenticatorData = bufToB64(r.authenticatorData);
+    response.signature = bufToB64(r.signature);
+    if (r.userHandle) response.userHandle = bufToB64(r.userHandle);
+  }
+  return {
+    id: cred.id,
+    rawId: bufToB64(cred.rawId),
+    type: cred.type,
+    response: response,
+    clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+    authenticatorAttachment: cred.authenticatorAttachment || undefined
+  };
+}
+
+function ceremonyError(e) {
+  // NotAllowedError covers both "user cancelled" and "timed out".
+  if (e && e.name === 'NotAllowedError') return msg(s.cancelled, true);
+  msg(s.failed + (e && e.message ? e.message : e), true);
+}
+
+async function postJson(url, body, token) {
+  const headers = {'Content-Type': 'application/json'};
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const r = await fetch(url, {method: 'POST', headers: headers, body: JSON.stringify(body || {})});
+  let data = {};
+  try { data = await r.json(); } catch (e) {}
+  if (!r.ok) {
+    const err = new Error(data.error || ('HTTP ' + r.status));
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+}
+
+// ── Login ─────────────────────────────────────────────────────────────────────
+
+async function login() {
+  const btn = document.getElementById('login-btn');
+  btn.disabled = true;
+  try {
+    const options = decodeOptions(await postJson('/auth/passkey/login/options'));
+    msg(s.working);
+    const cred = await navigator.credentials.get({publicKey: options});
+    const result = await postJson('/auth/passkey/login/verify', {
+      credential: encodeCredential(cred),
+      redirect_uri: REDIRECT_URI
+    });
+    window.location.href = result.redirect;
+  } catch (e) {
+    if (e && e.status === 401 && e.message === 'unknown passkey') msg(s.unknownKey, true);
+    else ceremonyError(e);
+    btn.disabled = false;
+  }
+}
+
+// ── Manage ────────────────────────────────────────────────────────────────────
+
+// The archive hands its session over in the fragment, which never reaches the
+// server log; it is moved to sessionStorage so a reload keeps working.
+function takeSession() {
+  const m = window.location.hash.match(/[#&]session=([^&]+)/);
+  if (m) {
+    try { sessionStorage.setItem('passkey_session', decodeURIComponent(m[1])); } catch (e) {}
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    return decodeURIComponent(m[1]);
+  }
+  try { return sessionStorage.getItem('passkey_session') || ''; } catch (e) { return ''; }
+}
+
+let TOKEN = '';
+
+function fmtDate(iso) {
+  return iso ? iso.slice(0, 10) : '';
+}
+
+async function loadList() {
+  const r = await fetch('/api/passkeys', {headers: {'Authorization': 'Bearer ' + TOKEN}});
+  if (r.status === 401) {
+    TOKEN = '';
+    try { sessionStorage.removeItem('passkey_session'); } catch (e) {}
+    document.getElementById('add-row').hidden = true;
+    msg(s.noSession, true);
+    return;
+  }
+  const data = await r.json();
+  const list = document.getElementById('list');
+  list.textContent = '';
+  if (!data.passkeys.length) {
+    const li = document.createElement('li');
+    li.className = 'meta';
+    li.textContent = s.none;
+    list.appendChild(li);
+  }
+  data.passkeys.forEach(function (p) {
+    const li = document.createElement('li');
+    const label = document.createElement('div');
+    const name = document.createElement('div');
+    name.textContent = p.name || s.unnamed;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = s.created + ' ' + fmtDate(p.created_at)
+      + (p.last_used ? ' · ' + s.lastUsed + ' ' + fmtDate(p.last_used) : '');
+    label.appendChild(name);
+    label.appendChild(meta);
+    const del = document.createElement('button');
+    del.className = 'secondary';
+    del.textContent = s.deleteBtn;
+    del.onclick = function () { removePasskey(p.id); };
+    li.appendChild(label);
+    li.appendChild(del);
+    list.appendChild(li);
+  });
+}
+
+async function addPasskey() {
+  const btn = document.getElementById('add-btn');
+  btn.disabled = true;
+  try {
+    const options = decodeOptions(await postJson('/auth/passkey/register/options', {}, TOKEN));
+    msg(s.working);
+    const cred = await navigator.credentials.create({publicKey: options});
+    await postJson('/auth/passkey/register/verify', {
+      credential: encodeCredential(cred),
+      name: document.getElementById('name').value
+    }, TOKEN);
+    document.getElementById('name').value = '';
+    msg(s.added);
+    await loadList();
+  } catch (e) {
+    ceremonyError(e);
+  }
+  btn.disabled = false;
+}
+
+async function removePasskey(id) {
+  if (!confirm(s.confirmDelete)) return;
+  await fetch('/api/passkeys/' + encodeURIComponent(id), {
+    method: 'DELETE',
+    headers: {'Authorization': 'Bearer ' + TOKEN}
+  });
+  await loadList();
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+
+document.getElementById('back').textContent = s.back;
+if (MODE === 'login') {
+  document.getElementById('title').textContent = s.loginTitle;
+  const btn = document.getElementById('login-btn');
+  btn.textContent = s.loginBtn;
+  btn.onclick = login;
+  if (!window.PublicKeyCredential) { btn.disabled = true; msg(s.unsupported, true); }
+} else {
+  document.title = s.manageTitle;
+  document.getElementById('title').textContent = s.manageTitle;
+  document.getElementById('name').placeholder = s.namePlaceholder;
+  const btn = document.getElementById('add-btn');
+  btn.textContent = s.addBtn;
+  btn.onclick = addPasskey;
+  TOKEN = takeSession();
+  if (!window.PublicKeyCredential) { btn.disabled = true; msg(s.unsupported, true); }
+  if (!TOKEN) {
+    document.getElementById('add-row').hidden = true;
+    msg(s.noSession, true);
+  } else {
+    loadList();
+  }
+}
+</script>
+</body>
+</html>

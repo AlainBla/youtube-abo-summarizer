@@ -122,10 +122,20 @@ Two traps that will produce a book that looks fine in a permissive reader but fa
 |---|---|---|
 | `/auth/request-link` | POST | Send magic-link email |
 | `/auth/verify` | GET | Validate token, create session, redirect |
+| `/auth/passkey` | GET | Passkey login page (`?redirect_uri=`, validated like the magic link) |
+| `/auth/passkey/manage` | GET | Passkey management page; session arrives in the URL fragment |
+| `/auth/passkey/login/options` | POST | WebAuthn assertion options (discoverable, UV required); 20/10 min per IP |
+| `/auth/passkey/login/verify` | POST | Verify assertion, create session, return `{redirect}` with `#session=` |
+| `/auth/passkey/register/options` | POST | WebAuthn creation options (Bearer session required) |
+| `/auth/passkey/register/verify` | POST | Verify attestation, store passkey; 201 |
+| `/api/passkeys` | GET | List own passkeys |
+| `/api/passkeys/<id>` | DELETE | Remove own passkey (404 for someone else's) |
 | `/api/whoami` | GET | Returns `{email, can_ingest}` |
 | `/api/state` | GET / POST | Read or merge video read/bookmark state (last-write-wins) |
 | `/api/session` | DELETE | Log out (delete session token) |
 | `/api/ingest` | POST | Append video ID to `INGEST_QUEUE` file; returns 202 |
+
+Passkeys are an addition to the magic link, never a replacement: registration needs an existing session. Ceremonies run only on the server's own `templates/passkey.html` (RP ID = host of `BASE_URL`, origin = `BASE_URL`), because the archive may be `file://`. Challenges are single-use rows in `webauthn_challenges`, deleted before they are checked. Tests in `sync-server/tests/test_passkeys.py` use a software authenticator with real signatures — keep it that way rather than mocking `verify_*_response`.
 
 `POST /api/ingest` requires:
 - Bearer token belonging to a user whose email is in `INGEST_EMAILS`

@@ -1,4 +1,5 @@
-"""Sync server — persists read/bookmark state per user, magic-link auth."""
+"""Sync server — persists read/bookmark state per user, magic-link and passkey auth."""
+import json
 import os
 import re
 import sqlite3
@@ -11,9 +12,34 @@ from datetime import datetime, timezone, timedelta
 from email.message import EmailMessage
 from urllib.parse import urlparse, quote as urlquote
 
-from flask import Flask, g, jsonify, redirect, request
+from flask import Flask, g, jsonify, redirect, render_template, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from dotenv import load_dotenv
+
+# Passkeys are optional: without py_webauthn the passkey routes answer 503 and
+# everything else — magic link included — keeps working, so a deployment that
+# pulled this code before running pip install does not go down with it.
+try:
+    from webauthn import (
+        generate_authentication_options,
+        generate_registration_options,
+        options_to_json,
+        verify_authentication_response,
+        verify_registration_response,
+    )
+    from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
+    from webauthn.helpers.exceptions import WebAuthnException
+    from webauthn.helpers.structs import (
+        AuthenticatorSelectionCriteria,
+        PublicKeyCredentialDescriptor,
+        ResidentKeyRequirement,
+        UserVerificationRequirement,
+    )
+    PASSKEYS_AVAILABLE = True
+except ImportError:
+    PASSKEYS_AVAILABLE = False
+    print("[sync] py_webauthn not installed — passkey login disabled "
+          "(pip install -r requirements.txt)", file=sys.stderr)
 
 load_dotenv()
 
@@ -43,6 +69,16 @@ serializer = URLSafeTimedSerializer(SECRET_KEY)
 
 RATE_LIMIT_MAX = 3
 RATE_LIMIT_WINDOW = 600  # seconds
+
+# Passkeys: the relying party is the sync server's own host, and every ceremony
+# runs on a page it serves itself, so the expected origin is exactly BASE_URL.
+# An archive opened from file:// or another host could not run one at all.
+WEBAUTHN_RP_ID = urlparse(BASE_URL).hostname or ""
+WEBAUTHN_RP_NAME = "YouTube Export Sync"
+WEBAUTHN_CHALLENGE_TTL = 300  # seconds
+# Each login page load asks for options, so the magic-link limit (3 per 10 min)
+# would lock a user out after a couple of cancelled prompts.
+PASSKEY_RATE_LIMIT_MAX = 20
 
 app = Flask(__name__)
 
@@ -77,6 +113,21 @@ def init_db(path: str = DB_PATH) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_rate_limit_key_time
             ON rate_limit_hits (key, hit_at);
+        CREATE TABLE IF NOT EXISTS passkeys (
+            id          TEXT PRIMARY KEY,          -- credential ID, base64url
+            user_id     INTEGER NOT NULL REFERENCES users(id),
+            public_key  BLOB NOT NULL,
+            sign_count  INTEGER NOT NULL,
+            name        TEXT NOT NULL DEFAULT '',
+            created_at  TEXT NOT NULL,
+            last_used   TEXT
+        );
+        CREATE TABLE IF NOT EXISTS webauthn_challenges (
+            challenge   TEXT PRIMARY KEY,          -- base64url
+            purpose     TEXT NOT NULL CHECK(purpose IN ('register', 'login')),
+            user_id     INTEGER,                   -- set for 'register' only
+            expires_at  REAL NOT NULL
+        );
     """)
     db.commit()
     db.close()
@@ -133,7 +184,7 @@ def _valid_redirect_uri(uri: str) -> bool:
         return False
 
 
-def _rate_check(key: str) -> bool:
+def _rate_check(key: str, max_hits: int = RATE_LIMIT_MAX) -> bool:
     """Return True if request is within limit, False if exceeded.
 
     State is persisted in the rate_limit_hits SQLite table so it survives
@@ -149,7 +200,7 @@ def _rate_check(key: str) -> bool:
     count = db.execute(
         "SELECT COUNT(*) FROM rate_limit_hits WHERE key = ?", (key,)
     ).fetchone()[0]
-    if count >= RATE_LIMIT_MAX:
+    if count >= max_hits:
         db.commit()
         return False
     db.execute(
@@ -172,6 +223,21 @@ def _get_session_user():
         "WHERE s.token = ? AND s.expires_at > ?",
         (token, now),
     ).fetchone()
+
+
+def _create_session(user_id: int) -> str:
+    """Insert a 30-day session for user_id and return its token (commits)."""
+    session_token = str(uuid.uuid4())
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=30)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    db = get_db()
+    db.execute(
+        "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        (session_token, user_id, _now_iso(), expires_at),
+    )
+    db.commit()
+    return session_token
 
 
 def _send_magic_link(email: str, link: str) -> None:
@@ -244,21 +310,247 @@ def verify():
 
     email = payload["email"]
     db = get_db()
-    now = _now_iso()
     db.execute(
-        "INSERT OR IGNORE INTO users (email, created_at) VALUES (?, ?)", (email, now)
+        "INSERT OR IGNORE INTO users (email, created_at) VALUES (?, ?)", (email, _now_iso())
     )
     user = db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
-    session_token = str(uuid.uuid4())
-    expires_at = (datetime.now(timezone.utc) + timedelta(days=30)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    session_token = _create_session(user["id"])
+    return redirect(f"{redirect_uri}#session={session_token}")
+
+
+# ── Passkeys (WebAuthn) ───────────────────────────────────────────────────────
+#
+# Magic link stays the way in: a passkey can only be registered from a session,
+# and losing every passkey just means asking for a link again. Both ceremonies
+# run on pages served from BASE_URL (templates/passkey.html), because WebAuthn
+# binds a credential to the origin it was created on; the login page then
+# redirects to the archive with #session=, exactly like /auth/verify.
+
+@app.before_request
+def _passkeys_installed():
+    if not PASSKEYS_AVAILABLE and (
+        request.path.startswith("/auth/passkey") or request.path.startswith("/api/passkeys")
+    ):
+        return jsonify({"error": "passkeys not available on this server"}), 503
+    return None
+
+
+def _store_challenge(challenge: bytes, purpose: str, user_id: int | None = None) -> None:
+    now = time.time()
+    db = get_db()
+    db.execute("DELETE FROM webauthn_challenges WHERE expires_at <= ?", (now,))
     db.execute(
-        "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-        (session_token, user["id"], now, expires_at),
+        "INSERT INTO webauthn_challenges (challenge, purpose, user_id, expires_at) "
+        "VALUES (?, ?, ?, ?)",
+        (bytes_to_base64url(challenge), purpose, user_id, now + WEBAUTHN_CHALLENGE_TTL),
     )
     db.commit()
-    return redirect(f"{redirect_uri}#session={session_token}")
+
+
+def _take_challenge(credential: dict, purpose: str, user_id: int | None = None) -> bytes | None:
+    """Consume the challenge the credential's clientDataJSON claims to answer.
+
+    Returns it only when this server issued it for this purpose (and user),
+    it has not expired, and it was not used before — the row is deleted
+    either way, so a challenge answers exactly one ceremony.
+    """
+    try:
+        client_data = json.loads(
+            base64url_to_bytes(credential["response"]["clientDataJSON"])
+        )
+        challenge = str(client_data["challenge"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    db = get_db()
+    row = db.execute(
+        "SELECT purpose, user_id, expires_at FROM webauthn_challenges WHERE challenge = ?",
+        (challenge,),
+    ).fetchone()
+    db.execute("DELETE FROM webauthn_challenges WHERE challenge = ?", (challenge,))
+    db.commit()
+    if (
+        row is None
+        or row["purpose"] != purpose
+        or row["user_id"] != user_id
+        or row["expires_at"] <= time.time()
+    ):
+        return None
+    return base64url_to_bytes(challenge)
+
+
+def _user_handle(user_id: int) -> bytes:
+    # The WebAuthn user handle must not carry personal data; the row id does not.
+    return str(user_id).encode()
+
+
+@app.route("/auth/passkey")
+def passkey_login_page():
+    redirect_uri = request.args.get("redirect_uri", "")
+    if not _valid_redirect_uri(redirect_uri):
+        return "Invalid redirect URI.", 400
+    return render_template("passkey.html", mode="login", redirect_uri=redirect_uri)
+
+
+@app.route("/auth/passkey/manage")
+def passkey_manage_page():
+    redirect_uri = request.args.get("redirect_uri", "")
+    if not _valid_redirect_uri(redirect_uri):
+        return "Invalid redirect URI.", 400
+    return render_template("passkey.html", mode="manage", redirect_uri=redirect_uri)
+
+
+@app.route("/auth/passkey/login/options", methods=["POST"])
+def passkey_login_options():
+    ip = request.remote_addr or "unknown"
+    if not _rate_check(f"passkey:{ip}", PASSKEY_RATE_LIMIT_MAX):
+        return jsonify({"error": "rate limited"}), 429
+    options = generate_authentication_options(
+        rp_id=WEBAUTHN_RP_ID,
+        user_verification=UserVerificationRequirement.REQUIRED,
+    )
+    _store_challenge(options.challenge, "login")
+    return app.response_class(options_to_json(options), mimetype="application/json")
+
+
+@app.route("/auth/passkey/login/verify", methods=["POST"])
+def passkey_login_verify():
+    data = request.get_json(silent=True) or {}
+    credential = data.get("credential")
+    redirect_uri = (data.get("redirect_uri") or "").strip()
+    if not isinstance(credential, dict):
+        return jsonify({"error": "credential required"}), 400
+    if not _valid_redirect_uri(redirect_uri):
+        return jsonify({"error": "invalid redirect_uri"}), 400
+    challenge = _take_challenge(credential, "login")
+    if challenge is None:
+        return jsonify({"error": "unknown or expired challenge"}), 400
+
+    db = get_db()
+    row = db.execute(
+        "SELECT p.id, p.user_id, p.public_key, p.sign_count, u.email "
+        "FROM passkeys p JOIN users u ON u.id = p.user_id WHERE p.id = ?",
+        (str(credential.get("id") or ""),),
+    ).fetchone()
+    if row is None:
+        return jsonify({"error": "unknown passkey"}), 401
+    try:
+        verified = verify_authentication_response(
+            credential=credential,
+            expected_challenge=challenge,
+            expected_rp_id=WEBAUTHN_RP_ID,
+            expected_origin=BASE_URL,
+            credential_public_key=row["public_key"],
+            credential_current_sign_count=row["sign_count"],
+            require_user_verification=True,
+        )
+    except WebAuthnException as exc:
+        print(f"[sync] passkey login rejected: {exc}", file=sys.stderr)
+        return jsonify({"error": "verification failed"}), 401
+    # The allowlist may have shrunk since the passkey was registered.
+    if ALLOWED_EMAILS and row["email"] not in ALLOWED_EMAILS:
+        return jsonify({"error": "forbidden"}), 403
+
+    db.execute(
+        "UPDATE passkeys SET sign_count = ?, last_used = ? WHERE id = ?",
+        (verified.new_sign_count, _now_iso(), row["id"]),
+    )
+    db.commit()
+    session_token = _create_session(row["user_id"])
+    return jsonify({"redirect": f"{redirect_uri}#session={session_token}"})
+
+
+@app.route("/auth/passkey/register/options", methods=["POST"])
+def passkey_register_options():
+    user = _get_session_user()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+    existing = get_db().execute(
+        "SELECT id FROM passkeys WHERE user_id = ?", (user["user_id"],)
+    ).fetchall()
+    options = generate_registration_options(
+        rp_id=WEBAUTHN_RP_ID,
+        rp_name=WEBAUTHN_RP_NAME,
+        user_id=_user_handle(user["user_id"]),
+        user_name=user["email"],
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.REQUIRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
+        ),
+        exclude_credentials=[
+            PublicKeyCredentialDescriptor(id=base64url_to_bytes(r["id"])) for r in existing
+        ],
+    )
+    _store_challenge(options.challenge, "register", user["user_id"])
+    return app.response_class(options_to_json(options), mimetype="application/json")
+
+
+@app.route("/auth/passkey/register/verify", methods=["POST"])
+def passkey_register_verify():
+    user = _get_session_user()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    credential = data.get("credential")
+    name = str(data.get("name") or "").strip()[:64]
+    if not isinstance(credential, dict):
+        return jsonify({"error": "credential required"}), 400
+    challenge = _take_challenge(credential, "register", user["user_id"])
+    if challenge is None:
+        return jsonify({"error": "unknown or expired challenge"}), 400
+    try:
+        verified = verify_registration_response(
+            credential=credential,
+            expected_challenge=challenge,
+            expected_rp_id=WEBAUTHN_RP_ID,
+            expected_origin=BASE_URL,
+            require_user_verification=True,
+        )
+    except WebAuthnException as exc:
+        print(f"[sync] passkey registration rejected: {exc}", file=sys.stderr)
+        return jsonify({"error": "verification failed"}), 400
+
+    credential_id = bytes_to_base64url(verified.credential_id)
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT INTO passkeys (id, user_id, public_key, sign_count, name, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (credential_id, user["user_id"], verified.credential_public_key,
+             verified.sign_count, name, _now_iso()),
+        )
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "passkey already registered"}), 409
+    db.commit()
+    return jsonify({"id": credential_id, "name": name}), 201
+
+
+@app.route("/api/passkeys")
+def list_passkeys():
+    user = _get_session_user()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+    rows = get_db().execute(
+        "SELECT id, name, created_at, last_used FROM passkeys "
+        "WHERE user_id = ? ORDER BY created_at",
+        (user["user_id"],),
+    ).fetchall()
+    return jsonify({"passkeys": [dict(r) for r in rows]})
+
+
+@app.route("/api/passkeys/<credential_id>", methods=["DELETE"])
+def delete_passkey(credential_id: str):
+    user = _get_session_user()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+    db = get_db()
+    cur = db.execute(
+        "DELETE FROM passkeys WHERE id = ? AND user_id = ?",
+        (credential_id, user["user_id"]),
+    )
+    db.commit()
+    if cur.rowcount == 0:
+        return jsonify({"error": "not found"}), 404
+    return "", 204
 
 
 # ── API endpoints ─────────────────────────────────────────────────────────────

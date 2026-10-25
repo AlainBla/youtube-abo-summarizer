@@ -565,9 +565,11 @@
   <div id="sync-login">
     <input type="email" id="sync-email" placeholder="E-Mail für Sync" autocomplete="email">
     <button id="sync-send-btn" onclick="syncRequestLink()">Link senden</button>
+    <button id="sync-passkey-btn" onclick="syncPasskeyLogin()">Passkey</button>
   </div>
   <div id="sync-user" style="display:none">
     <span class="sync-user-email" id="sync-user-email"></span>
+    <button id="sync-passkeys-btn" onclick="syncManagePasskeys()">Passkeys</button>
     <button id="sync-logout-btn" onclick="doLogout()">Abmelden</button>
   </div>
   <div id="sync-ingest" style="display:none" data-ingest-id="" data-ingest-result="">
@@ -788,6 +790,10 @@ const I18N = {
     syncEmailPlaceholder: 'E-Mail f\u00fcr Sync',
     syncSendLink: 'Link senden',
     syncLogout: 'Abmelden',
+    syncPasskeyLogin: 'Passkey',
+    syncPasskeyLoginTitle: 'Mit Passkey anmelden',
+    syncPasskeys: 'Passkeys',
+    syncPasskeysTitle: 'Passkeys f\u00fcr diesen Account verwalten',
     syncStatusNotLoggedIn: 'Nicht angemeldet',
     syncStatusSending: 'Link wird gesendet\u2026',
     syncStatusSent: 'Link gesendet \u2014 E-Mail pr\u00fcfen',
@@ -892,6 +898,10 @@ const I18N = {
     syncEmailPlaceholder: 'Email for sync',
     syncSendLink: 'Send link',
     syncLogout: 'Log out',
+    syncPasskeyLogin: 'Passkey',
+    syncPasskeyLoginTitle: 'Sign in with a passkey',
+    syncPasskeys: 'Passkeys',
+    syncPasskeysTitle: 'Manage the passkeys for this account',
     syncStatusNotLoggedIn: 'Not logged in',
     syncStatusSending: 'Sending link\u2026',
     syncStatusSent: 'Link sent \u2014 check your email',
@@ -1488,6 +1498,22 @@ function syncRequestLink() {
   })
   .then(function() { updateSyncStatus(s.syncStatusSent); })
   .catch(function() { updateSyncStatus(s.syncStatusFailed); });
+}
+
+// Passkey ceremonies run on the sync server's own pages: WebAuthn binds a
+// credential to the origin that created it, and this archive may be a file://
+// copy or live on another host. Login comes back with #session=, exactly like
+// the magic link; the manage page gets this page's session in its fragment,
+// which the server never sees.
+function syncPasskeyLogin() {
+  window.location.href = SYNC_URL + '/auth/passkey?redirect_uri='
+    + encodeURIComponent(loginRedirectUri());
+}
+
+function syncManagePasskeys() {
+  window.location.href = SYNC_URL + '/auth/passkey/manage?redirect_uri='
+    + encodeURIComponent(loginRedirectUri())
+    + '#session=' + encodeURIComponent(getSyncToken());
 }
 
 function doLogout() {
@@ -2276,6 +2302,14 @@ function applyLang(lang) {
     if (sendEl) sendEl.textContent = s.syncSendLink;
     var logoutEl = document.getElementById('sync-logout-btn');
     if (logoutEl) logoutEl.textContent = s.syncLogout;
+    var passkeyEl = document.getElementById('sync-passkey-btn');
+    if (passkeyEl) { passkeyEl.textContent = s.syncPasskeyLogin; passkeyEl.title = s.syncPasskeyLoginTitle; }
+    var passkeysEl = document.getElementById('sync-passkeys-btn');
+    if (passkeysEl) { passkeysEl.textContent = s.syncPasskeys; passkeysEl.title = s.syncPasskeysTitle; }
+    if (!window.PublicKeyCredential) {
+      if (passkeyEl) passkeyEl.style.display = 'none';
+      if (passkeysEl) passkeysEl.style.display = 'none';
+    }
     var ingestInput = document.getElementById('ingest-input');
     if (ingestInput) ingestInput.placeholder = s.ingestPlaceholder;
     var ingestBtn = document.getElementById('ingest-btn');
