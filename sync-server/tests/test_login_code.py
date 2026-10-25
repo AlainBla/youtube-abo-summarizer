@@ -127,3 +127,27 @@ def test_verify_rate_limited_per_ip(client, mock_smtp):
 
 def test_preflight(client):
     assert client.options("/auth/verify-code").status_code == 200
+
+
+def test_verify_rate_limited_per_address_across_ips(client, mock_smtp):
+    _request(client)
+    for i in range(sync_server.CODE_EMAIL_RATE_LIMIT_MAX):
+        client.post("/auth/verify-code", json={"email": EMAIL, "code": "000000"},
+                    environ_base={"REMOTE_ADDR": f"203.0.113.{i}"})
+    r = client.post("/auth/verify-code", json={"email": EMAIL, "code": mock_smtp[0]["code"]},
+                    environ_base={"REMOTE_ADDR": "198.51.100.1"})
+    assert r.status_code == 429
+
+
+def test_attempt_is_spent_before_the_comparison(client, mock_smtp):
+    """The counter only ever moves up to the cap, and a used-up code stays
+    unusable until it expires -- no read-then-write window to slip through."""
+    _request(client)
+    code = mock_smtp[0]["code"]
+    for _ in range(sync_server.LOGIN_CODE_MAX_ATTEMPTS + 2):
+        _verify(client, _wrong(code))
+    db = sqlite3.connect(sync_server.DB_PATH)
+    attempts = db.execute("SELECT attempts FROM login_codes").fetchone()[0]
+    db.close()
+    assert attempts == sync_server.LOGIN_CODE_MAX_ATTEMPTS
+    assert _verify(client, code).status_code == 400

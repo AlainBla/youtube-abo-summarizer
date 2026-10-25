@@ -82,6 +82,7 @@ RATE_LIMIT_WINDOW = 600  # seconds
 LOGIN_CODE_TTL = 900  # seconds, = the magic link's max_age
 LOGIN_CODE_MAX_ATTEMPTS = 5
 CODE_RATE_LIMIT_MAX = 20  # verify attempts per IP per window
+CODE_EMAIL_RATE_LIMIT_MAX = 10  # verify attempts per address per window, across codes
 
 # Passkeys: the relying party is the sync server's own host, and every ceremony
 # runs on a page it serves itself, so the expected origin is BASE_URL's origin.
@@ -365,30 +366,32 @@ def verify_code():
         return jsonify({"error": "email and six-digit code required"}), 400
 
     ip = request.remote_addr or "unknown"
-    if not _rate_check(f"code-ip:{ip}", CODE_RATE_LIMIT_MAX):
+    if not _rate_check(f"code-ip:{ip}", CODE_RATE_LIMIT_MAX) or not _rate_check(
+        f"code-email:{email}", CODE_EMAIL_RATE_LIMIT_MAX
+    ):
         return jsonify({"error": "too many attempts"}), 429
 
     db = get_db()
-    row = db.execute(
-        "SELECT code_hash, expires_at, attempts FROM login_codes WHERE email = ?", (email,)
-    ).fetchone()
     invalid = (jsonify({"error": "invalid or expired code"}), 400)
-    if row is None:
-        return invalid
-    if row["expires_at"] <= time.time():
-        db.execute("DELETE FROM login_codes WHERE email = ?", (email,))
-        db.commit()
-        return invalid
-    if not hmac.compare_digest(row["code_hash"], _code_hash(email, code)):
-        if row["attempts"] + 1 >= LOGIN_CODE_MAX_ATTEMPTS:
-            db.execute("DELETE FROM login_codes WHERE email = ?", (email,))
-        else:
-            db.execute("UPDATE login_codes SET attempts = attempts + 1 WHERE email = ?", (email,))
-        db.commit()
-        return invalid
-    # Single use, whatever happens next.
-    db.execute("DELETE FROM login_codes WHERE email = ?", (email,))
+    # Spend the attempt *before* comparing, in one statement: with several
+    # gunicorn workers a read-then-update would let parallel requests all see
+    # the same count and guess past LOGIN_CODE_MAX_ATTEMPTS.
+    row = db.execute(
+        "UPDATE login_codes SET attempts = attempts + 1 "
+        "WHERE email = ? AND attempts < ? AND expires_at > ? RETURNING code_hash",
+        (email, LOGIN_CODE_MAX_ATTEMPTS, time.time()),
+    ).fetchone()
     db.commit()
+    if row is None or not hmac.compare_digest(row["code_hash"], _code_hash(email, code)):
+        return invalid
+    # Single use: of two concurrent requests with the right code, only the one
+    # whose DELETE removes the row gets a session.
+    cur = db.execute(
+        "DELETE FROM login_codes WHERE email = ? AND code_hash = ?", (email, row["code_hash"])
+    )
+    db.commit()
+    if cur.rowcount != 1:
+        return invalid
     if ALLOWED_EMAILS and email not in ALLOWED_EMAILS:
         return jsonify({"error": "forbidden"}), 403
 
