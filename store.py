@@ -195,6 +195,12 @@ def update_tags(video_id: str, tags: list[str]) -> None:
         )
 
 
+def update_duration(video_id: str, duration: str) -> None:
+    """Set a video's duration (ISO 8601) and nothing else."""
+    with _conn() as c:
+        c.execute("UPDATE videos SET duration = ? WHERE video_id = ?", (duration, video_id))
+
+
 def get_videos_since(since: datetime, with_transcripts: bool = True) -> list[dict]:
     """Return all stored videos published at or after `since`, newest first.
 

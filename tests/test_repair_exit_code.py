@@ -26,6 +26,7 @@ def _args(**overrides):
         model=None,
         fix_links=False,
         remap_tags=False,
+        fill_durations=False,
     )
     base.update(overrides)
     return types.SimpleNamespace(**base)
@@ -103,6 +104,33 @@ def test_remap_tags_path_no_op_exits_zero(monkeypatch):
         lambda with_transcripts=True: [{"video_id": "vid1", "title": "T", "tags": []}],
     )
     monkeypatch.setattr(repair.store, "update_tags", lambda vid, tags: None)
+
+    assert repair.main() == 0
+
+
+def test_fill_durations_path_triggers_the_signal(monkeypatch):
+    monkeypatch.setattr(repair, "parse_args", lambda: _args(fill_durations=True))
+    monkeypatch.setattr(
+        repair.store, "get_all_videos",
+        lambda with_transcripts=True: [{"video_id": "vid1", "title": "T", "duration": None}],
+    )
+    monkeypatch.setattr(repair.ytdlp_meta, "get_video_metadata",
+                        lambda vid, no_proxy=False: {"duration": "PT4M"})
+    monkeypatch.setattr(repair.store, "update_duration", lambda vid, d: None)
+
+    assert repair.main() == repair.EXIT_CONTENT_CHANGED
+
+
+def test_fill_durations_dry_run_still_exits_zero(monkeypatch):
+    monkeypatch.setattr(repair, "parse_args", lambda: _args(fill_durations=True, dry_run=True))
+    monkeypatch.setattr(
+        repair.store, "get_all_videos",
+        lambda with_transcripts=True: [{"video_id": "vid1", "title": "T", "duration": None}],
+    )
+    monkeypatch.setattr(repair.ytdlp_meta, "get_video_metadata",
+                        lambda vid, no_proxy=False: {"duration": "PT4M"})
+    monkeypatch.setattr(repair.store, "update_duration",
+                        lambda vid, d: pytest.fail("a dry run must not write"))
 
     assert repair.main() == 0
 

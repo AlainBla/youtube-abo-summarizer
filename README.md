@@ -625,6 +625,7 @@ python repair.py --fix-links
 | `--fix-links` | Repair broken markup in stored summaries: summaries stored as a JSON object, unclosed hrefs and tags that swallow whole sentences, anchors left open so a sentence renders as a link, links showing a period instead of their timestamp, wrong `t=` offsets, anchors the model left open, missing `ts-link` class, `</p>` tags closed mid-sentence. No LLM calls — back up `data/summaries/` first, the rewrite is in place |
 | `--model MODEL_ID` | Override the model from `LLM_MODEL` / `OPENROUTER_MODEL` |
 | `--dry-run` | Print what would be done without writing anything |
+| `--fill-durations` | Look up the duration of every stored video that has none (rows restored from an export, live streams collected while running): yt-dlp first, then one batched YouTube API call per 50. No LLM calls |
 | `--remap-tags` | Rewrite stored tags through the controlled vocabulary in `tags.py` and `tag_aliases.json`. No LLM calls — back up `data/videos.db` first, the rewrite is in place |
 
 `country_blocked` videos are never re-fetched (permanent restriction).
@@ -708,7 +709,7 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 | `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel/tag/read/bookmark filters, sort (publish date, date added, channel, title), and pagination; `--user` renders a personal view plus the full archive beside it |
 | `export_stats.py` | Appends one line per personal export to `data/export_stats.jsonl` and reads the series back for the backlog tooltip; series are keyed by user, `--read-days` and time window |
 | `sync_state.py` | Read-only access to the sync server's per-user read and bookmark flags; shared by `export.py --user` and `ebook.py --user` |
-| `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries (also re-generates tags with `--force-summarize`); `--remap-tags` rewrites stored tags through the controlled vocabulary and `tag_aliases.json`, no LLM calls |
+| `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries (also re-generates tags with `--force-summarize`); `--remap-tags` rewrites stored tags through the controlled vocabulary and `tag_aliases.json`, no LLM calls; `--fill-durations` looks up missing video durations |
 | `recover_from_export.py` | Restores store entries from a previously exported HTML file; inserts missing DB rows and summary files; leaves existing entries untouched; supports `--dry-run` |
 | `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html`; `update_tags()` writes only the tags column |
 | `tags.py` | Controlled German tag vocabulary (161 tags in ten groups) and the gate that enforces it: `canonicalize()` accepts an exact hit, a case-only difference, or a `tag_aliases.json` alias, rejects everything else, deduplicates and caps at `MAX_TAGS` (3); CLI: `--list`, `--candidates [--min N]`, `--build-aliases [--limit N] [--model M] [--dry-run]` |

@@ -203,3 +203,27 @@ def test_a_channel_without_credentials_is_skipped_not_fatal(monkeypatch):
         raise RuntimeError("kein brauchbares token.pickle")
 
     assert collect._discover_videos(CHANNEL, SINCE, get_service) == []
+
+
+def test_a_stream_yt_dlp_sees_live_asks_the_api_for_its_length(monkeypatch):
+    # yt-dlp answers for a running stream, but without a length. That used to
+    # count as an answer, the API was never asked, and once the stream left the
+    # four-hour window the row stayed without a duration for good.
+    monkeypatch.setattr(collect.feeds, "get_new_videos_rss", lambda *a, **k: [_feed_video()])
+    monkeypatch.setattr(collect.ytdlp_meta, "get_video_metadata",
+                        lambda vid, no_proxy=False: {"video_id": vid, "duration": None, "title": "LIVE"})
+    monkeypatch.setattr(collect, "get_video_durations", lambda service, ids: {"vid1": "PT2H"})
+    videos = collect._discover_videos(CHANNEL, SINCE, lambda: object())
+    assert videos[0]["duration"] == "PT2H"
+    assert videos[0]["title"] == "LIVE"
+
+
+def test_a_running_stream_is_not_taken_for_a_short(monkeypatch):
+    # The API reports "P0D" while a stream is live, and _is_short("P0D") is True:
+    # stored as such, the stream would be dropped instead of collected.
+    monkeypatch.setattr(collect.feeds, "get_new_videos_rss", lambda *a, **k: [_feed_video()])
+    monkeypatch.setattr(collect.ytdlp_meta, "get_video_metadata", lambda vid, no_proxy=False: None)
+    monkeypatch.setattr(collect, "get_video_durations", lambda service, ids: {"vid1": "P0D"})
+    videos = collect._discover_videos(CHANNEL, SINCE, lambda: object())
+    assert videos[0]["duration"] is None
+    assert collect._is_short(videos[0]["duration"]) is False

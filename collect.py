@@ -112,6 +112,18 @@ def _parse_duration_seconds(duration: str | None) -> int | None:
     return days * 86400 + hours * 3600 + minutes * 60 + seconds
 
 
+def _known_duration(duration: str | None) -> str | None:
+    """The duration, or None when it says nothing about the video's length.
+
+    A stream that is still live has no length yet: yt-dlp reports none, the API
+    reports "P0D". The second is the trap -- _is_short("P0D") is True, so a live
+    stream would be thrown away as a short instead of being stored and given its
+    real length later (repair.py --fill-durations).
+    """
+    secs = _parse_duration_seconds(duration)
+    return duration if secs else None
+
+
 def _is_short(duration: str | None) -> bool:
     """Return True if video duration is ≤ SHORTS_MAX_SECONDS (default 180 s).
 
@@ -315,11 +327,12 @@ def _fill_feed_durations(videos: list[dict], get_service, no_proxy: bool = False
 
         meta = ytdlp_meta.get_video_metadata(v["video_id"], no_proxy=no_proxy)
         if meta:
-            v["duration"] = meta.get("duration")
             v["title"] = meta.get("title") or v["title"]
             v["published_at"] = meta.get("published_at") or v["published_at"]
-        else:
-            v["duration"] = None
+        v["duration"] = _known_duration(meta.get("duration")) if meta else None
+        # yt-dlp answering without a length (a stream still live) is not an
+        # answer about the length: the API may know it, so ask.
+        if v["duration"] is None:
             missing.append(v)
 
     if not missing:
@@ -339,7 +352,7 @@ def _fill_feed_durations(videos: list[dict], get_service, no_proxy: bool = False
         print(f"    Dauer-Abruf über die API fehlgeschlagen: {e}", file=sys.stderr)
         return
     for v in missing:
-        v["duration"] = durations.get(v["video_id"])
+        v["duration"] = _known_duration(durations.get(v["video_id"]))
 
 
 def _discover_videos(channel_id: str, since: datetime, get_service, use_rss: bool = True,

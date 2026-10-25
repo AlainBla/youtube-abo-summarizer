@@ -28,11 +28,16 @@ Usage:
   # Rewrite stored tags through the controlled vocabulary (no LLM calls)
   python repair.py --remap-tags --dry-run
   python repair.py --remap-tags
+
+  # Fill in missing video durations (yt-dlp, then one batched API call per 50)
+  python repair.py --fill-durations --dry-run
+  python repair.py --fill-durations
 """
 
 import argparse
 import collections
 import os
+import re
 import sys
 import time
 
@@ -42,6 +47,7 @@ import openrouter
 import store
 import tags as tag_vocab
 import transcripts as tr
+import ytdlp_meta
 
 load_dotenv()
 
@@ -109,6 +115,13 @@ def parse_args():
         help="Rewrite stored tags through the controlled vocabulary in tags.py "
              "and tag_aliases.json. No LLM calls. Combine with --dry-run.",
     )
+    parser.add_argument(
+        "--fill-durations",
+        action="store_true",
+        help="Look up the duration of every stored video that has none "
+             "(yt-dlp first, then one batched YouTube API call per 50). "
+             "No LLM calls. Combine with --dry-run.",
+    )
     return parser.parse_args()
 
 
@@ -175,14 +188,92 @@ def remap_tags(entries, dry_run: bool) -> int:
     return changed
 
 
+def _known_duration(duration: str | None) -> str | None:
+    """The duration, or None for none at all or a zero length ("P0D", "PT0S").
+
+    A stream that is still live reports zero; storing that would read as a
+    short. An ISO 8601 duration is non-zero exactly when it has a non-zero digit.
+    """
+    return duration if duration and re.search(r"[1-9]", duration) else None
+
+
+def _api_service():
+    """The YouTube API service, or None when no token is usable without a browser.
+
+    Imported here so the other repair modes do not pull in googleapiclient.
+    """
+    import youtube_client
+    if not youtube_client.has_usable_token():
+        return None
+    return youtube_client.build_service()
+
+
+def fill_durations(entries, dry_run: bool, no_proxy: bool = False, get_service=_api_service) -> int:
+    """Look up the duration of every entry that has none. No LLM calls.
+
+    Two kinds of entry end up here: rows restored by recover_from_export.py,
+    which cannot carry an ISO duration, and live streams collected while they
+    were still running, which had no length yet. yt-dlp first, then one
+    videos().list per 50 for what it could not answer. A stream that is still
+    live stays without one and is counted as such.
+
+    Returns the number of durations found (written, unless dry_run).
+    """
+    todo = [e for e in entries if not e.get("duration")]
+    print(f"{len(todo)} von {len(entries)} Videos ohne Dauer")
+    found: dict[str, str] = {}
+    missing = []
+    for i, entry in enumerate(todo, 1):
+        meta = ytdlp_meta.get_video_metadata(entry["video_id"], no_proxy=no_proxy)
+        duration = _known_duration(meta.get("duration")) if meta else None
+        if duration:
+            found[entry["video_id"]] = duration
+        else:
+            missing.append(entry)
+        if i % 25 == 0:
+            print(f"  ... {i}/{len(todo)} per yt-dlp geprüft")
+
+    if missing:
+        try:
+            service = get_service()
+        except Exception as exc:  # noqa: BLE001 - a degraded run, not a crash
+            print(f"  YouTube API nicht verfügbar: {exc}", file=sys.stderr)
+            service = None
+        if service is None:
+            print(f"  {len(missing)} Video(s) bleiben ohne Dauer (kein API-Zugang)", file=sys.stderr)
+        else:
+            from youtube_client import get_video_durations
+            try:
+                durations = get_video_durations(service, [e["video_id"] for e in missing])
+            except Exception as exc:  # noqa: BLE001 - HttpError and transport errors alike
+                print(f"  Dauer-Abruf über die API fehlgeschlagen: {exc}", file=sys.stderr)
+                durations = {}
+            for entry in missing:
+                duration = _known_duration(durations.get(entry["video_id"]))
+                if duration:
+                    found[entry["video_id"]] = duration
+
+    for entry in todo:
+        duration = found.get(entry["video_id"])
+        if duration is None:
+            print(f"  [fill-durations] weiterhin ohne Dauer: {entry.get('title', '')[:60]}  ({entry['video_id']})")
+        elif not dry_run:
+            store.update_duration(entry["video_id"], duration)
+    verb = "würden ergänzt" if dry_run else "ergänzt"
+    print(f"\n{len(found)} von {len(todo)} Dauern {verb}.")
+    return len(found)
+
+
 def main():
     args = parse_args()
-    if not (args.fix_links or args.remap_tags):
+    if not (args.fix_links or args.remap_tags or args.fill_durations):
         tr.log_proxy_config(no_proxy=args.no_proxy)
     model = args.model or os.environ.get("LLM_MODEL") or os.environ.get("OPENROUTER_MODEL", "gpt-oss-20b")
     video_filter = {v.strip() for v in args.video.split(",") if v.strip()} if args.video else None
 
-    entries = store.get_all_videos(with_transcripts=not args.remap_tags)
+    entries = store.get_all_videos(
+        with_transcripts=not (args.remap_tags or args.fill_durations)
+    )
     if video_filter:
         entries = [e for e in entries if e["video_id"] in video_filter]
         not_found = video_filter - {e["video_id"] for e in entries}
@@ -198,6 +289,12 @@ def main():
         if args.dry_run:
             print("  (dry-run — no changes will be written)")
         changed = remap_tags(entries, args.dry_run)
+        return _exit_code(args.dry_run, changed > 0)
+
+    if args.fill_durations:
+        if args.dry_run:
+            print("  (dry-run — no changes will be written)")
+        changed = fill_durations(entries, args.dry_run, no_proxy=args.no_proxy)
         return _exit_code(args.dry_run, changed > 0)
 
     if args.fix_links:
