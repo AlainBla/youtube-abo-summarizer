@@ -129,14 +129,17 @@ def test_preflight(client):
     assert client.options("/auth/verify-code").status_code == 200
 
 
-def test_verify_rate_limited_per_address_across_ips(client, mock_smtp):
+def test_wrong_guesses_from_others_do_not_block_a_fresh_code(client, mock_smtp):
+    """No per-address verify limit: a stranger's guesses can use up one code,
+    but the owner's next code still works."""
     _request(client)
-    for i in range(sync_server.CODE_EMAIL_RATE_LIMIT_MAX):
+    for i in range(12):
         client.post("/auth/verify-code", json={"email": EMAIL, "code": "000000"},
                     environ_base={"REMOTE_ADDR": f"203.0.113.{i}"})
-    r = client.post("/auth/verify-code", json={"email": EMAIL, "code": mock_smtp[0]["code"]},
+    _request(client)
+    r = client.post("/auth/verify-code", json={"email": EMAIL, "code": mock_smtp[-1]["code"]},
                     environ_base={"REMOTE_ADDR": "198.51.100.1"})
-    assert r.status_code == 429
+    assert r.status_code == 200
 
 
 def test_attempt_is_spent_before_the_comparison(client, mock_smtp):

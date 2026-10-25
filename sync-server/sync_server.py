@@ -82,7 +82,6 @@ RATE_LIMIT_WINDOW = 600  # seconds
 LOGIN_CODE_TTL = 900  # seconds, = the magic link's max_age
 LOGIN_CODE_MAX_ATTEMPTS = 5
 CODE_RATE_LIMIT_MAX = 20  # verify attempts per IP per window
-CODE_EMAIL_RATE_LIMIT_MAX = 10  # verify attempts per address per window, across codes
 
 # Passkeys: the relying party is the sync server's own host, and every ceremony
 # runs on a page it serves itself, so the expected origin is BASE_URL's origin.
@@ -366,9 +365,11 @@ def verify_code():
         return jsonify({"error": "email and six-digit code required"}), 400
 
     ip = request.remote_addr or "unknown"
-    if not _rate_check(f"code-ip:{ip}", CODE_RATE_LIMIT_MAX) or not _rate_check(
-        f"code-email:{email}", CODE_EMAIL_RATE_LIMIT_MAX
-    ):
+    # Deliberately no limit per address: anyone who knows the address could
+    # spend it and lock the owner out. Guesses per address are already bounded
+    # by request-link's own per-address limit (RATE_LIMIT_MAX codes per window)
+    # times LOGIN_CODE_MAX_ATTEMPTS per code.
+    if not _rate_check(f"code-ip:{ip}", CODE_RATE_LIMIT_MAX):
         return jsonify({"error": "too many attempts"}), 429
 
     db = get_db()
