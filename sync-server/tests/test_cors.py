@@ -44,3 +44,10 @@ def test_cors_no_origin_header_no_acao(client):
     r = client.get("/api/whoami")
     # The important thing is wildcard is never set.
     assert r.headers.get("Access-Control-Allow-Origin", "") != "*"
+
+
+def test_cors_allows_base_origin_when_base_url_has_path(client, monkeypatch):
+    import sync_server
+    monkeypatch.setattr(sync_server, "BASE_URL", "http://testserver/sync")
+    r = client.get("/api/whoami", headers={"Origin": "http://testserver"})
+    assert r.headers.get("Access-Control-Allow-Origin") == "http://testserver"

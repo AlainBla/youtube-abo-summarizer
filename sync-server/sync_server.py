@@ -165,7 +165,7 @@ init_db()
 @app.after_request
 def add_cors(response):
     origin = request.headers.get("Origin", "")
-    base_origin = BASE_URL  # e.g. "http://testserver" — already rstripped of "/"
+    base_origin = _origin_of(BASE_URL)  # BASE_URL may carry a path; an Origin never does
     if origin == base_origin or origin == "null":
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
