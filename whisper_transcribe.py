@@ -104,15 +104,21 @@ def _download_once(url: str, workdir: Path, proxy: str | None) -> Path | None:
     if proxy:
         cmd += ["--proxy", proxy]
     cmd.append(url)
+    # Never print the exception or yt-dlp's output unredacted: TimeoutExpired
+    # renders the whole command line, proxy URL and its password included.
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_DOWNLOAD_TIMEOUT)
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        print(f"    [whisper] Download fehlgeschlagen: {exc}", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print(f"    [whisper] Download nach {_DOWNLOAD_TIMEOUT} s abgebrochen.", file=sys.stderr)
+        return None
+    except OSError as exc:
+        print(f"    [whisper] Download fehlgeschlagen: {type(exc).__name__}", file=sys.stderr)
         return None
     if proc.returncode != 0:
         err = (proc.stderr or "").strip().splitlines()
         if err:
-            print(f"    [whisper] {err[-1]}", file=sys.stderr)
+            line = err[-1].replace(proxy, proxies.redact(proxy)) if proxy else err[-1]
+            print(f"    [whisper] {line}", file=sys.stderr)
         return None
     files = sorted(workdir.glob("audio.*"))
     return files[0] if files else None

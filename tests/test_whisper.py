@@ -220,3 +220,23 @@ def test_collect_sh_runs_the_whisper_step_before_the_export_gate():
     whisper_at = sh.index("python3 whisper_collect.py")
     assert whisper_at < sh.index("python3 export.py")
     assert "|| wrc=$?" in sh[whisper_at:sh.index("\n", whisper_at)]
+
+
+def test_a_download_timeout_never_prints_the_proxy_password(monkeypatch, tmp_path, capsys):
+    import subprocess
+    secret = "http://user:hunter2@proxy.example:80"
+
+    def boom(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 1)
+    monkeypatch.setattr(wt.subprocess, "run", boom)
+    assert wt._download_once("https://www.youtube.com/watch?v=x", tmp_path, secret) is None
+    assert "hunter2" not in capsys.readouterr().err
+
+
+def test_yt_dlp_error_lines_are_redacted(monkeypatch, tmp_path, capsys):
+    import subprocess
+    secret = "http://user:hunter2@proxy.example:80"
+    monkeypatch.setattr(wt.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(
+        cmd, 1, "", f"ERROR: Unable to connect to proxy {secret}"))
+    wt._download_once("https://www.youtube.com/watch?v=x", tmp_path, secret)
+    assert "hunter2" not in capsys.readouterr().err

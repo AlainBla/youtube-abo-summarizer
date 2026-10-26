@@ -96,16 +96,22 @@ def _run(url: str, proxy: str | None) -> dict | None:
         cmd += ["--proxy", proxy]
     cmd.append(url)
 
+    # Never print the exception or yt-dlp's output unredacted: TimeoutExpired
+    # renders the whole command line, proxy URL and its password included.
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_TIMEOUT)
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        print(f"    [yt-dlp] Aufruf fehlgeschlagen: {exc}", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print(f"    [yt-dlp] Aufruf nach {_TIMEOUT} s abgebrochen.", file=sys.stderr)
+        return None
+    except OSError as exc:
+        print(f"    [yt-dlp] Aufruf fehlgeschlagen: {type(exc).__name__}", file=sys.stderr)
         return None
 
     if proc.returncode != 0:
         err = (proc.stderr or "").strip().splitlines()
         if err:
-            print(f"    [yt-dlp] {err[-1]}", file=sys.stderr)
+            line = err[-1].replace(proxy, proxies.redact(proxy)) if proxy else err[-1]
+            print(f"    [yt-dlp] {line}", file=sys.stderr)
         return None
 
     try:
