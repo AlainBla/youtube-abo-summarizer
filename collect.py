@@ -566,7 +566,10 @@ def _process_single_video(get_service, video_id: str, model: str, now: datetime,
             summary,
             transcript_error,
             model if summary else existing.get("summary_model"),
-            tags=tags,
+            # Like the model: without a new summary the stored tags stay, or a
+            # transcript fetched for a video that already has its summary would
+            # strip it of its tags (update_video_with_summary() writes both).
+            tags=tags if summary else (existing.get("tags") or None),
             transcript_lang=lang,
         )
         return False, summary is not None
@@ -772,7 +775,7 @@ def main():
                     summary,
                     transcript_error,
                     model if summary else existing.get("summary_model"),
-                    tags=tags,
+                    tags=tags if summary else (existing.get("tags") or None),
                     transcript_lang=lang,
                 )
                 if summary is not None:
