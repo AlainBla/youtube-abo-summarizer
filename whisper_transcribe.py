@@ -33,7 +33,7 @@ import proxies
 from transcripts import _to_text
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "openai/whisper-large-v3"
+DEFAULT_MODEL = "openai/whisper-large-v3-turbo"
 CHUNK_SECONDS = 600
 _DOWNLOAD_TIMEOUT = 900
 _SPLIT_TIMEOUT = 300

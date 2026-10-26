@@ -602,8 +602,8 @@ Some channels offer no captions at all, not even automatic ones, so their videos
 
 ```
 WHISPER_CHANNELS=UCxmyVr1rPn-SIH0GbyV4jkg
-#WHISPER_MODEL=openai/whisper-large-v3          # default; ~$0.04 per hour of audio
-#WHISPER_MODEL=openai/whisper-large-v3-turbo    # about half the price
+#WHISPER_MODEL=openai/whisper-large-v3-turbo    # default; ~$0.012 per hour of audio
+#WHISPER_MODEL=openai/whisper-large-v3          # about three times the price
 ```
 
 ```bash

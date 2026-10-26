@@ -171,7 +171,7 @@ The worker calls `collect.py --video=<id>` (the `=` form: a leading-dash video I
 | `PROXY_FALLBACK_COUNTRY` | Country code for geo-block retry (default: `DE`) |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | Email delivery |
 | `WHISPER_CHANNELS` | Channel IDs transcribed from audio by `whisper_collect.py` (unset = step does nothing) |
-| `WHISPER_MODEL` | Speech-to-text model (default: `openai/whisper-large-v3`) |
+| `WHISPER_MODEL` | Speech-to-text model (default: `openai/whisper-large-v3-turbo`) |
 
 ### Sync server (`sync-server/.env`)
 
