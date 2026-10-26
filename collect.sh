@@ -41,6 +41,9 @@ CHANNELS_FILE="${CHANNELS_FILE:-$REPO/channels.txt}"
 # Upper bound per run. A run that outlives it is killed, so a stuck process
 # cannot pile up every 30 minutes. Raise it while a backlog is being worked off.
 COLLECT_TIMEOUT="${COLLECT_TIMEOUT:-30m}"
+# Upper bound for the Whisper step (whisper_collect.py), separate from the
+# collection's own.
+WHISPER_TIMEOUT="${WHISPER_TIMEOUT:-20m}"
 EXIT_NEW_VIDEOS=10
 # collect.py signals "these credentials cannot work" with 11; the run is then
 # repeated from the channel list, which needs neither token nor quota.
@@ -77,6 +80,20 @@ if [ "$rc" -eq "$EXIT_AUTH_FAILED" ]; then
         fi
     else
         echo "[$(date -Iseconds)] ERROR: OAuth unusable and $CHANNELS_FILE is missing -- nothing was collected." >> "$REPO/cron.log"
+    fi
+fi
+
+# Channels that switched captions off (WHISPER_CHANNELS in .env): their stored
+# videos are transcribed from the audio by whisper_collect.py -- a few per run,
+# under a budget of its own, and only after a collection that went fine. Its
+# exit 10 (a transcript or summary written) triggers the export just the same.
+if [ "$rc" -eq 0 ] || [ "$rc" -eq "$EXIT_NEW_VIDEOS" ]; then
+    wrc=0
+    timeout -k 30s "$WHISPER_TIMEOUT" python3 whisper_collect.py >> "$REPO/cron.log" 2>&1 || wrc=$?
+    if [ "$wrc" -eq "$EXIT_NEW_VIDEOS" ]; then
+        rc=$EXIT_NEW_VIDEOS
+    elif [ "$wrc" -ne 0 ]; then
+        echo "[$(date -Iseconds)] WARNING: whisper_collect.py exited $wrc." >> "$REPO/cron.log"
     fi
 fi
 

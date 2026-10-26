@@ -9,3 +9,4 @@ yt-dlp
 openai
 python-dotenv
 jinja2
+imageio-ffmpeg

@@ -66,7 +66,7 @@ python report.py [--hours 24] [--output summary.html] [--skip-empty] [--send-to 
 
 | Script | Purpose |
 |---|---|
-| `collect.sh` | Runs `collect.py --auth --hours 4` under `timeout -k 30s $COLLECT_TIMEOUT` (default 30 m), skipping OAuth entirely when `token.pickle` is missing; on exit 11 (OAuth unusable) or a timeout of that run — the only way to catch a browser prompt nobody will answer — it repeats the collection from `$CHANNELS_FILE`, which needs neither token nor quota; with `EXPORT_USER` set in `cron.env` that export becomes the personal pair (`--user`, plus `--read-days` from `EXPORT_READ_DAYS`); on exit code 10 (a new video stored, or a summary written for a stored-but-incomplete entry) immediately re-exports the archive to `$EXPORT_OUTPUT` (default `yt.html`, sync URL from `$SYNC_URL`); schedule frequently (e.g. `*/30 * * * *`) |
+| `collect.sh` | Runs `collect.py --auth --hours 4` under `timeout -k 30s $COLLECT_TIMEOUT` (default 30 m), skipping OAuth entirely when `token.pickle` is missing; on exit 11 (OAuth unusable) or a timeout of that run — the only way to catch a browser prompt nobody will answer — it repeats the collection from `$CHANNELS_FILE`, which needs neither token nor quota; with `EXPORT_USER` set in `cron.env` that export becomes the personal pair (`--user`, plus `--read-days` from `EXPORT_READ_DAYS`); on exit code 10 (a new video stored, or a summary written for a stored-but-incomplete entry) then runs `whisper_collect.py` under `$WHISPER_TIMEOUT` (default 20 m), whose exit 10 counts the same; immediately re-exports the archive to `$EXPORT_OUTPUT` (default `yt.html`, sync URL from `$SYNC_URL`); schedule frequently (e.g. `*/30 * * * *`) |
 | `run_6hours.sh` | Renders and mails a 6-hour digest |
 | `run_12hours.sh` | Renders and mails a 12-hour digest |
 | `run_daily.sh` | Renders and mails a 24-hour digest |
@@ -106,6 +106,26 @@ python repair.py --fix-links
 ```bash
 python repair.py --fix-links; [ $? -eq 10 ] && python export.py --all --output yt.html
 ```
+
+## Whisper for caption-less channels
+
+Some channels switch captions off entirely (AdExchanger: not even the automatic track exists), so every video of theirs lands in the store as `transcript_error = unavailable`. For the channels listed in `WHISPER_CHANNELS` (`.env`, channel IDs), `whisper_collect.py` transcribes them from the audio instead.
+
+```bash
+python whisper_collect.py --dry-run        # what the next run would take
+python whisper_collect.py                  # up to --limit (3) videos, newest first
+python whisper_collect.py --limit 0        # the whole backlog
+python whisper_collect.py --video ID,ID    # specific videos (still only listed channels)
+python whisper_collect.py --retry          # include videos marked whisper_failed
+```
+
+- `whisper_transcribe.transcribe_video()`: yt-dlp downloads the **original** audio track (`AUDIO_FORMAT` asks for `language_preference>=10` first — a plain bitrate filter picked the Tamil AI dub of an English podcast), direct first, then `proxies.proxy_chain()`; ffmpeg cuts it into `CHUNK_SECONDS` (600) pieces by stream copy (re-encoding an hour took 3.5 min of CPU on the server), offsets read back from ffmpeg's segment list; each piece goes to OpenRouter's `/audio/transcriptions` with `verbose_json` segments (providers stop at ~60 s of processing and 25 MB per request, hence the pieces, and three attempts each); the segments, shifted onto one timeline and stripped of music markers, go through `transcripts._to_text()`, so the stored transcript carries the same `[M:SS]` markers and the summary its usual timestamp links.
+- The client always targets OpenRouter with `OPENROUTER_API_KEY`, whatever `LLM_BASE_URL` says — Ollama has no transcription endpoint. Model: `WHISPER_MODEL`, default `openai/whisper-large-v3` (measured ~$0.04 per hour of audio; `-turbo` about half). A model without segment timestamps does not work.
+- ffmpeg comes from PATH or from `imageio-ffmpeg` (in `requirements.txt`), whose static binary needs no system package — the server has none.
+- The provider's language answer is normalised to an ISO code (`language_code()`), since `transcript_lang` names the stored file; an unknown name stores the plain `<id>.txt`.
+- `whisper_collect.select_videos()` takes listed channels only, never a video with a transcript on disk, a `country_blocked` one, or one without a duration (a stream still running). A video that yields nothing is marked `transcript_error = whisper_failed` and skipped from then on (`--retry` brings it back), so a few hopeless ones cannot head the queue every run; an exception that says nothing about the video (provider down, key missing) leaves no marker and the next run tries again.
+- Exit `10` when it wrote a transcript, summary or marker, else `0` — also under `--dry-run`, without `WHISPER_CHANNELS`, and when another run holds `data/whisper.lock` (two runs would pay twice for the same audio). Audio is worked on in `data/whisper-*` temp directories; a run killed by the timeout cannot clean up, so the next one removes leftovers once it holds the lock.
+- `collect.sh` runs it after a successful collection under `timeout -k 30s $WHISPER_TIMEOUT` (default 20 m), and its exit 10 triggers the export like `collect.py`'s. It never runs inside `collect.py`: an hour of audio does not fit that run's budget.
 
 ## Tags
 
@@ -386,6 +406,8 @@ python send_mail.py "Subject" recipient@example.com summary_2026-02-23.html
 | `send_mail.py` | Standalone script; sends an HTML file as an email via SMTP_SSL |
 | `sync-server/sync_server.py` | Standalone Flask sync service: magic-link auth (supports STARTTLS port 587 and SSL port 465) plus passkey login via WebAuthn (`templates/passkey.html`, tables `passkeys`/`webauthn_challenges`; see "Passkeys"), per-user read/bookmark state in SQLite, last-write-wins merge; `POST /api/ingest` appends video ID to `INGEST_QUEUE` file and returns 202; `/api/whoami` returns `can_ingest` flag |
 | `userscript/yt-ingest.user.js` | Violentmonkey/Tampermonkey script: a button on YouTube that queues the current video, by driving the Ingest field of the logged-in archive page instead of holding a token of its own; `speaksVerdict()`/`ingestVerdict()`/`legacyVerdict()` read the outcome off the page's `data-ingest-*` attributes, falling back to the pre-1.8.0 inference on an archive exported before them. Two host-specific lines (`ARCHIVE_URL`, the archive `@match`) |
+| `whisper_collect.py` | Whisper loop for caption-less channels (`WHISPER_CHANNELS`): `select_videos()`, `process()` (transcribe, store, summarize; `whisper_failed` marker), per-run `--limit`, lock in `data/whisper.lock`; exits `10` when it wrote something. See "Whisper for caption-less channels" |
+| `whisper_transcribe.py` | Audio download (original track, `AUDIO_FORMAT`), ffmpeg stream-copy split (`split_audio()`/`parse_segment_list()`), OpenRouter `/audio/transcriptions` per piece (`transcribe_chunk()`), `merge_segments()` onto one timeline, `language_code()`; `transcribe_video()` returns `(text, lang, cost)` |
 | `ingest_worker.sh` | Cron script that drains `INGEST_QUEUE` by running `collect.py --video <id>` for each entry; re-exports `$EXPORT_OUTPUT` afterwards, honouring `EXPORT_USER`/`EXPORT_READ_DAYS` exactly as `collect.sh` does; logs to `data/ingest_worker.log`; schedule every minute |
 
 ### Cron configuration (`cron.env`)

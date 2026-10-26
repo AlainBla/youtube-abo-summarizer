@@ -596,6 +596,24 @@ ProxyPassReverse /sync/ http://127.0.0.1:5000/
 
 After code changes: `systemctl --user restart yt-sync`
 
+## Usage — Whisper for caption-less channels
+
+Some channels offer no captions at all, not even automatic ones, so their videos are stored without transcript. List them in `.env` and `collect.sh` transcribes them from the audio after each collection — a few per run, through OpenRouter's speech-to-text endpoint:
+
+```
+WHISPER_CHANNELS=UCxmyVr1rPn-SIH0GbyV4jkg
+#WHISPER_MODEL=openai/whisper-large-v3          # default; ~$0.04 per hour of audio
+#WHISPER_MODEL=openai/whisper-large-v3-turbo    # about half the price
+```
+
+```bash
+python whisper_collect.py --dry-run      # what the next run would take
+python whisper_collect.py --limit 0      # work off the whole backlog now
+python whisper_collect.py --retry        # retry videos marked whisper_failed
+```
+
+The original audio track is downloaded (not an AI dub), cut into ten-minute pieces, transcribed with segment timestamps and summarized like any other video, timestamp links included. Needs ffmpeg — on PATH, or the static binary from `imageio-ffmpeg`, which `requirements.txt` installs. `WHISPER_TIMEOUT` in `cron.env` bounds the step (default `20m`).
+
 ## Usage — repair
 
 `repair.py` scans the store and fixes missing or broken transcripts and summaries. The most common use case is re-summarizing specific videos after finding bad model output.
@@ -666,7 +684,7 @@ Recommended crontab setup:
 
 | Script | Purpose |
 |---|---|
-| `collect.sh` | Runs `collect.py --auth`; re-exports the archive as soon as new videos were stored (the personal pair when `EXPORT_USER` is set in `cron.env`); schedule this frequently |
+| `collect.sh` | Runs `collect.py --auth`, then `whisper_collect.py`; re-exports the archive as soon as new videos were stored (the personal pair when `EXPORT_USER` is set in `cron.env`); schedule this frequently |
 | `run_6hours.sh` | Renders and emails a 6-hour digest via `report.py` |
 | `run_12hours.sh` | Renders and emails a 12-hour digest via `report.py` |
 | `run_daily.sh` | Renders and emails a 24-hour digest via `report.py` |
@@ -709,6 +727,7 @@ timestamp, so the archive's "new videos" banner would be permanently lit for eve
 | `export.py` | Export CLI: renders a self-contained HTML archive with client-side search, channel/tag/read/bookmark filters, sort (publish date, date added, channel, title), and pagination; `--user` renders a personal view plus the full archive beside it |
 | `export_stats.py` | Appends one line per personal export to `data/export_stats.jsonl` and reads the series back for the backlog tooltip; series are keyed by user, `--read-days` and time window |
 | `sync_state.py` | Read-only access to the sync server's per-user read and bookmark flags; shared by `export.py --user` and `ebook.py --user` |
+| `whisper_collect.py` / `whisper_transcribe.py` | Transcribe videos of caption-less channels (`WHISPER_CHANNELS`) from their audio via OpenRouter speech-to-text, then summarize |
 | `repair.py` | Repair CLI: re-fetches missing transcripts and re-summarizes missing/broken summaries (also re-generates tags with `--force-summarize`); `--remap-tags` rewrites stored tags through the controlled vocabulary and `tag_aliases.json`, no LLM calls; `--fill-durations` looks up missing video durations |
 | `recover_from_export.py` | Restores store entries from a previously exported HTML file; inserts missing DB rows and summary files; leaves existing entries untouched; supports `--dry-run` |
 | `store.py` | SQLite + file store: `data/videos.db` (metadata + tags as JSON array), `data/transcripts/<id>.txt`, `data/summaries/<id>.html`; `update_tags()` writes only the tags column |
