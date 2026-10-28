@@ -30,6 +30,7 @@ another run holds the lock.
 import argparse
 import fcntl
 import os
+import re
 import shutil
 import sys
 
@@ -68,7 +69,9 @@ def select_videos(entries, channels: set[str] | None, has_transcript, retry: boo
             continue
         if e.get("transcript_error") == FAILED and not retry:
             continue
-        if not e.get("duration"):
+        # "P0D" is what the API reports for a stream still running (or a 24/7
+        # one): no length, and an audio download that would never end.
+        if not re.search(r"[1-9]", e.get("duration") or ""):
             continue
         if has_transcript(e["video_id"]):
             continue

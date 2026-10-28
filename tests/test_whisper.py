@@ -109,6 +109,7 @@ def test_selection_takes_listed_channels_without_transcript_only():
         _entry("geo", error="country_blocked"),
         _entry("failed", error=whisper_collect.FAILED),
         _entry("live", duration=None),
+        _entry("stream", duration="P0D"),
     ]
     picked = whisper_collect.select_videos(entries, {CHAN}, has_transcript=lambda v: v == "has")
     assert [e["video_id"] for e in picked] == ["a"]
