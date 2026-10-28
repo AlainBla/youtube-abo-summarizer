@@ -610,6 +610,7 @@ WHISPER_CHANNELS=UCxmyVr1rPn-SIH0GbyV4jkg
 python whisper_collect.py --dry-run      # what the next run would take
 python whisper_collect.py --limit 0      # work off the whole backlog now
 python whisper_collect.py --retry        # retry videos marked whisper_failed
+python whisper_collect.py --video ID,ID --any-channel   # one-off: videos of any channel
 ```
 
 The original audio track is downloaded (not an AI dub), cut into ten-minute pieces, transcribed with segment timestamps and summarized like any other video, timestamp links included. Needs ffmpeg — on PATH, or the static binary from `imageio-ffmpeg`, which `requirements.txt` installs. `WHISPER_TIMEOUT` in `cron.env` bounds the step (default `20m`).

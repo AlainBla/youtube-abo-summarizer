@@ -240,3 +240,15 @@ def test_yt_dlp_error_lines_are_redacted(monkeypatch, tmp_path, capsys):
         cmd, 1, "", f"ERROR: Unable to connect to proxy {secret}"))
     wt._download_once("https://www.youtube.com/watch?v=x", tmp_path, secret)
     assert "hunter2" not in capsys.readouterr().err
+
+
+def test_any_channel_takes_videos_outside_the_list_and_needs_video(monkeypatch, isolated):
+    monkeypatch.setenv("WHISPER_CHANNELS", "")
+    monkeypatch.setattr(whisper_collect.store, "get_all_videos",
+                        lambda with_transcripts=True: [_entry("x", channel="UCother"), _entry("y", channel="UCother")])
+    done = []
+    monkeypatch.setattr(whisper_collect, "process", lambda e, model, no_proxy=False: done.append(e["video_id"]) or True)
+    assert whisper_collect.main(["--video", "x", "--any-channel"]) == whisper_collect.EXIT_CONTENT_CHANGED
+    assert done == ["x"]
+    with pytest.raises(SystemExit):
+        whisper_collect.parse_args(["--any-channel"])

@@ -21,6 +21,7 @@ Usage:
   python whisper_collect.py --dry-run          # what would be done
   python whisper_collect.py --video ID,ID      # these videos (still only listed channels)
   python whisper_collect.py --limit 0          # the whole backlog in one go
+  python whisper_collect.py --video ID,ID --any-channel   # videos of any channel
 
 Exit codes, as collect.py and repair.py: 10 when a transcript or summary was
 written (collect.sh then re-exports the archive), 0 otherwise -- also when
@@ -49,17 +50,17 @@ def configured_channels() -> set[str]:
     return {c.strip() for c in os.environ.get("WHISPER_CHANNELS", "").split(",") if c.strip()}
 
 
-def select_videos(entries, channels: set[str], has_transcript, retry: bool = False,
+def select_videos(entries, channels: set[str] | None, has_transcript, retry: bool = False,
                   only: set[str] | None = None) -> list[dict]:
     """Entries to transcribe, newest first (the store's order).
 
-    Only listed channels; never a video that already has a transcript on disk,
+    Only listed channels (channels=None: any channel); never a video that already has a transcript on disk,
     one YouTube blocks for this region, or a stream still running (no duration
     yet -- its audio would be cut off wherever the stream stands).
     """
     picked = []
     for e in entries:
-        if e.get("channel_id") not in channels:
+        if channels is not None and e.get("channel_id") not in channels:
             continue
         if only is not None and e["video_id"] not in only:
             continue
@@ -108,11 +109,18 @@ def parse_args(argv=None):
     p.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
                    help=f"Videos per run (default {DEFAULT_LIMIT}, 0 = no limit).")
     p.add_argument("--video", metavar="ID,ID,...", help="Only these video IDs.")
+    p.add_argument("--any-channel", action="store_true",
+                   help="With --video: take the videos whatever their channel (WHISPER_CHANNELS not needed).")
     p.add_argument("--retry", action="store_true", help=f"Include videos marked {FAILED}.")
     p.add_argument("--dry-run", action="store_true", help="List what would be done, write nothing.")
     p.add_argument("--no-proxy", action="store_true", help="Download without any proxy.")
     p.add_argument("--model", default=None, help="LLM for the summary (default: LLM_MODEL / OPENROUTER_MODEL).")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    # Without --video this would put every caption-less video of every channel
+    # on the bill.
+    if args.any_channel and not args.video:
+        p.error("--any-channel needs --video")
+    return args
 
 
 def _lock():
@@ -133,8 +141,8 @@ def _lock():
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    channels = configured_channels()
-    if not channels:
+    channels = None if args.any_channel else configured_channels()
+    if channels is not None and not channels:
         return 0
     only = {v.strip() for v in args.video.split(",") if v.strip()} if args.video else None
 
