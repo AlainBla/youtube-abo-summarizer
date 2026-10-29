@@ -2409,7 +2409,9 @@ function applyLang(lang) {
   {% endif %}
   renderUpdateBanner();
   renderSingleBar();
-  applyFiltersAndSort();
+  // currentPage, not 1: on the first call it is the page restored from the
+  // URL, and switching the language has no reason to jump back to page one.
+  applyFiltersAndSort(currentPage);
 }
 
 // ── Populate channel filter dropdown ──────────────────────────────────────────
@@ -2494,10 +2496,9 @@ function setTagFilter(tag) {
   applyFiltersAndSort();
 }
 
-function setChannelFilter(channelId) {
-  var sel = document.getElementById('channel-filter');
-  // A channel folded into OTHER_CHANNELS has no entry of its own; clicking its
-  // name on a card still filters to that one channel, so give it one.
+// A channel folded into OTHER_CHANNELS has no entry of its own; filtering to
+// exactly that one channel (a click on its name, a restored URL) needs one.
+function ensureChannelOption(sel, channelId) {
   var known = Array.prototype.some.call(sel.options, function(o) { return o.value === channelId; });
   if (channelId && !known) {
     var v = VIDEOS.find(function(x) { return x.channel_id === channelId; });
@@ -2506,8 +2507,115 @@ function setChannelFilter(channelId) {
     opt.textContent = v ? v.channel_title : channelId;
     sel.appendChild(opt);
   }
+}
+
+function setChannelFilter(channelId) {
+  var sel = document.getElementById('channel-filter');
+  ensureChannelOption(sel, channelId);
   sel.value = (sel.value === channelId) ? '' : channelId;
   applyFiltersAndSort();
+}
+
+// ── Filter state in the URL ───────────────────────────────────────────────────
+// Every render mirrors the controls into the query string (replaceState, so
+// filtering does not flood the history), and bootstrap() reads them back: a
+// reload -- the update banner's included -- lands on the same selection and
+// page. Defaults are left out, so an unfiltered archive keeps a bare URL. `v`
+// (the deep link) and any other parameter are passed through untouched.
+const FILTER_PARAMS = ['q', 'channel', 'tag', 'read', 'bm', 'from', 'len', 'sort', 'page'];
+const SORT_MODES = ['date-desc', 'date-asc', 'added-desc', 'channel', 'title'];
+
+// Pure: the query string for `state`, keeping every non-filter parameter of
+// `search`. Returns '' or '?...'.
+function filterStateToSearch(state, search) {
+  var params = new URLSearchParams(search || '');
+  FILTER_PARAMS.forEach(function (k) { params.delete(k); });
+  if (state.q) params.set('q', state.q);
+  if (state.channel) params.set('channel', state.channel);
+  if (state.tag) params.set('tag', state.tag);
+  if (state.read) params.set('read', state.read);
+  if (state.bm) params.set('bm', state.bm);
+  if (state.from) params.set('from', state.from);
+  if (state.len) params.set('len', String(state.len));
+  if (state.sort && state.sort !== SORT_MODES[0]) params.set('sort', state.sort);
+  if (state.page > 1) params.set('page', String(state.page));
+  var qs = params.toString();
+  return qs ? '?' + qs : '';
+}
+
+// Pure: the filter state a query string asks for. Values with a fixed domain
+// are validated here; channel and tag can only be checked against the decoded
+// index, which restoreFiltersFromUrl() does. A hand-edited or stale URL must
+// never leave a <select> pointing at an option that does not exist.
+function filterStateFromSearch(search) {
+  var p = new URLSearchParams(search || '');
+  var st = {};
+  var q = (p.get('q') || '').trim();
+  if (q) st.q = q;
+  if (p.get('channel')) st.channel = p.get('channel');
+  if (p.get('tag')) st.tag = p.get('tag');
+  if (p.get('read') === 'read' || p.get('read') === 'unread') st.read = p.get('read');
+  if (p.get('bm') === 'bookmarked') st.bm = 'bookmarked';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(p.get('from') || '')) st.from = p.get('from');
+  var len = parseInt(p.get('len'), 10);
+  if (LENGTH_BUCKETS.indexOf(len) !== -1) st.len = len;
+  if (SORT_MODES.indexOf(p.get('sort')) !== -1) st.sort = p.get('sort');
+  if (/^\d+$/.test(p.get('page') || '') && parseInt(p.get('page'), 10) > 1) {
+    st.page = parseInt(p.get('page'), 10);
+  }
+  return st;
+}
+
+function currentFilterState() {
+  return {
+    q: document.getElementById('search').value.trim(),
+    channel: document.getElementById('channel-filter').value,
+    tag: document.getElementById('tag-filter').value,
+    read: document.getElementById('read-filter').value,
+    bm: document.getElementById('bookmark-filter').value,
+    from: document.getElementById('date-filter').value,
+    len: document.getElementById('length-filter').value,
+    sort: document.getElementById('sort').value,
+    page: currentPage
+  };
+}
+
+// Runs once in bootstrap(), after the dropdowns are filled and before the
+// first render, which picks the restored values (and currentPage) up.
+function restoreFiltersFromUrl() {
+  var st;
+  try { st = filterStateFromSearch(location.search); } catch (e) { return; }
+  if (st.q) document.getElementById('search').value = st.q;
+  if (st.channel) {
+    var known = st.channel === OTHER_CHANNELS
+      ? smallChannels.size > 0
+      : VIDEOS.some(function (v) { return v.channel_id === st.channel; });
+    if (known) {
+      var sel = document.getElementById('channel-filter');
+      ensureChannelOption(sel, st.channel);
+      sel.value = st.channel;
+    }
+  }
+  if (st.tag && VIDEOS.some(function (v) { return (v.tags || []).indexOf(st.tag) !== -1; })) {
+    document.getElementById('tag-filter').value = st.tag;
+  }
+  if (st.read) document.getElementById('read-filter').value = st.read;
+  if (st.bm) document.getElementById('bookmark-filter').value = st.bm;
+  if (st.from) document.getElementById('date-filter').value = st.from;
+  if (st.len) document.getElementById('length-filter').value = String(st.len);
+  if (st.sort) document.getElementById('sort').value = st.sort;
+  if (st.page) currentPage = st.page;
+}
+
+function writeFiltersToUrl() {
+  // The deep-link view hides every control; its URL is ?v=ID and nothing else
+  // of ours. clearSingleVideo() renders again and writes the filters back.
+  if (singleVideoId || !dataReady) return;
+  try {
+    var search = filterStateToSearch(currentFilterState(), location.search);
+    if (search === location.search) return;
+    history.replaceState(null, '', location.pathname + search + location.hash);
+  } catch (e) {}  // no URLSearchParams, or file:// refusing replaceState
 }
 
 function durationSeconds(v) {
@@ -2827,6 +2935,8 @@ function renderPage(page, skipScroll) {
   document.getElementById('results-count').textContent =
     s.results(total, totalSecs ? formatTotalDuration(totalSecs) : '');
 
+  writeFiltersToUrl();
+
   if (!skipScroll && currentPage !== prevPage) {
     var grid = document.getElementById('grid');
     if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3099,6 +3209,7 @@ async function bootstrap() {
   markDataReady();
   populateChannelFilter();
   populateTagFilter();
+  restoreFiltersFromUrl();
   // The pre-rendered cards carry the export's default language. If the visitor
   // resolves to a different one, drop them so applyLang() rebuilds from scratch.
   var lang = detectLang();

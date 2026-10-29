@@ -320,6 +320,15 @@ nor decoded when the page paints. The view therefore shows a "Video … wird gel
 first paint, and only reports "ist nicht in diesem Archiv" once the metadata index has been decoded and
 the ID is genuinely absent.
 
+### Filters survive a reload
+
+Search, channel, tag, read, bookmark, date, length, sort and the current page are mirrored into the
+query string as you change them (`?tag=Rust&read=unread&page=2`), via `history.replaceState`, so the
+back button is not flooded. A reload — including the one the update banner offers — comes back to the
+same selection, and the URL can be bookmarked. Defaults are left out, so an unfiltered archive keeps a
+bare URL; a value that no longer exists (a channel gone from the archive) is ignored. Share links still
+carry only `?v=ID`, never your filters.
+
 ### "New videos" banner
 
 Every export also writes a small manifest next to the HTML file — `full_archive.html` gets
