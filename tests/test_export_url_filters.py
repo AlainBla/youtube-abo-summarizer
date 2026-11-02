@@ -113,3 +113,46 @@ def test_a_filter_change_is_written_to_the_url():
 def test_the_deep_link_view_leaves_the_url_alone():
     out = _after_bootstrap("__urls", search="?v=v005&tag=Tag+B")
     assert out == []
+
+
+def test_reset_clears_every_control_and_the_url():
+    out = _after_bootstrap(
+        "(function () {"
+        "  resetFilters();"
+        "  return {q: document.getElementById('search').value,"
+        "          channel: document.getElementById('channel-filter').value,"
+        "          sort: document.getElementById('sort').value,"
+        "          page: currentPage, count: filtered.length,"
+        "          url: __urls[__urls.length - 1]};"
+        "})()",
+        search="?q=x&channel=UC2&read=unread&len=20&sort=title&page=2",
+    )
+    assert out == {"q": "", "channel": "", "sort": "date-desc", "page": 1,
+                   "count": 60, "url": "/x.html"}
+
+
+def test_the_title_reloads_the_bare_page():
+    out = _after_bootstrap(
+        "(function () {"
+        "  var reloaded = false;"
+        "  location.reload = function () { reloaded = true; };"
+        "  goHome();"
+        "  return {url: __urls[__urls.length - 1], reloaded: reloaded};"
+        "})()",
+        search="?tag=Tag+B&page=2",
+    )
+    assert out == {"url": "/x.html", "reloaded": True}
+
+
+def test_the_title_carries_no_reload_of_the_filtered_url():
+    html = render_export(_archive())
+    assert 'onclick="goHome(); return false;"' in html
+    assert "location.reload(); return false;" not in html
+
+
+def test_the_user_section_starts_logged_out_and_tracks_the_session():
+    html = render_export(_archive(), sync_url="https://sync.example.com")
+    assert 'class="sync-bar logged-out" id="sync-bar"' in html
+    script = extract_script(html)
+    assert "getElementById('sync-bar').classList.remove('logged-out')" in script
+    assert "getElementById('sync-bar').classList.add('logged-out')" in script

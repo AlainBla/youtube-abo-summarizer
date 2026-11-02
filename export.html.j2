@@ -124,6 +124,16 @@
       color: #666;
       white-space: nowrap;
     }
+    .reset-btn {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      color: #aaa;
+      font-size: 0.85rem;
+      padding: 0.45rem 0.75rem;
+      cursor: pointer;
+    }
+    .reset-btn:hover { color: #fff; border-color: #555; }
     .controls-bar input[type="date"] {
       background: #1a1a1a;
       border: 1px solid #2a2a2a;
@@ -400,6 +410,10 @@
     .sync-bar {
       max-width: 900px;
       margin: 0 auto 0.75rem;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      background: #151515;
       display: flex;
       align-items: center;
       gap: 0.6rem;
@@ -433,6 +447,13 @@
     .sync-bar button:hover { background: #333; }
     .sync-user-email { color: #aaa; font-size: 0.85rem; }
     .sync-status { color: #555; font-size: 0.8rem; margin-left: auto; }
+    /* Logged out: the whole user section turns light red, so a page that is
+       not syncing says so at a glance. */
+    .sync-bar.logged-out {
+      background: rgba(255, 120, 120, 0.13);
+      border-color: rgba(255, 130, 130, 0.55);
+    }
+    .sync-bar.logged-out .sync-status { color: #f0a0a0; }
     {% endif %}
     /* ── Update banner ── */
     .update-banner {
@@ -555,7 +576,7 @@
 <header class="page-header">
   <div class="header-row">
     <div>
-      <h1><a id="page-title" class="title-link" href="" onclick="location.reload(); return false;">YouTube Export</a></h1>
+      <h1><a id="page-title" class="title-link" href="" onclick="goHome(); return false;">YouTube Export</a></h1>
       <p class="meta" id="page-meta"><span id="meta-generated">{{ generated_date }} &mdash; </span><span id="video-count"{% if backlog %} class="has-backlog"{% endif %}>{{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}</span><span id="meta-duration">{% if total_duration %} &middot; {{ total_duration }}{% endif %}</span></p>
       <div id="backlog-panel" hidden><div id="backlog-text"></div><div id="backlog-chart"></div></div>
     </div>
@@ -570,7 +591,7 @@
 </header>
 
 {% if sync_url %}
-<div class="sync-bar" id="sync-bar">
+<div class="sync-bar logged-out" id="sync-bar">
   <div id="sync-login">
     <input type="email" id="sync-email" placeholder="E-Mail für Sync" autocomplete="email">
     <button id="sync-send-btn" onclick="syncRequestLink()">Link senden</button>
@@ -649,6 +670,7 @@
       <option value="title">Titel A&ndash;Z</option>
     </select>
   </div>
+  <button type="button" class="reset-btn" id="reset-filters" onclick="resetFilters()">Zur&uuml;cksetzen</button>
   <span class="results-count" id="results-count"></span>
   <span class="results-count" id="key-hint" style="color:#444">j/k &mdash; vor/zur&uuml;ck</span>
 </div>
@@ -702,6 +724,11 @@ const SYNC_URL = "{{ sync_url }}";
   var token = '';
   try { token = localStorage.getItem('yt_sync_token') || ''; } catch (e) {}
   if (!token) return;
+  // A session is on hand: drop the logged-out tint now rather than after
+  // /api/whoami answers, or every logged-in reader sees a red flash on load.
+  // showSyncLoggedOut() puts it back if the session turns out to be dead.
+  var bar = document.getElementById('sync-bar');
+  if (bar) bar.classList.remove('logged-out');
   var opts = {headers: {'Authorization': 'Bearer ' + token}};
   window.__syncBoot = {
     whoami: fetch(SYNC_URL + '/api/whoami', opts).catch(function () { return null; }),
@@ -777,6 +804,9 @@ const I18N = {
     labelRead: 'Gelesen',
     labelBookmark: 'Merken',
     labelSort: 'Sortierung',
+    resetFilters: 'Zur\u00fccksetzen',
+    resetFiltersTitle: 'Alle Filter, Suche und Sortierung zur\u00fccksetzen',
+    homeTitle: 'Neu laden, ohne Filter',
     unreadOnly: 'Nur ungelesen',
     readOnly: 'Nur gelesen',
     bookmarkedOnly: 'Nur gemerkt',
@@ -890,6 +920,9 @@ const I18N = {
     labelRead: 'Read',
     labelBookmark: 'Bookmark',
     labelSort: 'Sort',
+    resetFilters: 'Reset',
+    resetFiltersTitle: 'Clear all filters, search and sort',
+    homeTitle: 'Reload without filters',
     unreadOnly: 'Unread only',
     readOnly: 'Read only',
     bookmarkedOnly: 'Bookmarked only',
@@ -1156,12 +1189,14 @@ function getIsoNow() {
 }
 
 function showSyncLoggedIn(email) {
+  document.getElementById('sync-bar').classList.remove('logged-out');
   document.getElementById('sync-login').style.display = 'none';
   document.getElementById('sync-user').style.display = '';
   document.getElementById('sync-user-email').textContent = email;
 }
 
 function showSyncLoggedOut() {
+  document.getElementById('sync-bar').classList.add('logged-out');
   document.getElementById('sync-login').style.display = '';
   document.getElementById('sync-user').style.display = 'none';
   var ingest = document.getElementById('sync-ingest');
@@ -2377,6 +2412,10 @@ function applyLang(lang) {
   var waitCancelBtn = document.getElementById('ingest-wait-cancel');
   if (waitCancelBtn) waitCancelBtn.textContent = s.waitCancel;
   document.getElementById('label-sort').textContent = s.labelSort;
+  var resetBtn = document.getElementById('reset-filters');
+  resetBtn.textContent = s.resetFilters;
+  resetBtn.title = s.resetFiltersTitle;
+  document.getElementById('page-title').title = s.homeTitle;
 
   {% if sync_url %}
   // Update sync bar strings
@@ -2605,6 +2644,32 @@ function restoreFiltersFromUrl() {
   if (st.len) document.getElementById('length-filter').value = String(st.len);
   if (st.sort) document.getElementById('sort').value = st.sort;
   if (st.page) currentPage = st.page;
+}
+
+// The reset button: every control back to its default, page 1. The render
+// that follows writes the now bare URL through writeFiltersToUrl().
+function resetFilters() {
+  clearTimeout(debounceTimer);
+  ['search', 'channel-filter', 'tag-filter', 'read-filter', 'bookmark-filter',
+   'date-filter', 'length-filter'].forEach(function (id) {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('sort').value = SORT_MODES[0];
+  currentPage = 1;
+  applyFiltersAndSort(1);
+}
+
+// The page title: a fresh load of the bare page -- no filters, no page, no
+// deep link, no hash. A plain reload would restore the selection from the URL.
+function goHome() {
+  var url = location.pathname;
+  try {
+    history.replaceState(null, '', url);
+  } catch (e) {  // file:// may refuse replaceState; navigate instead
+    location.href = url;
+    return;
+  }
+  location.reload();
 }
 
 function writeFiltersToUrl() {
@@ -3043,6 +3108,9 @@ document.addEventListener('keydown', function(e) {
     focusCard(focusedIndex < 0 ? 0 : focusedIndex - 1);
   }
 });
+
+// The title's own href, for a middle click or "open in new tab": the bare page.
+document.getElementById('page-title').href = location.pathname;
 
 document.getElementById('search').addEventListener('input', function() {
   clearTimeout(debounceTimer);
