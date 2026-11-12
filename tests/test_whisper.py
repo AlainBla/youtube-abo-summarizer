@@ -133,7 +133,7 @@ def test_process_stores_transcript_then_summary(monkeypatch, store_calls):
     monkeypatch.setattr(whisper_collect.whisper_transcribe, "transcribe_video",
                         lambda vid, no_proxy=False: ("[0:00] hi", "en", 0.01))
     monkeypatch.setattr(whisper_collect.openrouter, "summarize_video",
-                        lambda vid, title, text, model, channel=None: ("<p>s</p>", ["KI"]))
+                        lambda vid, title, text, model, channel=None, **kw: ("<p>s</p>", ["KI"]))
     assert whisper_collect.process(_entry("a", channel_title="AdExchanger"), "m") is True
     assert store_calls[0][:4] == ("a", "[0:00] hi", None, None)
     assert store_calls[0][4]["transcript_lang"] == "en"

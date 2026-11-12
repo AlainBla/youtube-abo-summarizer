@@ -99,7 +99,8 @@ def process(entry: dict, model: str, no_proxy: bool = False) -> bool:
     print(f"    Summarizing via {model}...")
     try:
         summary, tags = openrouter.summarize_video(vid, entry["title"], text, model,
-                                                   channel=entry.get("channel_title"))
+                                                   channel=entry.get("channel_title"),
+                                                   published_at=entry.get("published_at"))
     except openrouter.SummaryRejected as e:
         print(f"    Summary rejected: {e} — transcript kept, repair.py can retry.")
         return True

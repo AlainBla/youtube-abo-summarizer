@@ -165,7 +165,8 @@ def main():
             if transcript:
                 print(f"    Summarizing via {model}...")
                 summary, _tags = openrouter.summarize_video(vid_id, vid_title, transcript, model,
-                                                            channel=title)
+                                                            channel=title,
+                                                            published_at=video.get("published_at"))
             else:
                 if not transcript_error or transcript_error == "unavailable":
                     print("    No transcript available.")

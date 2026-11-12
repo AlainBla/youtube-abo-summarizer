@@ -378,7 +378,8 @@ def main():
             llm_input = llm_path.read_text(encoding="utf-8") if llm_path else transcript
             try:
                 summary, tags = openrouter.summarize_video(vid_id, vid_title, llm_input, model,
-                                                   channel=vid_channel)
+                                                   channel=vid_channel,
+                                                   published_at=entry.get("published_at"))
             except openrouter.SummaryRejected as e:
                 print(f"    Summary rejected: {e} — left unchanged.")
                 n_rejected += 1

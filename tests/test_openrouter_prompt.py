@@ -115,3 +115,59 @@ def test_an_injected_channel_name_cannot_break_the_delimiters():
     )
     assert msg.index("<channel>") < msg.index("<transcript>")
     assert "<transcript>" in msg and "</transcript>" in msg
+
+
+# ── Model names newer than the model's training data ────────────────────────
+# Automatic captions garble names ("Quen 38", "Clode Fable 52"), and a model
+# that has never heard of them "corrected" them into ones it knew: Qwen 3.8
+# became Qwen 2.5, Claude Fable 5.2 became "Claude 3.5 Sonnet (im Video als
+# Fable 5.2 referenziert)". The prompt forbids that, and the publication date
+# tells the model the video postdates what it knows.
+
+def test_the_prompt_forbids_swapping_in_an_older_model_name():
+    prompt = openrouter.SYSTEM_PROMPT
+    assert "newer than your training data" in prompt
+    assert "version numbers" in prompt
+    assert "never replace them with an older" in prompt
+
+
+def test_the_prompt_allows_fixing_the_spelling_but_not_the_numbers():
+    prompt = openrouter.SYSTEM_PROMPT
+    assert '"Quen 38" → "Qwen 3.8"' in prompt
+    assert "keep every number the speaker said" in prompt
+
+
+def test_the_chunk_pass_carries_the_same_rule():
+    """In map-reduce the key points are written by the chunk pass; a name it
+    has already swapped cannot be recovered by the synthesis pass."""
+    assert "newer than your training data" in openrouter._CHUNK_SYSTEM_PROMPT
+
+
+def test_the_publication_date_reaches_every_pass():
+    msg = openrouter._build_user_message("abc123xyz", "T", "t",
+                                         published_at="2026-11-12T09:48:10Z")
+    assert "Video published: 2026-11-12\n" in msg
+    synth = openrouter._build_synthesis_message("abc123xyz", "T", "t", ["k"],
+                                                published_at="2026-11-12T09:48:10Z")
+    assert "Video published: 2026-11-12\n" in synth
+
+
+def test_the_chunk_pass_gets_the_date_too(monkeypatch):
+    sent = []
+
+    class Completions:
+        def create(self, **kw):
+            sent.append(kw["messages"][1]["content"])
+            choice = type("C", (), {"message": type("M", (), {"content": "- point [0:00]"})()})()
+            return type("R", (), {"choices": [choice]})()
+
+    client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})()})()
+    openrouter._summarize_chunk(client, "m", "abc123xyz", "T", "[0:00] x", 0, 2,
+                                published_at="2026-11-12T09:48:10Z")
+    assert "Video published: 2026-11-12\n" in sent[0]
+
+
+def test_an_unknown_or_malformed_date_leaves_no_line_behind():
+    for value in (None, "", "gestern", "2026-11"):
+        msg = openrouter._build_user_message("abc123xyz", "T", "t", published_at=value)
+        assert "Video published" not in msg

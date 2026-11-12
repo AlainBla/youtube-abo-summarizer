@@ -42,6 +42,15 @@ addressed by name), in which case use that. Never fall back to a generic label: 
 Creator", no "the creator", no "der YouTuber", no "der Host", no "der Sprecher". When no
 channel is given and the transcript names nobody, write around it ("im Video wird gezeigt…").
 
+The video is newer than your training data. Product names, model names and version numbers
+in it — AI models above all — may well be ones you have never heard of. Take them as the
+transcript states them and never replace them with an older or better-known one: a "Qwen 3.8"
+stays Qwen 3.8, not Qwen 2.5, and a "Claude Fable 5.2" stays Claude Fable 5.2, not Claude 3.5
+Sonnet. Never write that the video "means" or "refers to" a different model than the one it
+names. Automatic captions garble such names, so you may fix the spelling ("Clode" → "Claude",
+"Quen" → "Qwen") and restore a dot a version number lost ("Quen 38" → "Qwen 3.8", "Fable 52" →
+"Fable 5.2" when the video says 5.2 elsewhere), but keep every number the speaker said.
+
 The transcript contains timestamp markers in [MM:SS] format at the start of each segment.
 Include timestamp links to the relevant positions in the video using this exact HTML format:
   <a href="https://www.youtube.com/watch?v=VIDEO_ID&t=SECONDS" class="ts-link">MM:SS</a>
@@ -351,7 +360,10 @@ _CHUNK_SYSTEM_PROMPT = (
     "Extract the key points, facts, arguments, and events from this segment.\n"
     "Write concise bullet points or short paragraphs in plain text — no HTML.\n"
     "Preserve [MM:SS] timestamp markers for every major point so they can be used later.\n"
-    "This partial summary will be combined with summaries of other segments."
+    "This partial summary will be combined with summaries of other segments.\n"
+    "The video is newer than your training data: keep product names, model names and version\n"
+    "numbers exactly as the transcript states them (spelling of a garbled caption may be fixed,\n"
+    "the numbers never), and never swap one for an older or better-known one."
 )
 
 
@@ -364,8 +376,20 @@ def _channel_line(channel: str | None) -> str:
     return f"Channel: <channel>{channel}</channel>\n" if channel else ""
 
 
+def _published_line(published_at: str | None) -> str:
+    """The publication date (YYYY-MM-DD), or nothing when it is unknown.
+
+    It tells the model that the video postdates its training data, which is
+    what keeps it from "correcting" a model name it has never seen into an
+    older one it knows.
+    """
+    day = (published_at or "")[:10]
+    return f"Video published: {day}\n" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else ""
+
+
 def _build_user_message(
-    video_id: str, title: str, transcript: str, channel: str | None = None
+    video_id: str, title: str, transcript: str, channel: str | None = None,
+    published_at: str | None = None,
 ) -> str:
     """Build the user message for the LLM, wrapping untrusted inputs in delimiters.
 
@@ -378,6 +402,7 @@ def _build_user_message(
     duration_line = f"Video duration: {_format_duration(duration)}\n" if duration else ""
     return (
         f"Video ID: {video_id}\n"
+        f"{_published_line(published_at)}"
         f"{duration_line}"
         f"{_channel_line(channel)}"
         f"Video title: <title>{title}</title>\n\n"
@@ -418,10 +443,12 @@ def _summarize_chunk(
     chunk: str,
     chunk_index: int,
     total_chunks: int,
+    published_at: str | None = None,
 ) -> str:
     """Return a plain-text key-point summary of one transcript chunk."""
     user_msg = (
         f"Video ID: {video_id}\n"
+        f"{_published_line(published_at)}"
         f"Video title: <title>{title}</title>\n"
         f"Transcript segment {chunk_index + 1} of {total_chunks}:\n"
         f"<transcript>\n{chunk}\n</transcript>"
@@ -453,7 +480,7 @@ def _summarize_chunk(
 
 def _build_synthesis_message(
     video_id: str, title: str, transcript: str, chunk_summaries: list[str],
-    channel: str | None = None,
+    channel: str | None = None, published_at: str | None = None,
 ) -> str:
     """Build the synthesis user message from ordered chunk summaries.
 
@@ -464,6 +491,7 @@ def _build_synthesis_message(
     duration_line = f"Video duration: {_format_duration(duration)}\n" if duration else ""
     parts = [
         f"Video ID: {video_id}\n",
+        _published_line(published_at),
         f"{duration_line}",
         _channel_line(channel),
         f"Video title: <title>{title}</title>\n\n",
@@ -477,7 +505,8 @@ def _build_synthesis_message(
 
 
 def summarize_video(
-    video_id: str, title: str, transcript: str, model: str, channel: str | None = None
+    video_id: str, title: str, transcript: str, model: str, channel: str | None = None,
+    published_at: str | None = None,
 ) -> tuple[str, list[str]]:
     """Return an (HTML-fragment summary, tags list) tuple for the video.
 
@@ -490,14 +519,16 @@ def summarize_video(
     chunks = _split_transcript_chunks(transcript)
 
     if len(chunks) == 1:
-        user_message = _build_user_message(video_id, title, transcript, channel=channel)
+        user_message = _build_user_message(video_id, title, transcript, channel=channel,
+                                           published_at=published_at)
     else:
         chunk_summaries = [
-            _summarize_chunk(client, model, video_id, title, chunk, i, len(chunks))
+            _summarize_chunk(client, model, video_id, title, chunk, i, len(chunks),
+                             published_at=published_at)
             for i, chunk in enumerate(chunks)
         ]
         user_message = _build_synthesis_message(video_id, title, transcript, chunk_summaries,
-                                                channel=channel)
+                                                channel=channel, published_at=published_at)
 
     response = client.chat.completions.create(
         model=model,
