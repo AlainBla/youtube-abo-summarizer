@@ -65,6 +65,11 @@
     #backlog-chart { margin-top: 0.5rem; }
     #backlog-chart svg { display: block; width: 100%; height: auto; touch-action: none; }
     .bl-readout { color: #ddd; font-variant-numeric: tabular-nums; min-height: 1.3em; }
+    #backlog-months:empty { display: none; }
+    #backlog-months { margin-top: 0.7rem; padding-top: 0.5rem; border-top: 1px solid #2c2c2c; }
+    #backlog-months svg { display: block; width: 100%; height: auto; touch-action: none; }
+    .bm-legend { display: flex; flex-wrap: wrap; gap: 0.2rem 0.8rem; margin-top: 0.3rem; font-size: 0.8rem; color: #999; }
+    .bm-legend i { display: inline-block; width: 0.7em; height: 0.7em; border-radius: 2px; margin-right: 0.3em; vertical-align: baseline; }
     .full-link {
       color: #aaa;
       font-size: 0.85rem;
@@ -578,7 +583,7 @@
     <div>
       <h1><a id="page-title" class="title-link" href="" onclick="goHome(); return false;">YouTube Export</a></h1>
       <p class="meta" id="page-meta"><span id="meta-generated">{{ generated_date }} &mdash; </span><span id="video-count"{% if backlog %} class="has-backlog"{% endif %}>{{ total_videos }} Video{{ 's' if total_videos != 1 else '' }}</span><span id="meta-duration">{% if total_duration %} &middot; {{ total_duration }}{% endif %}</span></p>
-      <div id="backlog-panel" hidden><div id="backlog-text"></div><div id="backlog-chart"></div></div>
+      <div id="backlog-panel" hidden><div id="backlog-text"></div><div id="backlog-chart"></div><div id="backlog-months"></div></div>
     </div>
     <div class="header-links">
       {% if full_url %}<a class="full-link" id="full-link" href="{{ full_url }}">{{ t.full_archive }}</a>{% endif %}
@@ -793,6 +798,13 @@ const I18N = {
     backlogAgo: {d7: 'vor 7 Tagen', d30: 'vor 30 Tagen', d90: 'vor 3 Monaten'},
     backlogChartLabel: function (n) { return 'Bestand pro Tag, ' + n + (n === 1 ? ' Tag' : ' Tage'); },
     backlogDay: function (iso) { return iso.slice(8, 10) + '.' + iso.slice(5, 7) + '.'; },
+    monthsChartLabel: 'Videos pro Erscheinungsmonat',
+    monthNames: ['Jan','Feb','M\u00e4r','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'],
+    monthsOlder: '\u00e4lter',
+    monthsOlderLong: '\u00c4lter als 12 Monate',
+    monthsUnread: 'ungelesen',
+    monthsRead: 'gelesen',
+    monthsBookmarked: 'gemerkt',
     searchPlaceholder: 'Titel oder Zusammenfassung durchsuchen\u2026',
     allChannels: 'Alle',
     otherChannels: 'Andere',
@@ -909,6 +921,13 @@ const I18N = {
       var m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
       return m[parseInt(iso.slice(5, 7), 10) - 1] + ' ' + parseInt(iso.slice(8, 10), 10);
     },
+    monthsChartLabel: 'Videos per month published',
+    monthNames: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+    monthsOlder: 'older',
+    monthsOlderLong: 'Older than 12 months',
+    monthsUnread: 'unread',
+    monthsRead: 'read',
+    monthsBookmarked: 'bookmarked',
     searchPlaceholder: 'Search title or summary\u2026',
     allChannels: 'All',
     otherChannels: 'Other',
@@ -1093,6 +1112,7 @@ window.toggleRead = function(videoId) {
   }
   saveSet(COOKIE_READ, readSet);
   {% if sync_url %}syncToggle('read', videoId, readSet.has(videoId) ? 1 : 0);{% endif %}
+  refreshBacklogMonths();
   var readFilter = document.getElementById('read-filter').value;
   // Before dataReady, applyFiltersAndSort() is a no-op (see its own guard),
   // so falling through to updateCardInPlace() keeps the click giving
@@ -1112,6 +1132,7 @@ window.toggleBookmark = function(videoId) {
   }
   saveSet(COOKIE_BOOKMARK, bookmarkSet);
   {% if sync_url %}syncToggle('bookmark', videoId, bookmarkSet.has(videoId) ? 1 : 0);{% endif %}
+  refreshBacklogMonths();
   var bookmarkFilter = document.getElementById('bookmark-filter').value;
   // Same reasoning as toggleRead above: fall through to updateCardInPlace()
   // while dataReady is still false so the click always has visible effect.
@@ -2293,6 +2314,145 @@ function renderBacklogChart() {
   show(last, false);
 }
 
+// ── Backlog by month: stacked bars, unread / read / bookmarked ──────────────
+// Computed in the page from the decoded index and the local read/bookmark
+// sets, so it follows every toggle without a re-export. Month = publication
+// month (UTC); the current month and the eleven before it get a bar each,
+// everything older shares one bar at the left.
+var BM_MONTHS = 12;
+var BM_W = 320, BM_H = 120;
+var BM_PAD = {left: 34, right: 4, top: 8, bottom: 18};
+var BM_COLORS = {unread: '#6ea8fe', read: '#6b6b6b', bookmarked: '#d4a72c'};
+
+function backlogMonthBuckets(videos, readIds, bookmarkIds, now) {
+  // Pure: videos carry published_at, the two sets answer has(). A bookmark
+  // wins over read/unread, so the three segments add up to the video count.
+  var y = now.getUTCFullYear(), m = now.getUTCMonth();
+  var months = [];
+  for (var i = BM_MONTHS - 1; i >= 0; i--) {
+    var d = new Date(Date.UTC(y, m - i, 1));
+    months.push(d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'));
+  }
+  var first = months[0], last = months[months.length - 1];
+  var byKey = {};
+  var older = {key: 'older', unread: 0, read: 0, bookmarked: 0};
+  var bars = months.map(function (k) {
+    return (byKey[k] = {key: k, unread: 0, read: 0, bookmarked: 0});
+  });
+  (videos || []).forEach(function (v) {
+    var k = String(v.published_at || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(k)) return;
+    var bar = k < first ? older : byKey[k > last ? last : k];
+    var kind = bookmarkIds.has(v.video_id) ? 'bookmarked'
+             : (readIds.has(v.video_id) ? 'read' : 'unread');
+    bar[kind] += 1;
+  });
+  if (older.unread + older.read + older.bookmarked > 0) bars.unshift(older);
+  return bars;
+}
+
+function backlogMonthLabel(key, s, long) {
+  if (key === 'older') return long ? s.monthsOlderLong : s.monthsOlder;
+  var name = s.monthNames[parseInt(key.slice(5, 7), 10) - 1];
+  return long ? name + ' ' + key.slice(0, 4) : name;
+}
+
+function backlogMonthReadout(bar, s) {
+  if (!bar) return '';
+  var total = bar.unread + bar.read + bar.bookmarked;
+  return backlogMonthLabel(bar.key, s, true) + ': ' + total + ' (' +
+    bar.unread + ' ' + s.monthsUnread + ', ' + bar.read + ' ' + s.monthsRead + ', ' +
+    bar.bookmarked + ' ' + s.monthsBookmarked + ')';
+}
+
+function backlogMonthsSvg(bars, s) {
+  if (!bars || !bars.length) return '';
+  var totals = bars.map(function (b) { return b.unread + b.read + b.bookmarked; });
+  var hi = Math.max.apply(null, totals);
+  if (hi === 0) return '';
+  var pw = BM_W - BM_PAD.left - BM_PAD.right;
+  var ph = BM_H - BM_PAD.top - BM_PAD.bottom;
+  var slot = pw / bars.length;
+  var bw = Math.max(2, slot * 0.72);
+  var baseY = BM_H - BM_PAD.bottom;
+  var r1 = function (v) { return Math.round(v * 10) / 10; };
+  var out = [];
+  out.push('<div class="bl-readout bm-readout"></div>');
+  out.push('<svg viewBox="0 0 ' + BM_W + ' ' + BM_H + '" role="img" aria-label="' +
+           escHtml(s.monthsChartLabel) + '">');
+  out.push('<line x1="' + BM_PAD.left + '" x2="' + (BM_W - BM_PAD.right) + '" y1="' + BM_PAD.top +
+           '" y2="' + BM_PAD.top + '" stroke="#2c2c2c" stroke-width="1"/>');
+  out.push('<text x="' + (BM_PAD.left - 6) + '" y="' + BM_PAD.top + '" dy="0.32em" text-anchor="end"' +
+           ' fill="#888" font-size="10">' + hi + '</text>');
+  out.push('<line x1="' + BM_PAD.left + '" x2="' + (BM_W - BM_PAD.right) + '" y1="' + baseY +
+           '" y2="' + baseY + '" stroke="#444" stroke-width="1"/>');
+  bars.forEach(function (b, i) {
+    var x = BM_PAD.left + i * slot + (slot - bw) / 2;
+    var y = baseY;
+    out.push('<g class="bm-bar" data-i="' + i + '">');
+    ['unread', 'read', 'bookmarked'].forEach(function (kind) {
+      if (!b[kind]) return;
+      var h = b[kind] / hi * ph;
+      y -= h;
+      out.push('<rect x="' + r1(x) + '" y="' + r1(y) + '" width="' + r1(bw) + '" height="' + r1(h) +
+               '" fill="' + BM_COLORS[kind] + '"/>');
+    });
+    out.push('</g>');
+    out.push('<text x="' + r1(BM_PAD.left + (i + 0.5) * slot) + '" y="' + (BM_H - 5) +
+             '" text-anchor="middle" fill="#888" font-size="' + (bars.length > 12 ? 8 : 9) + '">' +
+             escHtml(backlogMonthLabel(b.key, s, false)) + '</text>');
+  });
+  out.push('<rect class="bm-hi" x="0" y="' + BM_PAD.top + '" width="' + r1(slot) + '" height="' + ph +
+           '" fill="#fff" fill-opacity="0.06" visibility="hidden"/>');
+  out.push('<rect class="bm-hit" x="' + BM_PAD.left + '" y="0" width="' + pw + '" height="' + BM_H +
+           '" fill="transparent"/>');
+  out.push('</svg>');
+  out.push('<div class="bm-legend">' + ['unread', 'read', 'bookmarked'].map(function (kind) {
+    var label = kind === 'unread' ? s.monthsUnread : (kind === 'read' ? s.monthsRead : s.monthsBookmarked);
+    return '<span><i style="background:' + BM_COLORS[kind] + '"></i>' + escHtml(label) + '</span>';
+  }).join('') + '</div>');
+  return out.join('');
+}
+
+function renderBacklogMonths() {
+  var box = document.getElementById('backlog-months');
+  if (!box || !BACKLOG) return;
+  // Before the index is decoded there is nothing to count; bootstrap's first
+  // applyFiltersAndSort() calls back here once it is.
+  if (!dataReady) { box.innerHTML = ''; return; }
+  var s = backlogStrings();
+  var bars = backlogMonthBuckets(VIDEOS, readSet, bookmarkSet, new Date());
+  box.innerHTML = backlogMonthsSvg(bars, s);
+  if (!box.querySelector) return;
+  var svg = box.querySelector('svg');
+  var readout = box.querySelector('.bm-readout');
+  var hi = box.querySelector('.bm-hi');
+  if (!svg || !readout || !hi) return;
+  var slot = (BM_W - BM_PAD.left - BM_PAD.right) / bars.length;
+  // Resting readout: the current month, the one a reader asks about first.
+  function show(i, active) {
+    readout.textContent = backlogMonthReadout(bars[i], s);
+    hi.setAttribute('x', BM_PAD.left + i * slot);
+    hi.setAttribute('visibility', active ? 'visible' : 'hidden');
+  }
+  function track(e) {
+    var rect = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    var x = (e.clientX - rect.left) / rect.width * BM_W;
+    var i = Math.floor((x - BM_PAD.left) / slot);
+    show(Math.max(0, Math.min(bars.length - 1, i)), true);
+  }
+  svg.addEventListener('pointermove', track);
+  svg.addEventListener('pointerdown', track);
+  svg.addEventListener('pointerleave', function () { show(bars.length - 1, false); });
+  svg.addEventListener('click', function (e) { e.stopPropagation(); });
+  show(bars.length - 1, false);
+}
+
+function refreshBacklogMonths() {
+  if (backlogPanelOpen()) renderBacklogMonths();
+}
+
 // The language the backlog text was last written in. Kept separately from
 // currentLang because the tooltip is set from detectLang() before bootstrap()
 // ever calls applyLang(), and the panel must not open in a different language
@@ -2319,6 +2479,7 @@ function setBacklogTooltip(lang) {
   if (textBox && backlogPanelOpen()) {
     textBox.textContent = text;
     renderBacklogChart();
+    renderBacklogMonths();
   }
 }
 
@@ -2335,6 +2496,7 @@ function setBacklogPanel(open) {
     var textBox = document.getElementById('backlog-text');
     if (textBox) textBox.textContent = backlogTooltipText(BACKLOG, backlogStrings());
     renderBacklogChart();
+    renderBacklogMonths();
   }
   panel.hidden = !open;
   if (el) el.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -2839,6 +3001,9 @@ function applyFiltersAndSort(page) {
   // bootstrap's own applyLang()/applyFiltersAndSort() call (once dataReady
   // flips true) picks it up and renders exactly what the user chose.
   if (!dataReady) return;
+  // Sync merges, the first render after decoding and language switches all
+  // pass through here; the month chart follows them while it is on screen.
+  refreshBacklogMonths();
 
   // A deep link shows exactly one video; every other control is hidden while
   // it is active, so there is nothing to combine it with.

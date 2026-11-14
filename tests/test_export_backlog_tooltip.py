@@ -319,3 +319,117 @@ def test_the_record_carries_the_whole_archive_size_too(stats_file):
     assert entry["total_count"] == 5000
     assert entry["window"] == "hours:48"
     assert entry["personal_count"] == 12
+
+
+# ── the month chart: stacked bars by publication month ───────────────────────
+
+def _months(expr):
+    snippet = "console.log(JSON.stringify(%s));" % expr
+    return json.loads(run_node(_script(dict(BACKLOG, daily=DAILY)), snippet)
+                      .strip().splitlines()[-1])
+
+
+MONTH_VIDEOS = [
+    {"video_id": "a", "published_at": "2026-11-02T10:00:00Z"},   # unread
+    {"video_id": "b", "published_at": "2026-11-20T10:00:00Z"},   # read
+    {"video_id": "c", "published_at": "2026-10-05T10:00:00Z"},   # read + bookmarked
+    {"video_id": "d", "published_at": "2025-12-01T00:00:00Z"},   # oldest own bar
+    {"video_id": "e", "published_at": "2025-11-30T23:59:59Z"},   # older
+    {"video_id": "f", "published_at": "2019-03-01T00:00:00Z"},   # older, bookmarked
+]
+
+
+def _buckets(videos=MONTH_VIDEOS, read=("b", "c"), bookmarked=("c", "f")):
+    return _months(
+        "backlogMonthBuckets(%s, new Set(%s), new Set(%s), new Date('2026-11-13T12:00:00Z'))"
+        % (json.dumps(videos), json.dumps(list(read)), json.dumps(list(bookmarked))))
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_twelve_months_get_a_bar_each_and_older_ones_share_one():
+    bars = _buckets()
+    assert [b["key"] for b in bars] == ["older"] + [
+        "2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05",
+        "2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11"]
+    by = {b["key"]: b for b in bars}
+    assert by["older"] == {"key": "older", "unread": 1, "read": 0, "bookmarked": 1}
+    assert by["2025-12"] == {"key": "2025-12", "unread": 1, "read": 0, "bookmarked": 0}
+    # A bookmark wins over read, so the segments add up to the video count.
+    assert by["2026-10"] == {"key": "2026-10", "unread": 0, "read": 0, "bookmarked": 1}
+    assert by["2026-11"] == {"key": "2026-11", "unread": 1, "read": 1, "bookmarked": 0}
+    assert sum(b["unread"] + b["read"] + b["bookmarked"] for b in bars) == len(MONTH_VIDEOS)
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_no_older_bar_when_nothing_is_older():
+    bars = _buckets(videos=MONTH_VIDEOS[:3])
+    assert len(bars) == 12
+    assert bars[0]["key"] == "2025-12"
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_the_month_readout_names_all_three_kinds():
+    bar = {"key": "2026-10", "unread": 3, "read": 5, "bookmarked": 1}
+    assert _months("backlogMonthReadout(%s, I18N.de)" % json.dumps(bar)) == \
+        "Okt 2026: 9 (3 ungelesen, 5 gelesen, 1 gemerkt)"
+    older = {"key": "older", "unread": 1, "read": 0, "bookmarked": 0}
+    assert _months("backlogMonthReadout(%s, I18N.en)" % json.dumps(older)) == \
+        "Older than 12 months: 1 (1 unread, 0 read, 0 bookmarked)"
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_the_month_svg_stacks_one_rect_per_nonempty_segment():
+    bars = _buckets()
+    svg = _months("backlogMonthsSvg(%s, I18N.de)" % json.dumps(bars))
+    assert svg.count('class="bm-bar"') == 13
+    # older: unread + bookmarked, 2025-12: unread, 2026-10: bookmarked,
+    # 2026-11: unread + read -- plus the highlight and the hit area.
+    assert svg.count("<rect") == 6 + 2
+    assert "älter" in svg and "Nov" in svg
+    assert _months("backlogMonthsSvg([], I18N.de)") == ""
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_opening_the_panel_draws_the_month_chart_once_data_is_ready():
+    snippet = """
+    VIDEOS = [{video_id: 'x', published_at: new Date().toISOString()}];
+    dataReady = true;
+    toggleBacklogPanel();
+    console.log(JSON.stringify(document.getElementById('backlog-months').innerHTML));
+    process.exit(0);
+    """
+    out = json.loads(run_node(_script(dict(BACKLOG, daily=DAILY)), snippet)
+                     .strip().splitlines()[-1])
+    assert 'class="bm-bar"' in out
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_the_month_chart_stays_empty_until_the_index_is_decoded():
+    snippet = """
+    toggleBacklogPanel();
+    console.log(JSON.stringify(document.getElementById('backlog-months').innerHTML));
+    process.exit(0);
+    """
+    out = json.loads(run_node(_script(dict(BACKLOG, daily=DAILY)), snippet)
+                     .strip().splitlines()[-1])
+    assert out == ""
+
+
+@pytest.mark.skipif(not node_available(), reason="node not installed")
+def test_toggling_read_redraws_an_open_month_chart():
+    snippet = """
+    VIDEOS = [{video_id: 'x', published_at: new Date().toISOString()}];
+    dataReady = true;
+    toggleBacklogPanel();
+    var before = document.getElementById('backlog-months').innerHTML;
+    window.toggleRead('x');
+    var after = document.getElementById('backlog-months').innerHTML;
+    var n = function (h) { return h.split('fill="#6b6b6b"').length - 1; };
+    console.log(JSON.stringify([n(before), n(after)]));
+    process.exit(0);
+    """
+    out = json.loads(run_node(_script(dict(BACKLOG, daily=DAILY)), snippet)
+                     .strip().splitlines()[-1])
+    # The grey "read" segment appears only after the toggle; the legend
+    # swatch uses a style attribute, so only bar rects carry fill="...".
+    assert out == [0, 1]

@@ -272,6 +272,14 @@ dot, and the points are spaced by date, so a gap shows as a gap. Hover or drag a
 read a single day; otherwise the readout names the latest one. With fewer than two days recorded
 there is no chart.
 
+Below it a stacked bar chart counts the page's videos by publication month: one bar for each of
+the last 12 months (the current one included) and one bar, "älter", for everything before them,
+shown only when there is anything that old. Each bar is split into unread (blue), read (grey) and
+bookmarked (gold); a bookmark wins over read/unread, so the segments add up to the video count. It
+is computed in the browser from the index and the local read/bookmark state, so it follows every
+toggle and sync without a re-export, and appears once the data blob is decoded. Hover or tap a bar
+for its numbers; otherwise the readout names the current month.
+
 The panel closes on a second tap, on a tap anywhere else, or with Escape.
 
 A measurement is only comparable to measurements taken under the same rules, so each line carries
