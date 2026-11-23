@@ -102,3 +102,52 @@ def test_fix_links_without_transcript_keeps_links(tmp_path, monkeypatch):
     (tmp_path / "X.html").write_text(html, encoding="utf-8")
     monkeypatch.setattr(store, "get_llm_transcript_path", lambda vid: None)
     assert repair.fix_links([{"video_id": "X", "title": "T"}], dry_run=False) == 0
+
+
+def _fake_client(monkeypatch, contents):
+    calls = []
+
+    class FakeCompletions:
+        def create(self, **kw):
+            calls.append(kw)
+            content = contents[min(len(calls), len(contents)) - 1]
+            return SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(content=content), finish_reason="stop")])
+
+    monkeypatch.setattr(openrouter, "build_client",
+                        lambda: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())))
+    monkeypatch.setattr(openrouter.tag_vocab, "record_candidates", lambda rejected: None)
+    return calls
+
+
+STRETCHED = f"<p>a. {_link(60, '1:00')} b. {_link(3000, '50:00')}</p>\n<!-- tags: Geopolitik -->"
+GOOD = f"<p>a. {_link(60, '1:00')} b. {_link(1200, '20:00')}</p>\n<!-- tags: Geopolitik -->"
+TRANSCRIPT = "[0:00] a\n[20:00] b"
+
+
+def test_stretched_summary_is_retried_once(monkeypatch):
+    calls = _fake_client(monkeypatch, [STRETCHED, GOOD])
+    html, _ = openrouter.summarize_video("X", "T", TRANSCRIPT, "m")
+    assert len(calls) == 2
+    assert "t=1200" in html and "t=3000" not in html
+
+
+def test_clean_summary_is_not_retried(monkeypatch):
+    calls = _fake_client(monkeypatch, [GOOD])
+    openrouter.summarize_video("X", "T", TRANSCRIPT, "m")
+    assert len(calls) == 1
+
+
+def test_retry_that_stretches_again_keeps_first_and_drops(monkeypatch):
+    calls = _fake_client(monkeypatch, [STRETCHED, STRETCHED, GOOD])
+    html, _ = openrouter.summarize_video("X", "T", TRANSCRIPT, "m")
+    assert len(calls) == 2  # never a third attempt
+    assert "t=60" in html and "t=3000" not in html
+
+
+def test_rejected_retry_keeps_the_first_summary(monkeypatch):
+    truncated = "<p>Mitten im Satz und dann"
+    calls = _fake_client(monkeypatch, [STRETCHED, truncated])
+    html, _ = openrouter.summarize_video("X", "T", TRANSCRIPT, "m")
+    assert len(calls) == 2
+    assert html == f"<p>a. {_link(60, '1:00')} b.</p>"

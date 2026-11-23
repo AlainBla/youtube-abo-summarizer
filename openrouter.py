@@ -455,6 +455,14 @@ _ANY_TS_LINK_RE = re.compile(
 )
 
 
+def _links_past_end(html: str, duration: int | None) -> int:
+    """How many timestamp links point past the end of the video (0 when unknown)."""
+    if not duration:
+        return 0
+    limit = duration + _LINK_SLACK_SECONDS
+    return sum(1 for m in _ANY_TS_LINK_RE.finditer(html) if int(m["secs"]) > limit)
+
+
 def _drop_links_past_end(html: str, duration: int | None) -> str:
     """Remove timestamp links that point past the end of the video.
 
@@ -670,6 +678,31 @@ def summarize_video(
         user_message = _build_synthesis_message(video_id, title, transcript, chunk_summaries,
                                                 channel=channel, published_at=published_at)
 
+    duration = _transcript_duration(transcript)
+    html, raw_tags = _final_pass(client, model, user_message)
+    late = _links_past_end(html, duration)
+    if late:
+        # Sampling is random: a second run of the same input mostly keeps to the
+        # timeline (19 of 20 stretched summaries did in a test). One retry only,
+        # and the first result stands if the retry fails or is no better.
+        print(f"  [warn] {late} timestamp link(s) past the video's end "
+              f"({renderer._seconds_to_label(duration)}), retrying once", file=sys.stderr)
+        try:
+            retry_html, retry_tags = _final_pass(client, model, user_message)
+        except (SummaryRejected, ValueError) as exc:
+            print(f"  [warn] retry failed ({exc}), keeping the first summary", file=sys.stderr)
+        else:
+            if _links_past_end(retry_html, duration) < late:
+                html, raw_tags = retry_html, retry_tags
+    # The prompt asks for vocabulary tags; canonicalize() is what enforces it.
+    # What the model still invents is counted for review, never stored.
+    kept_tags, rejected_tags = tag_vocab.canonicalize(raw_tags)
+    tag_vocab.record_candidates(rejected_tags)
+    return _drop_links_past_end(html, duration), kept_tags
+
+
+def _final_pass(client: OpenAI, model: str, user_message: str) -> tuple[str, list[str]]:
+    """One call for the final HTML summary: validated and repaired, raw tags."""
     response = client.chat.completions.create(
         model=model,
         messages=[
@@ -684,11 +717,6 @@ def summarize_video(
         raise ValueError(f"Model returned no content (finish_reason={finish_reason!r})")
     html, raw_tags = _clean_response(choice.message.content)
     _validate_summary(html, getattr(choice, "finish_reason", None))
-    # The prompt asks for vocabulary tags; canonicalize() is what enforces it.
-    # What the model still invents is counted for review, never stored.
-    kept_tags, rejected_tags = tag_vocab.canonicalize(raw_tags)
-    tag_vocab.record_candidates(rejected_tags)
     # Repair links before deduping — dedup compares t= values, which are only
     # meaningful once they have been recomputed from the labels.
-    html = _drop_links_past_end(repair_summary_html(html), _transcript_duration(transcript))
-    return html, kept_tags
+    return repair_summary_html(html), raw_tags
