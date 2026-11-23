@@ -3,6 +3,7 @@
 import os
 import json
 import re
+import sys
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -51,11 +52,15 @@ names. Automatic captions garble such names, so you may fix the spelling ("Clode
 "Quen" → "Qwen") and restore a dot a version number lost ("Quen 38" → "Qwen 3.8", "Fable 52" →
 "Fable 5.2" when the video says 5.2 elsewhere), but keep every number the speaker said.
 
-The transcript contains timestamp markers in [MM:SS] format at the start of each segment.
-Include timestamp links to the relevant positions in the video using this exact HTML format:
-  <a href="https://www.youtube.com/watch?v=VIDEO_ID&t=SECONDS" class="ts-link">MM:SS</a>
+The transcript contains timestamp markers at the start of each segment: [M:SS] in the first
+hour, [H:MM:SS] after it. Include timestamp links to the relevant positions in the video using
+this exact HTML format:
+  <a href="https://www.youtube.com/watch?v=VIDEO_ID&t=SECONDS" class="ts-link">M:SS</a>
 Replace VIDEO_ID with the video ID from the user message and SECONDS with the integer number of
-seconds (e.g. [1:23] → t=83).
+seconds (e.g. [1:23] → t=83, [1:02:03] → t=3723), and show the marker itself as the label.
+Take every timestamp from a marker in the transcript: never a rounded or estimated time, and
+never one after the last marker — the video ends there. Cover the whole transcript, to its
+last marker, in order.
 - For <h3> headings: place the timestamp link at the end of the heading.
 - For <p> paragraphs and <li> items: place each timestamp link directly after the sentence
   it belongs to — not at the end of the paragraph. Each sentence that covers a new transcript
@@ -179,6 +184,78 @@ def _drop_stray_paragraph_ends(html: str) -> str:
     return _REPEATED_P_END_RE.sub("</p>", _STRAY_P_END_RE.sub(drop, html))
 
 
+# A heading start repeated before the first one was closed, on the same line:
+# "<h3>Titel <h3><a ...>2:13</a></h3>" or "<h3>Fazit <h3>" (the opener typed
+# where the closer belonged). The inner start tag is dropped.
+_REPEATED_HEADING_START_RE = re.compile(
+    r"(?P<head><h(?P<level>[1-6])\b[^>]*>(?:(?!</?h[1-6]\b|<p\b)[^\n])*?)"
+    r"\s*<h(?P=level)\s*>",
+    re.IGNORECASE,
+)
+
+# One heading up to the next block start (or the end of the fragment): that is
+# as far as the browser would carry an unclosed heading.
+_HEADING_SEGMENT_RE = re.compile(
+    r"<h(?P<level>[1-6])\b(?P<attrs>[^>]*)>"
+    r"(?P<body>.*?)"
+    r"(?=<(?:p|ul|ol|li|div|blockquote|table|h[1-6])\b|\Z)",
+    re.DOTALL | re.IGNORECASE,
+)
+
+# What models write where </hN> belongs: </p>, a garbled </h… ("</hoster",
+# </h3> run into the next word), or an inline closer with no opener.
+_HEADING_JUNK_CLOSER_RE = re.compile(
+    r"</p\s*>|</h(?![1-6]\s*>)[^<>\s]*>?|</(?P<inline>i|b|em|strong|span|u|small)\s*>",
+    re.IGNORECASE,
+)
+_HEADING_CLOSER_RE = re.compile(r"</h[1-6]\s*>", re.IGNORECASE)
+
+
+def _close_heading(m: re.Match) -> str:
+    level, attrs, body = m["level"], m["attrs"], m["body"]
+    opener, closer = f"<h{level}{attrs}>", f"</h{level}>"
+    real = _HEADING_CLOSER_RE.search(body)
+    if real:
+        # Closed — the browser accepts any level. Normalise the level and drop
+        # a </p> typed just before it ("</a></p></h3>").
+        head = re.sub(r"(?:\s*</p\s*>)+\s*$", "", body[: real.start()])
+        return f"{opener}{head}{closer}{body[real.end():]}"
+    for junk in _HEADING_JUNK_CLOSER_RE.finditer(body):
+        tag = junk["inline"]
+        if tag and re.search(rf"<{tag}\b", body[: junk.start()], re.IGNORECASE):
+            continue  # a real inline closer
+        return f"{opener}{body[: junk.start()].rstrip()}{closer}{body[junk.end():]}"
+    stripped = body.rstrip()
+    if not stripped:
+        return body  # an empty heading the model opened by mistake: drop it
+    return f"{opener}{stripped}{closer}{body[len(stripped):]}"
+
+
+def _fix_heading_closers(html: str) -> str:
+    """Close every heading the model left open.
+
+    Models end a heading with </p>, with a garbled "</hoster", with an inline
+    closer that has no opener, or type <h3> where </h3> belongs. The browser
+    ignores all of those, so the heading stays open and the next paragraph is
+    parsed inside it — inheriting the heading style, which in the archive is
+    `text-transform: uppercase` (znzYWHPv1WY: three paragraphs in capitals).
+
+    Each heading is taken up to the next block start; without a real closer in
+    that stretch, the first junk closer is replaced by </hN>, or </hN> is put
+    at its end. A closer of the wrong level is normalised; the browser would
+    accept it anyway.
+
+    Must run after `_fix_timestamp_links()`, which turns an anchor closed with
+    </p> into "</a></p>" — that </p> is then the heading's closer.
+    """
+    def merge(m: re.Match) -> str:
+        rest = m.string[m.end():m.end() + 1]
+        return m["head"] + ("" if not rest or rest.isspace() else " ")
+
+    html = _REPEATED_HEADING_START_RE.sub(merge, html)
+    return _HEADING_SEGMENT_RE.sub(_close_heading, html)
+
+
 def repair_summary_html(html: str) -> str:
     """Run every purely textual repair over a summary fragment. No API calls.
 
@@ -188,18 +265,20 @@ def repair_summary_html(html: str) -> str:
     they swallowed is still inside an attribute value and invisible to every
     pass below; the same holds for a tag that never reaches its '>'. Anchors
     the model left without a label then get one from their href. Timestamp links come next (that pass consumes the wrong closing
-    tags), stray paragraph ends after that, and deduplication last —
+    tags), then headings closed with </p>, stray paragraph ends after that, and deduplication last —
     its block regex would otherwise stop at a stray </p> and miss duplicate
     links in the rest of the paragraph.
     """
     unwrapped = _unwrap_json_response(html)
     return _dedup_timestamps(
         _drop_stray_paragraph_ends(
-            _fix_timestamp_links(
-                renderer._relabel_unlabelled_ts_links(
-                    renderer._close_labelless_ts_links(
-                        renderer._close_unterminated_ts_tags(
-                            renderer._repair_broken_ts_links(unwrapped)
+            _fix_heading_closers(
+                _fix_timestamp_links(
+                    renderer._relabel_unlabelled_ts_links(
+                        renderer._close_labelless_ts_links(
+                            renderer._close_unterminated_ts_tags(
+                                renderer._repair_broken_ts_links(unwrapped)
+                            )
                         )
                     )
                 )
@@ -334,13 +413,72 @@ def _clean_response(content: str) -> tuple[str, list[str]]:
     return html.strip(), tags
 
 
+# A segment marker: [M:SS], [H:MM:SS], or the minute-only long form older
+# transcripts carry past the first hour ("[220:13]").
+_MARKER_RE = re.compile(r"\[(?:(\d+):)?(\d+):(\d{2})\]")
+
+
+def _marker_seconds(m: re.Match) -> int:
+    return int(m[1] or 0) * 3600 + int(m[2]) * 60 + int(m[3])
+
+
+def _normalize_markers(transcript: str) -> str:
+    """Rewrite minute-only markers past the first hour as [H:MM:SS].
+
+    Transcripts stored before transcripts._marker() say "[220:13]"; a model
+    reads that as no time at all (see there). Applied to every transcript
+    before it reaches the model, so a re-summarize of an old one benefits too.
+    """
+    def fix(m: re.Match) -> str:
+        secs = _marker_seconds(m)
+        if m[1] or secs < 3600:
+            return m[0]
+        return f"[{renderer._seconds_to_label(secs)}]"
+
+    return _MARKER_RE.sub(fix, transcript)
+
+
 def _transcript_duration(transcript: str) -> int | None:
-    """Return total seconds from the last [MM:SS] marker in the transcript, or None."""
-    matches = re.findall(r'\[(\d+):(\d{2})\]', transcript)
-    if not matches:
-        return None
-    minutes, seconds = matches[-1]
-    return int(minutes) * 60 + int(seconds)
+    """Return total seconds from the last timestamp marker in the transcript, or None."""
+    last = None
+    for last in _MARKER_RE.finditer(transcript):
+        pass
+    return _marker_seconds(last) if last else None
+
+
+# How far past the last marker a link may point. The last segment runs on
+# after its marker for up to one marker interval (120 s on long videos).
+_LINK_SLACK_SECONDS = 180
+
+_ANY_TS_LINK_RE = re.compile(
+    r'[ \t]*<a\b[^>]*\bt=(?P<secs>\d+)[^>]*>[^<]*</a>', re.IGNORECASE
+)
+
+
+def _drop_links_past_end(html: str, duration: int | None) -> str:
+    """Remove timestamp links that point past the end of the video.
+
+    No marker lies there, so the model invented the time — znzYWHPv1WY, a
+    3:44 h video, got links up to 6:30:00. A link that jumps nowhere is worse
+    than none; the sentence it followed stays.
+    """
+    if not duration:
+        return html
+    limit = duration + _LINK_SLACK_SECONDS
+    dropped = 0
+
+    def drop(m: re.Match) -> str:
+        nonlocal dropped
+        if int(m["secs"]) <= limit:
+            return m[0]
+        dropped += 1
+        return ""
+
+    html = _ANY_TS_LINK_RE.sub(drop, html)
+    if dropped:
+        print(f"  [warn] dropped {dropped} timestamp link(s) past the video's end "
+              f"({renderer._seconds_to_label(duration)})", file=sys.stderr)
+    return html
 
 
 def _format_duration(seconds: int) -> str:
@@ -359,7 +497,8 @@ _CHUNK_SYSTEM_PROMPT = (
     "You are summarizing one segment of a YouTube video transcript as an intermediate step.\n"
     "Extract the key points, facts, arguments, and events from this segment.\n"
     "Write concise bullet points or short paragraphs in plain text — no HTML.\n"
-    "Preserve [MM:SS] timestamp markers for every major point so they can be used later.\n"
+    "Preserve the [M:SS] / [H:MM:SS] timestamp markers exactly as written for every major point\n"
+    "so they can be used later.\n"
     "This partial summary will be combined with summaries of other segments.\n"
     "The video is newer than your training data: keep product names, model names and version\n"
     "numbers exactly as the transcript states them (spelling of a garbled caption may be fixed,\n"
@@ -497,7 +636,7 @@ def _build_synthesis_message(
         f"Video title: <title>{title}</title>\n\n",
         "The transcript was too long for a single pass. "
         "The following are key-point summaries of consecutive transcript segments, in order. "
-        "Each preserves [MM:SS] timestamps that you should use for timestamp links.\n\n",
+        "Each preserves [M:SS] / [H:MM:SS] timestamps that you should use for timestamp links.\n\n",
     ]
     for i, summary in enumerate(chunk_summaries, 1):
         parts.append(f'<segment_summary index="{i}">\n{summary}\n</segment_summary>\n\n')
@@ -516,6 +655,7 @@ def summarize_video(
       2. Reduce — synthesise those partial summaries into the final HTML.
     """
     client = build_client()
+    transcript = _normalize_markers(transcript)
     chunks = _split_transcript_chunks(transcript)
 
     if len(chunks) == 1:
@@ -550,4 +690,5 @@ def summarize_video(
     tag_vocab.record_candidates(rejected_tags)
     # Repair links before deduping — dedup compares t= values, which are only
     # meaningful once they have been recomputed from the labels.
-    return repair_summary_html(html), kept_tags
+    html = _drop_links_past_end(repair_summary_html(html), _transcript_duration(transcript))
+    return html, kept_tags

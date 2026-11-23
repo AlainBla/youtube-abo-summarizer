@@ -125,12 +125,22 @@ def parse_args():
     return parser.parse_args()
 
 
+def _transcript_duration(video_id: str) -> int | None:
+    """Seconds to the last marker of the stored transcript, or None without one."""
+    path = store.get_llm_transcript_path(video_id)
+    if path is None:
+        return None
+    return openrouter._transcript_duration(path.read_text(encoding="utf-8"))
+
+
 def fix_links(entries, dry_run: bool) -> int:
     """Rewrite stored summaries through openrouter's timestamp-link repair.
 
     Purely textual: recomputes each t= from its visible label, closes anchors the
-    model left open, adds the missing ts-link class, and drops </p> tags the
-    model placed mid-sentence. No API calls.
+    model left open, adds the missing ts-link class, drops </p> tags the
+    model placed mid-sentence, closes headings left open, and removes links
+    pointing past the last marker of the stored transcript (invented times).
+    No API calls.
 
     Returns the number of summaries that changed (or, under --dry-run, that
     would have changed) -- the caller feeds that into the exit-code decision.
@@ -141,7 +151,9 @@ def fix_links(entries, dry_run: bool) -> int:
         if not path.exists():
             continue
         before = path.read_text(encoding="utf-8")
-        after = openrouter.repair_summary_html(before)
+        after = openrouter._drop_links_past_end(
+            openrouter.repair_summary_html(before), _transcript_duration(entry["video_id"])
+        )
         if after == before:
             continue
         n_changed += 1

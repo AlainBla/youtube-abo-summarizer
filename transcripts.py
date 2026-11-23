@@ -272,8 +272,20 @@ def get_manual_transcript(video_id: str, preferred_langs: list[str] = PREFERRED_
     return _fetch_manual(_primary_api(), video_id, preferred_langs)
 
 
+def _marker(seconds: int) -> str:
+    """A segment marker: [M:SS], or [H:MM:SS] from the first hour on.
+
+    Same shape as the summary's link labels (renderer._seconds_to_label). A
+    minute count past 59 ("[220:13]") is a form models do not read as a time:
+    on a 3:44 h video one stopped using the markers at 22:00 and invented
+    round labels up to 6:30:00 (znzYWHPv1WY).
+    """
+    h, m, s = seconds // 3600, (seconds % 3600) // 60, seconds % 60
+    return f"[{h}:{m:02d}:{s:02d}]" if h else f"[{m}:{s:02d}]"
+
+
 def _to_text(entries) -> str:
-    """Format transcript with [MM:SS] timestamp markers.
+    """Format transcript with [M:SS] / [H:MM:SS] timestamp markers.
 
     The marker interval scales with video length to keep token count manageable:
       < 30 min  → every 30 s
@@ -300,7 +312,7 @@ def _to_text(entries) -> str:
         if current_start is None or entry.start >= current_start + INTERVAL:
             if current_texts:
                 s = int(current_start)
-                result.append(f"[{s // 60}:{s % 60:02d}] {' '.join(current_texts)}")
+                result.append(f"{_marker(s)} {' '.join(current_texts)}")
             current_start = entry.start
             current_texts = [entry.text]
         else:
@@ -308,6 +320,6 @@ def _to_text(entries) -> str:
 
     if current_texts and current_start is not None:
         s = int(current_start)
-        result.append(f"[{s // 60}:{s % 60:02d}] {' '.join(current_texts)}")
+        result.append(f"{_marker(s)} {' '.join(current_texts)}")
 
     return "\n".join(result)

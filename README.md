@@ -659,7 +659,7 @@ python repair.py --fix-links
 |---|---|
 | `--video ID,ID,...` | Restrict to specific video IDs (comma-separated) |
 | `--force-summarize` | Re-summarize even if a summary already exists; also re-generates tags |
-| `--fix-links` | Repair broken markup in stored summaries: summaries stored as a JSON object, unclosed hrefs and tags that swallow whole sentences, anchors left open so a sentence renders as a link, links showing a period instead of their timestamp, wrong `t=` offsets, anchors the model left open, missing `ts-link` class, `</p>` tags closed mid-sentence. No LLM calls — back up `data/summaries/` first, the rewrite is in place |
+| `--fix-links` | Repair broken markup in stored summaries: summaries stored as a JSON object, unclosed hrefs and tags that swallow whole sentences, anchors left open so a sentence renders as a link, links showing a period instead of their timestamp, wrong `t=` offsets, anchors the model left open, missing `ts-link` class, headings left open (closed with `</p>` or a garbled tag, so the next paragraph renders inside the heading, in capitals), `</p>` tags closed mid-sentence, links pointing past the end of the stored transcript. No LLM calls — back up `data/summaries/` first, the rewrite is in place |
 | `--model MODEL_ID` | Override the model from `LLM_MODEL` / `OPENROUTER_MODEL` |
 | `--dry-run` | Print what would be done without writing anything |
 | `--fill-durations` | Look up the duration of every stored video that has none (rows restored from an export, live streams collected while running): yt-dlp first, then one batched YouTube API call per 50. No LLM calls |
