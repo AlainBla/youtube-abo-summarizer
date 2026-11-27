@@ -631,7 +631,7 @@ python whisper_collect.py --retry        # retry videos marked whisper_failed
 python whisper_collect.py --video ID,ID --any-channel   # one-off: videos of any channel
 ```
 
-A video queued through the Ingest button (or the userscript) that has no captions is sent to Whisper by `ingest_worker.sh` right away, whatever its channel — no `WHISPER_CHANNELS` entry needed.
+A video queued through the Ingest button (or the userscript) that has no captions is sent to Whisper by `ingest_worker.sh` right away, whatever its channel — no `WHISPER_CHANNELS` entry needed. Queueing it again is a full second attempt (captions fetched anew, then Whisper, even after an earlier `whisper_failed`). In the archive, a card without a summary shows an "Erneut versuchen" button to readers with ingest rights once the video is 24 hours old; it goes through the same Ingest path.
 
 The original audio track is downloaded (not an AI dub), cut into ten-minute pieces, transcribed with segment timestamps and summarized like any other video, timestamp links included. Needs ffmpeg — on PATH, or the static binary from `imageio-ffmpeg`, which `requirements.txt` installs. `WHISPER_TIMEOUT` in `cron.env` bounds the step (default `20m`).
 

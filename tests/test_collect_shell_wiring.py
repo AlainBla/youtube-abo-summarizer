@@ -140,6 +140,9 @@ def test_ingest_worker_falls_back_to_whisper_for_a_queued_video():
     assert '--video="$video_id"' in line
     assert "--any-channel" in line
     assert "--wait-lock" in line
+    # Queueing again is an explicit request: an old whisper_failed marker
+    # must not stop it.
+    assert "--retry" in line
     assert 'timeout -k 30s "$WHISPER_TIMEOUT"' in line
     assert "|| wrc=$?" in line
     # Only after a successful collect run: the video must be in the store.

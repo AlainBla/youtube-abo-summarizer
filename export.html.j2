@@ -333,6 +333,20 @@
     .no-transcript.ip-blocked { color: #c0824a; background: #1f1508; border-color: #7a4a1a; }
     .no-transcript.rate-limited { color: #b0a040; background: #181508; border-color: #6a5f10; }
     .no-transcript.country-blocked { color: #7a9fc0; background: #080e18; border-color: #1a3a5a; }
+    /* Re-queue a video without summary; shown by refreshRetryButtons() only
+       with ingest rights and 24 h after publication. */
+    .retry-btn {
+      margin-top: 0.5rem;
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 4px;
+      color: #aaa;
+      font-size: 0.75rem;
+      padding: 0.2rem 0.6rem;
+      cursor: pointer;
+    }
+    .retry-btn:hover:not(:disabled) { background: #333; border-color: #555; color: #ddd; }
+    .retry-btn:disabled { cursor: default; opacity: 0.7; }
 
     .no-videos { color: #555; font-style: italic; font-size: 0.9rem; padding: 1rem 0; }
 
@@ -562,6 +576,7 @@
 {%- else -%}
 <p class="no-transcript unavailable">{{ t.transcript_unavailable }}</p>
 {%- endif -%}
+{%- if sync_url and not v.summary_preview %}<button class="retry-btn" data-published="{{ v.published_at|esch }}" onclick="retryVideo('{{ v.video_id|esch }}', this)" hidden>{{ t.retry_btn }}</button>{% endif -%}
 </div>
 </div>
 </article>
@@ -897,6 +912,8 @@ const I18N = {
     updateReload: 'Neu laden',
     updateDismiss: 'Hinweis schließen',
     shareBtn: 'Link kopieren',
+    retryBtn: 'Erneut versuchen',
+    retryQueued: 'Eingereiht',
     shareCopied: 'Kopiert',
     singleVideo: 'Einzelnes Video',
     singleShowAll: 'Alle Videos anzeigen',
@@ -1020,6 +1037,8 @@ const I18N = {
     updateReload: 'Reload',
     updateDismiss: 'Dismiss',
     shareBtn: 'Copy link',
+    retryBtn: 'Try again',
+    retryQueued: 'Queued',
     shareCopied: 'Copied',
     singleVideo: 'Single video',
     singleShowAll: 'Show all videos',
@@ -1228,6 +1247,8 @@ function showSyncLoggedOut() {
   document.getElementById('sync-user').style.display = 'none';
   var ingest = document.getElementById('sync-ingest');
   if (ingest) ingest.style.display = 'none';
+  ingestAllowed = false;
+  refreshRetryButtons();
   updateSyncStatus(I18N[currentLang || 'de'].syncStatusNotLoggedIn);
 }
 
@@ -1490,6 +1511,44 @@ function extractVideoId(raw) {
 function showIngestUI() {
   var el = document.getElementById('sync-ingest');
   if (el) el.style.display = '';
+  ingestAllowed = true;
+  refreshRetryButtons();
+}
+
+// ── Retry for videos without a summary ───────────────────────────────────────
+// A card without a summary carries a hidden "Erneut versuchen" button. It is
+// shown only to a reader who may ingest, and only once the video is a day old:
+// captions often appear hours after the release, and a retry before that
+// would just fail again. Clicking it goes through doIngest(), the same path as
+// the Ingest field -- collect.py fetches the transcript anew and the worker
+// falls back to Whisper.
+var RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
+var ingestAllowed = false;
+var retryQueuedIds = new Set();
+
+// Pure: may a video published at `publishedAt` be retried at `now` (ms)?
+function retryDue(publishedAt, now) {
+  var t = Date.parse(publishedAt || '');
+  return !isNaN(t) && now - t >= RETRY_AFTER_MS;
+}
+
+function refreshRetryButtons() {
+  var s = I18N[currentLang || 'de'];
+  var now = Date.now();
+  document.querySelectorAll('.retry-btn').forEach(function (btn) {
+    var card = btn.closest ? btn.closest('.video-card') : null;
+    var id = card ? card.getAttribute('data-video-id') : '';
+    btn.hidden = !(ingestAllowed && retryDue(btn.getAttribute('data-published'), now));
+    var queued = retryQueuedIds.has(id);
+    btn.disabled = queued;
+    btn.textContent = queued ? s.retryQueued : s.retryBtn;
+  });
+}
+
+function retryVideo(videoId, btn) {
+  if (btn) btn.disabled = true;
+  document.getElementById('ingest-input').value = videoId;
+  doIngest();
 }
 
 // What became of a submission, written where a reader outside the page can
@@ -1507,6 +1566,11 @@ function setIngestVerdict(videoId, state) {
   if (!box) return;
   box.dataset.ingestId = videoId || '';
   box.dataset.ingestResult = state || '';
+  // A retry button stays "Eingereiht" once its video is queued; any other
+  // outcome gives it back.
+  if (!videoId || !state) return;
+  if (state === 'queued') retryQueuedIds.add(videoId);
+  refreshRetryButtons();
 }
 
 function doIngest() {
@@ -2962,6 +3026,9 @@ function buildCard(v) {
   } else {
     summaryHtml = '<p class="no-transcript unavailable">' + s.transcriptUnavailable + '</p>';
   }
+  {% if sync_url %}if (!summary) {
+    summaryHtml += '<button class="retry-btn" data-published="' + escHtml(v.published_at) + '" onclick="retryVideo(\'' + escHtml(v.video_id) + '\', this)" hidden>' + s.retryBtn + '</button>';
+  }{% endif %}
 
   var tagsHtml = '';
   if (v.tags && v.tags.length) {
@@ -3160,6 +3227,8 @@ function renderPage(page, skipScroll) {
             : s.noVideos)
         + '</p>';
   }
+
+  {% if sync_url %}refreshRetryButtons();{% endif %}
 
   // A shared link should show the whole summary, not the "more" teaser.
   if (singleVideoId) {

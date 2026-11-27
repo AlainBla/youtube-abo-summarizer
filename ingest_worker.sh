@@ -67,12 +67,14 @@ while IFS= read -r line; do
         echo "[$(date -Iseconds)] done $video_id (exit $rc)" >> "$LOG"
         # A video queued by hand that has no captions goes straight to Whisper
         # instead of waiting for a WHISPER_CHANNELS listing that will never
-        # come. whisper_collect.py selects nothing when a transcript is on disk
+        # come. --retry: queueing a video again (or the archive's retry
+        # button) is an explicit request, so an earlier whisper_failed marker
+        # must not stop it. whisper_collect.py selects nothing when a transcript is on disk
         # (or the video was filtered / is country-blocked / still live), so this
         # costs one store lookup in the common case. --wait-lock: collect.sh's
         # own Whisper run may hold the lock; skipping would lose the video.
         wrc=0
-        (cd "$REPO" && timeout -k 30s "$WHISPER_TIMEOUT" "$PYTHON" "$WHISPER" --video="$video_id" --any-channel --wait-lock) >> "$LOG" 2>&1 || wrc=$?
+        (cd "$REPO" && timeout -k 30s "$WHISPER_TIMEOUT" "$PYTHON" "$WHISPER" --video="$video_id" --any-channel --wait-lock --retry) >> "$LOG" 2>&1 || wrc=$?
         if [ "$wrc" -ne 0 ] && [ "$wrc" -ne "$EXIT_NEW_VIDEOS" ]; then
             echo "[$(date -Iseconds)] WARNING: whisper for $video_id exited $wrc" >> "$LOG"
         fi
