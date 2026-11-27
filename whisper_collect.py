@@ -116,6 +116,8 @@ def parse_args(argv=None):
     p.add_argument("--any-channel", action="store_true",
                    help="With --video: take the videos whatever their channel (WHISPER_CHANNELS not needed).")
     p.add_argument("--retry", action="store_true", help=f"Include videos marked {FAILED}.")
+    p.add_argument("--wait-lock", action="store_true",
+                   help="Wait for a running Whisper run instead of skipping (bound it with timeout).")
     p.add_argument("--dry-run", action="store_true", help="List what would be done, write nothing.")
     p.add_argument("--no-proxy", action="store_true", help="Download without any proxy.")
     p.add_argument("--model", default=None, help="LLM for the summary (default: LLM_MODEL / OPENROUTER_MODEL).")
@@ -127,7 +129,7 @@ def parse_args(argv=None):
     return args
 
 
-def _lock():
+def _lock(wait: bool = False):
     """An exclusive, non-blocking lock, or None when another run holds it.
 
     collect.sh runs every 30 minutes and a long backlog run can outlive that;
@@ -135,6 +137,11 @@ def _lock():
     """
     store.DATA_DIR.mkdir(exist_ok=True)
     handle = open(store.DATA_DIR / "whisper.lock", "w")
+    if wait:
+        # The ingest worker: a manually queued video must not be dropped just
+        # because collect.sh's backlog run holds the lock right now.
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        return handle
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -166,7 +173,7 @@ def main(argv=None) -> int:
             print(f"  {e['published_at'][:10]}  {e['title'][:70]}  ({e['video_id']}, {e.get('duration')})")
         return 0
 
-    lock = _lock()
+    lock = _lock(wait=args.wait_lock)
     if lock is None:
         print("Whisper: ein anderer Lauf ist noch aktiv — übersprungen.")
         return 0

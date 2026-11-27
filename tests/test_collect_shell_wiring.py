@@ -129,3 +129,18 @@ def test_collect_sh_logs_why_it_fell_back():
     assert "WARNING: token.pickle is missing" in sh
     assert "WARNING: OAuth unusable" in sh
     assert "ERROR: OAuth unusable" in sh
+
+
+def test_ingest_worker_falls_back_to_whisper_for_a_queued_video():
+    """A video queued by hand without captions goes straight to Whisper, for
+    that one video, whatever its channel, bounded, and waiting for the lock
+    rather than losing the video to collect.sh's own Whisper run."""
+    sh = _read("ingest_worker.sh")
+    line = [ln for ln in sh.splitlines() if '"$WHISPER"' in ln][0]
+    assert '--video="$video_id"' in line
+    assert "--any-channel" in line
+    assert "--wait-lock" in line
+    assert 'timeout -k 30s "$WHISPER_TIMEOUT"' in line
+    assert "|| wrc=$?" in line
+    # Only after a successful collect run: the video must be in the store.
+    assert sh.index("success=1") < sh.index(line)

@@ -12,6 +12,7 @@ QUEUE="${INGEST_QUEUE:-/home/alain/repos/youtube-abo-summarizer/data/ingest_queu
 REPO="/home/alain/repos/youtube-abo-summarizer"
 COLLECT="$REPO/collect.py"
 EXPORT="$REPO/export.py"
+WHISPER="$REPO/whisper_collect.py"
 PYTHON="$REPO/.venv/bin/python3"
 LOG="$REPO/data/ingest_worker.log"
 # Where the archive is served from. Must match the file the web server
@@ -31,6 +32,8 @@ SYNC_URL="${SYNC_URL:-}"
 # after someone used the Ingest button on it.
 EXPORT_USER="${EXPORT_USER:-}"
 EXPORT_READ_DAYS="${EXPORT_READ_DAYS:-}"
+# Upper bound for the Whisper fallback of one queued video.
+WHISPER_TIMEOUT="${WHISPER_TIMEOUT:-20m}"
 MAX_RETRIES=100
 EXIT_NEW_VIDEOS=10
 
@@ -62,6 +65,17 @@ while IFS= read -r line; do
     if [ "$rc" -eq 0 ] || [ "$rc" -eq "$EXIT_NEW_VIDEOS" ]; then
         success=1
         echo "[$(date -Iseconds)] done $video_id (exit $rc)" >> "$LOG"
+        # A video queued by hand that has no captions goes straight to Whisper
+        # instead of waiting for a WHISPER_CHANNELS listing that will never
+        # come. whisper_collect.py selects nothing when a transcript is on disk
+        # (or the video was filtered / is country-blocked / still live), so this
+        # costs one store lookup in the common case. --wait-lock: collect.sh's
+        # own Whisper run may hold the lock; skipping would lose the video.
+        wrc=0
+        (cd "$REPO" && timeout -k 30s "$WHISPER_TIMEOUT" "$PYTHON" "$WHISPER" --video="$video_id" --any-channel --wait-lock) >> "$LOG" 2>&1 || wrc=$?
+        if [ "$wrc" -ne 0 ] && [ "$wrc" -ne "$EXIT_NEW_VIDEOS" ]; then
+            echo "[$(date -Iseconds)] WARNING: whisper for $video_id exited $wrc" >> "$LOG"
+        fi
     else
         next=$((attempts + 1))
         if [ "$next" -lt "$MAX_RETRIES" ]; then
