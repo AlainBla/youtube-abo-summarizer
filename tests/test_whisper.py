@@ -253,3 +253,26 @@ def test_any_channel_takes_videos_outside_the_list_and_needs_video(monkeypatch, 
     assert done == ["x"]
     with pytest.raises(SystemExit):
         whisper_collect.parse_args(["--any-channel"])
+
+
+def test_wait_lock_chooses_again_once_the_other_run_is_done(monkeypatch, isolated):
+    """--wait-lock (the ingest worker): while it waited, collect.sh's run may
+    have transcribed the very video. Choosing again after the lock is held is
+    what keeps the audio from being paid for twice."""
+    other_run_done = []
+    monkeypatch.setattr(whisper_collect.store, "get_llm_transcript_path",
+                        lambda vid: "x.txt" if other_run_done else None)
+    monkeypatch.setattr(whisper_collect.store, "get_all_videos",
+                        lambda with_transcripts=True: [_entry("a")])
+
+    class Lock:
+        def close(self):
+            pass
+
+    def lock(wait=False):
+        assert wait
+        other_run_done.append(True)  # the other run finished while we waited
+        return Lock()
+    monkeypatch.setattr(whisper_collect, "_lock", lock)
+    monkeypatch.setattr(whisper_collect, "process", lambda *a, **k: pytest.fail("already transcribed"))
+    assert whisper_collect.main(["--video=a", "--any-channel", "--wait-lock"]) == 0

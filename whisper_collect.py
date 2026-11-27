@@ -157,13 +157,14 @@ def main(argv=None) -> int:
         return 0
     only = {v.strip() for v in args.video.split(",") if v.strip()} if args.video else None
 
-    entries = store.get_all_videos(with_transcripts=False)
-    todo = select_videos(entries, channels,
-                         has_transcript=lambda vid: store.get_llm_transcript_path(vid) is not None,
-                         retry=args.retry, only=only)
-    total = len(todo)
-    if args.limit > 0:
-        todo = todo[: args.limit]
+    def pick():
+        entries = store.get_all_videos(with_transcripts=False)
+        found = select_videos(entries, channels,
+                              has_transcript=lambda vid: store.get_llm_transcript_path(vid) is not None,
+                              retry=args.retry, only=only)
+        return len(found), (found[: args.limit] if args.limit > 0 else found)
+
+    total, todo = pick()
     if not todo:
         return 0
     print(f"Whisper: {total} Video(s) ohne Transkript, {len(todo)} in diesem Lauf "
@@ -177,6 +178,13 @@ def main(argv=None) -> int:
     if lock is None:
         print("Whisper: ein anderer Lauf ist noch aktiv — übersprungen.")
         return 0
+    if args.wait_lock:
+        # While we waited, the other run may have transcribed (or marked) the
+        # very videos picked above; choosing again keeps us from paying twice.
+        total, todo = pick()
+        if not todo:
+            lock.close()
+            return 0
 
     # A run killed by collect.sh's timeout never reaches TemporaryDirectory's
     # cleanup; with the lock held, any whisper-* directory is such a leftover.
