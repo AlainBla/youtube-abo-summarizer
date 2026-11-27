@@ -20,13 +20,14 @@ pytestmark = pytest.mark.skipif(not node_available(), reason="node not installed
 
 
 def _archive():
-    """60 videos over two channels; the even ones carry an extra tag."""
+    """60 videos over two channels, three per day from Jan 1 to Jan 20; every
+    third one carries the tags."""
     out = []
     for i in range(60):
         over = {"channel_id": "UC2", "channel_title": "Channel Two"} if i % 2 else {}
         if i % 3 == 0:
             over["tags"] = ["Tag A", "Tag B"]
-        out.append(video("v%03d" % i, "2026-01-01T00:%02d:00Z" % i, **over))
+        out.append(video("v%03d" % i, "2026-01-%02dT00:%02d:00Z" % (i // 3 + 1, i), **over))
     return out
 
 
@@ -60,7 +61,7 @@ def test_defaults_produce_a_bare_url():
 
 def test_state_round_trips_through_the_query_string():
     state = {"q": "rust & go", "channel": "UC2", "tag": "Tag B", "read": "unread",
-             "bm": "bookmarked", "from": "2026-01-01", "len": 20, "sort": "title", "page": 3}
+             "bm": "bookmarked", "from": "2026-01-01", "to": "2026-01-31", "len": 20, "sort": "title", "page": 3}
     out = _eval("filterStateFromSearch(filterStateToSearch(%s, ''))" % json.dumps(state))
     assert out == state
 
@@ -71,7 +72,7 @@ def test_the_deep_link_and_foreign_parameters_survive():
 
 
 def test_invalid_values_are_dropped():
-    out = _eval("filterStateFromSearch('?read=maybe&bm=yes&from=gestern&len=7&sort=evil&page=-2')")
+    out = _eval("filterStateFromSearch('?read=maybe&bm=yes&from=gestern&to=2026-1-5&len=7&sort=evil&page=-2')")
     assert out == {}
 
 
@@ -125,10 +126,29 @@ def test_reset_clears_every_control_and_the_url():
         "          page: currentPage, count: filtered.length,"
         "          url: __urls[__urls.length - 1]};"
         "})()",
-        search="?q=x&channel=UC2&read=unread&len=20&sort=title&page=2",
+        search="?q=x&channel=UC2&read=unread&from=2026-01-03&to=2026-01-05&len=20&sort=title&page=2",
     )
     assert out == {"q": "", "channel": "", "sort": "date-desc", "page": 1,
                    "count": 60, "url": "/x.html"}
+
+
+def test_the_date_range_is_inclusive_on_both_ends_and_survives_a_reload():
+    out = _after_bootstrap(
+        "{from: document.getElementById('date-filter').value,"
+        " to: document.getElementById('date-to').value,"
+        " toMin: document.getElementById('date-to').min,"
+        " fromMax: document.getElementById('date-filter').max,"
+        " days: Array.from(new Set(filtered.map(function (v) { return v.published_at.slice(0, 10); }))).sort()}",
+        search="?from=2026-01-03&to=2026-01-05",
+    )
+    assert out == {"from": "2026-01-03", "to": "2026-01-05",
+                   "toMin": "2026-01-03", "fromMax": "2026-01-05",
+                   "days": ["2026-01-03", "2026-01-04", "2026-01-05"]}
+
+
+def test_an_open_ended_range_cuts_one_side_only():
+    out = _after_bootstrap("filtered.length", search="?to=2026-01-02")
+    assert out == 6
 
 
 def test_the_title_reloads_the_bare_page():

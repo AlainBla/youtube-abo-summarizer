@@ -624,8 +624,12 @@
 <div class="controls-bar">
   <input type="search" id="search" placeholder="Suchen&hellip;" autocomplete="off">
   <div class="control-group">
-    <label class="ctrl-label" for="date-filter" id="label-date">Ab</label>
+    <label class="ctrl-label" for="date-filter" id="label-date">Von</label>
     <input type="date" id="date-filter" autocomplete="off">
+  </div>
+  <div class="control-group">
+    <label class="ctrl-label" for="date-to" id="label-date-to">Bis</label>
+    <input type="date" id="date-to" autocomplete="off">
   </div>
   <div class="control-group">
     <label class="ctrl-label" for="channel-filter" id="label-channel">Kanal</label>
@@ -810,7 +814,8 @@ const I18N = {
     otherChannels: 'Andere',
     allTags: 'Alle',
     allVideos: 'Alle',
-    labelFrom: 'Ab',
+    labelFrom: 'Von',
+    labelTo: 'Bis',
     labelChannel: 'Kanal',
     labelTag: 'Tag',
     labelRead: 'Gelesen',
@@ -934,6 +939,7 @@ const I18N = {
     allTags: 'All',
     allVideos: 'All',
     labelFrom: 'From',
+    labelTo: 'To',
     labelChannel: 'Channel',
     labelTag: 'Tag',
     labelRead: 'Read',
@@ -2562,6 +2568,7 @@ function applyLang(lang) {
 
   // control labels
   document.getElementById('label-date').textContent = s.labelFrom;
+  document.getElementById('label-date-to').textContent = s.labelTo;
   document.getElementById('label-channel').textContent = s.labelChannel;
   document.getElementById('label-tag').textContent = s.labelTag;
   document.getElementById('label-read').textContent = s.labelRead;
@@ -2723,7 +2730,7 @@ function setChannelFilter(channelId) {
 // reload -- the update banner's included -- lands on the same selection and
 // page. Defaults are left out, so an unfiltered archive keeps a bare URL. `v`
 // (the deep link) and any other parameter are passed through untouched.
-const FILTER_PARAMS = ['q', 'channel', 'tag', 'read', 'bm', 'from', 'len', 'sort', 'page'];
+const FILTER_PARAMS = ['q', 'channel', 'tag', 'read', 'bm', 'from', 'to', 'len', 'sort', 'page'];
 const SORT_MODES = ['date-desc', 'date-asc', 'added-desc', 'channel', 'title'];
 
 // Pure: the query string for `state`, keeping every non-filter parameter of
@@ -2737,6 +2744,7 @@ function filterStateToSearch(state, search) {
   if (state.read) params.set('read', state.read);
   if (state.bm) params.set('bm', state.bm);
   if (state.from) params.set('from', state.from);
+  if (state.to) params.set('to', state.to);
   if (state.len) params.set('len', String(state.len));
   if (state.sort && state.sort !== SORT_MODES[0]) params.set('sort', state.sort);
   if (state.page > 1) params.set('page', String(state.page));
@@ -2758,6 +2766,7 @@ function filterStateFromSearch(search) {
   if (p.get('read') === 'read' || p.get('read') === 'unread') st.read = p.get('read');
   if (p.get('bm') === 'bookmarked') st.bm = 'bookmarked';
   if (/^\d{4}-\d{2}-\d{2}$/.test(p.get('from') || '')) st.from = p.get('from');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(p.get('to') || '')) st.to = p.get('to');
   var len = parseInt(p.get('len'), 10);
   if (LENGTH_BUCKETS.indexOf(len) !== -1) st.len = len;
   if (SORT_MODES.indexOf(p.get('sort')) !== -1) st.sort = p.get('sort');
@@ -2775,6 +2784,7 @@ function currentFilterState() {
     read: document.getElementById('read-filter').value,
     bm: document.getElementById('bookmark-filter').value,
     from: document.getElementById('date-filter').value,
+    to: document.getElementById('date-to').value,
     len: document.getElementById('length-filter').value,
     sort: document.getElementById('sort').value,
     page: currentPage
@@ -2803,6 +2813,8 @@ function restoreFiltersFromUrl() {
   if (st.read) document.getElementById('read-filter').value = st.read;
   if (st.bm) document.getElementById('bookmark-filter').value = st.bm;
   if (st.from) document.getElementById('date-filter').value = st.from;
+  if (st.to) document.getElementById('date-to').value = st.to;
+  syncDateBounds();
   if (st.len) document.getElementById('length-filter').value = String(st.len);
   if (st.sort) document.getElementById('sort').value = st.sort;
   if (st.page) currentPage = st.page;
@@ -2813,9 +2825,10 @@ function restoreFiltersFromUrl() {
 function resetFilters() {
   clearTimeout(debounceTimer);
   ['search', 'channel-filter', 'tag-filter', 'read-filter', 'bookmark-filter',
-   'date-filter', 'length-filter'].forEach(function (id) {
+   'date-filter', 'date-to', 'length-filter'].forEach(function (id) {
     document.getElementById(id).value = '';
   });
+  syncDateBounds();
   document.getElementById('sort').value = SORT_MODES[0];
   currentPage = 1;
   applyFiltersAndSort(1);
@@ -3028,6 +3041,7 @@ function applyFiltersAndSort(page) {
   const readFilter = document.getElementById('read-filter').value;
   const bookmarkFilter = document.getElementById('bookmark-filter').value;
   const dateFrom = document.getElementById('date-filter').value; // "YYYY-MM-DD" or ""
+  const dateTo = document.getElementById('date-to').value;       // inclusive
   const maxMinutes = parseInt(document.getElementById('length-filter').value, 10);
 
   filtered = VIDEOS.filter(function(v) {
@@ -3037,6 +3051,7 @@ function applyFiltersAndSort(page) {
     if (readFilter === 'unread' && readSet.has(v.video_id)) return false;
     if (bookmarkFilter === 'bookmarked' && !bookmarkSet.has(v.video_id)) return false;
     if (dateFrom && v.published_at.slice(0, 10) < dateFrom) return false;
+    if (dateTo && v.published_at.slice(0, 10) > dateTo) return false;
     if (maxMinutes) {
       // Unknown length cannot satisfy "shorter than N" -- about 4 % of the
       // store has no duration, and showing those under a length filter would
@@ -3287,7 +3302,19 @@ document.getElementById('tag-filter').addEventListener('change', applyFiltersAnd
 document.getElementById('read-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('length-filter').addEventListener('change', applyFiltersAndSort);
 document.getElementById('bookmark-filter').addEventListener('change', applyFiltersAndSort);
-document.getElementById('date-filter').addEventListener('change', applyFiltersAndSort);
+// Each calendar cannot pick past the other one: "Von" never after "Bis".
+function syncDateBounds() {
+  var from = document.getElementById('date-filter');
+  var to = document.getElementById('date-to');
+  to.min = from.value;
+  from.max = to.value;
+}
+['date-filter', 'date-to'].forEach(function (id) {
+  document.getElementById(id).addEventListener('change', function () {
+    syncDateBounds();
+    applyFiltersAndSort();
+  });
+});
 document.getElementById('sort').addEventListener('change', applyFiltersAndSort);
 document.getElementById('lang-select').addEventListener('change', function() {
   applyLang(this.value);
